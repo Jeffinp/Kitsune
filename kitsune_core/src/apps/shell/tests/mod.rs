@@ -91,6 +91,7 @@ fn on_small_stack(kib: usize, f: impl FnOnce() + Send + 'static) {
 }
 
 mod accounts;
+mod archive;
 mod i18n;
 mod net;
 

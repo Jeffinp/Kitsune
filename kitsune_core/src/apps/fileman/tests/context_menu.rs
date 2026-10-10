@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn context_menu_adapts_to_the_selection() {
     let ctx = |in_trash, selected, image, clip| MenuCtx {
+        zip: false,
         in_trash,
         in_apps: false,
         app_installed: false,

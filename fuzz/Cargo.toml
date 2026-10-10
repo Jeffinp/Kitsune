@@ -131,6 +131,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "archive_text"
+path = "fuzz_targets/archive_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "entropy_api"
 path = "fuzz_targets/entropy_api.rs"
 test = false

@@ -116,6 +116,7 @@ fn counts_and_selection_text_in_both_languages() {
 fn context_menu_labels_follow_the_language() {
     use crate::i18n::{Lang, testlang::LangGuard};
     let blank = MenuCtx {
+        zip: false,
         in_trash: false,
         in_apps: false,
         app_installed: false,
@@ -158,6 +159,7 @@ fn context_menu_labels_follow_the_language() {
     );
     assert_eq!(Cmd::TogglePreview.shortcut(), "Space");
     let trash = MenuCtx {
+        zip: false,
         in_trash: true,
         selected: 1,
         ..blank

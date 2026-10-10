@@ -18,6 +18,7 @@ impl Desktop {
             app_installed: rows.len() == 1 && rows[0].installed,
             selected: rows.len(),
             image: rows.len() == 1 && fileman::is_image(&rows[0].name) && !rows[0].is_dir(),
+            zip: rows.len() == 1 && !rows[0].is_dir() && fileman::archive::is_zip(&rows[0].name),
             clip_has_items: !self.pathclip.is_empty(),
         })
     }

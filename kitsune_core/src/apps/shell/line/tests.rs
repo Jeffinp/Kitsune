@@ -429,7 +429,7 @@ fn complete_extends_to_common_prefix() {
     assert_eq!(w.ed.text(), "touch ");
     // "ec" is unique too; use a real shared prefix: "un" -> uniq/unset/unalias share only "un".
     match w.tab("un") {
-        LineEvent::Candidates(c) => assert_eq!(c, ["unalias", "uniq", "unset"]),
+        LineEvent::Candidates(c) => assert_eq!(c, ["unalias", "uniq", "unset", "unzip"]),
         e => panic!("{e:?}"),
     }
 }

@@ -35,7 +35,9 @@ mod structure;
 // `kitsune_core::storage::fs3`. Inside this crate, use the grouped path (`crate::storage::fs3`).
 pub use apps::{activity, calc, editor2, fileman, shell, termui, viewer};
 pub use browsing::{browser, redirect, web};
-pub use format::{base64, bmp, deflate, gzip, image, inflate, png, ppm, search, unixtime};
+pub use format::{
+    base64, bmp, deflate, gzip, image, inflate, png, ppm, search, text as textenc, unixtime, zip,
+};
 pub use network::{dns, icmp, lease, net, netstats, sntp, tlsverify, x509};
 pub use platform::{appabi, appfs, appinstall, appmanifest, appnet, wasmsec};
 pub use security::{account, password, perm, session};

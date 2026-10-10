@@ -24,6 +24,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 
+pub mod archive;
 mod clipboard;
 mod commands;
 mod format;

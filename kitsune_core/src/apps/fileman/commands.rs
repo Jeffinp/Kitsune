@@ -20,6 +20,10 @@ pub enum Cmd {
     SelectAll,
     Refresh,
     SetWallpaper,
+    /// Extract the selected ZIP archive into a folder beside it.
+    ExtractHere,
+    /// Compress the selection into a ZIP archive beside it.
+    Compress,
     /// Apps place: install the selected bundled package.
     InstallApp,
     /// Apps place: remove the selected installed app.
@@ -39,7 +43,7 @@ impl Cmd {
     pub fn group(self) -> u8 {
         match self {
             Cmd::Open | Cmd::Restore | Cmd::InstallApp | Cmd::TogglePreview => 0,
-            Cmd::SetWallpaper => 1,
+            Cmd::SetWallpaper | Cmd::ExtractHere | Cmd::Compress => 1,
             Cmd::NewFile | Cmd::NewFolder => 2,
             Cmd::Cut | Cmd::Copy | Cmd::Paste | Cmd::Rename => 3,
             Cmd::Delete | Cmd::DeletePermanent | Cmd::EmptyTrash | Cmd::RemoveApp => 4,
@@ -82,6 +86,8 @@ pub struct MenuCtx {
     pub selected: usize,
     /// The single selected row is an image.
     pub image: bool,
+    /// The single selected row is a ZIP archive.
+    pub zip: bool,
     pub clip_has_items: bool,
 }
 
@@ -125,6 +131,10 @@ pub fn context_menu(ctx: MenuCtx) -> Vec<(Cmd, &'static str)> {
         if ctx.selected == 1 && ctx.image {
             m.push((Cmd::SetWallpaper, crate::t!("files.menu.set_wallpaper")));
         }
+        if ctx.selected == 1 && ctx.zip {
+            m.push((Cmd::ExtractHere, crate::t!("files.menu.extract")));
+        }
+        m.push((Cmd::Compress, crate::t!("files.menu.compress")));
         m.push((Cmd::Cut, crate::t!("files.menu.cut")));
         m.push((Cmd::Copy, crate::t!("files.menu.copy")));
         if ctx.selected == 1 {

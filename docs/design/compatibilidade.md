@@ -36,8 +36,8 @@ tutorial do SDK produz um app instalável em menos de dez minutos seguindo só o
 |---|---|---|
 | F.1 | Imagens: PNG, BMP, PPM; texto UTF-8 | feito |
 | F.2 | Imagens: **GIF** e **JPEG** *baseline* também no app Imagens (mesmo decodificador do navegador) | feito |
-| F.3 | Texto: detectar e converter Latin-1 e Windows-1252 para UTF-8 ao abrir (Editor, Terminal, navegador) | a fazer |
-| F.4 | **ZIP** (leitura: listar e extrair `stored` e `deflate`) e `gzip` no Arquivos e no Terminal (`unzip`, `gunzip`) | a fazer |
+| F.3 | Texto: detectar e converter Latin-1/Windows-1252 e UTF-16 (com marca) para UTF-8 ao abrir, e gravar de volta na mesma codificação (Editor, navegador); `iconv` no Terminal | feito (UTF-8 com BOM também) |
+| F.4 | **ZIP** (listar, extrair e criar: `stored` e `deflate`) e `gzip` no Arquivos ("Extrair aqui", "Compactar em ZIP") e no Terminal (`zip`, `unzip`, `gzip`, `gunzip`) | feito (sem criptografia, ZIP64 nem `bzip2`) |
 | F.5 | Fim de linha CRLF/LF tratado no Editor (já detecta e preserva) | feito |
 
 *Aceite:* abrir um `.jpg` e um `.gif` no Imagens; abrir um `.txt` em Latin-1 no Editor sem texto

@@ -81,6 +81,7 @@ fn searchable() -> FileView {
 }
 
 mod apps_place;
+mod archive;
 mod breadcrumbs_history;
 mod classification;
 mod clipboard;

@@ -16,6 +16,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 mod accounts;
+mod archive;
 mod conditions;
 mod files;
 mod misc;
@@ -25,6 +26,7 @@ mod text;
 #[cfg(test)]
 pub(crate) use accounts::apply_mode;
 use accounts::*;
+use archive::*;
 use conditions::*;
 use files::*;
 use misc::*;
@@ -34,7 +36,7 @@ use text::*;
 
 /// Register every standard builtin into `r`.
 pub fn register_all(r: &mut Registry) {
-    let table: [(&str, &'static str, BuiltinFn); 55] = [
+    let table: [(&str, &'static str, BuiltinFn); 60] = [
         ("help", tk!("sh.help.help"), help),
         ("whoami", tk!("sh.whoami.help"), whoami),
         ("id", tk!("sh.id.help"), id),
@@ -90,6 +92,11 @@ pub fn register_all(r: &mut Registry) {
         ("cut", tk!("sh.cut.help"), cut),
         ("nl", tk!("sh.nl.help"), nl),
         ("yes", tk!("sh.yes.help"), yes),
+        ("gzip", tk!("sh.gzip.help"), gzip),
+        ("gunzip", tk!("sh.gunzip.help"), gunzip),
+        ("zip", tk!("sh.zip.help"), zip),
+        ("unzip", tk!("sh.unzip.help"), unzip),
+        ("iconv", tk!("sh.iconv.help"), iconv),
     ];
     for (n, h, f) in table {
         r.register(n, h, f);

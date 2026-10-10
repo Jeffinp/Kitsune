@@ -127,7 +127,7 @@ problemas: [`docs/BUILDING.md`](docs/BUILDING.md).
 | **Apps do sistema** | Terminal (shell com dezenas de comandos, pipes, scripts, `ping`/`nslookup`/`curl`), Editor (busca e substituição, desfazer, arquivos de 16 MiB), Arquivos (copiar/mover com progresso, lixeira), Imagens, Navegador, Tarefas, Registro, Ajustes, Calculadora | [`editor-shell.md`](docs/design/editor-shell.md), [`sysmgmt.md`](docs/design/sysmgmt.md), [`image.md`](docs/design/image.md) |
 | **Armazenamento** | **OJFS v3**: journal, *copy-on-write*, extents, CRC32, `fsck` no boot, migração automática do v2, cache de blocos; uma camada VFS única para o desktop | [`ojfs3.md`](docs/design/ojfs3.md) |
 | **Rede** | `virtio-net` e NE2000, ARP/IPv4/ICMP/DHCP com renovação, DNS com cache, TCP, **TLS 1.3 verificado**, hora por SNTP | [`tls-browser.md`](docs/design/tls-browser.md) |
-| **Navegador** | HTML, CSS (cascata), layout, imagens PNG/BMP/PPM, formulários GET, favoritos, busca na página, zoom, redirects, gzip/deflate, limites de recurso | [`tls-browser.md`](docs/design/tls-browser.md) |
+| **Navegador** | HTML, CSS (cascata), layout, imagens PNG/BMP/PPM/GIF/JPEG, formulários GET e POST (`<select>`, `<textarea>`), favoritos, busca na página, zoom, redirects, gzip/deflate, limites de recurso | [`tls-browser.md`](docs/design/tls-browser.md) |
 | **Apps WebAssembly** | Runtime com ABI própria e subconjunto WASI, manifesto com permissões e cotas, instalação em `/apps`, dados em `/data/<id>`. Vêm na imagem: Relógio, Notas, Pintura e Cobrinha; DOOM roda como app | [`apps.md`](docs/design/apps.md) |
 | **Idiomas** | Português do Brasil e inglês ao vivo, plurais, formatos de data e número | [`i18n.md`](docs/design/i18n.md) |
 | **Sistema** | Configurações persistentes (`/etc/kitsune.conf`), log do kernel em anel (`/var/log`), notificações, entropia com reseed e saúde por fonte | [`sysmgmt.md`](docs/design/sysmgmt.md), [`entropy.md`](docs/design/entropy.md) |
@@ -250,7 +250,7 @@ Kitsune/
 │   ├── storage/       #   dispositivo de blocos, cache, OJFS v2/v3, VFS
 │   ├── network/       #   DHCP, DNS, ICMP, SNTP, X.509, verificação TLS
 │   ├── browsing/      #   motor HTML/CSS, modelo do navegador, redirects
-│   ├── format/        #   PNG, BMP, PPM, deflate/gzip, base64, tempo Unix, busca
+│   ├── format/        #   PNG, BMP, PPM, GIF, JPEG, deflate/gzip, ZIP, codificações de texto, base64, tempo Unix, busca
 │   ├── platform/      #   plataforma de apps WebAssembly: ABI, manifesto, instalação, sandbox
 │   ├── system/        #   log, monitor, notificações, processos, heap, entropia, configurações, entrada
 │   ├── windowing/     #   janelas, encaixe, compositor (motor de dano), barra de tarefas, launcher

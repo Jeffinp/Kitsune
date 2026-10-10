@@ -297,3 +297,18 @@ fn stacked_codings_decode_outermost_last_applied_first() {
     .unwrap();
     assert_ne!(d.status, Completeness::Complete);
 }
+
+#[test]
+fn gzip_round_trips_and_python_reads_the_header() {
+    for data in [
+        &b""[..],
+        TEXT,
+        &[0u8; 5000][..],
+        &(0..=255u8).collect::<Vec<_>>()[..],
+    ] {
+        let z = gzip(data);
+        assert_eq!(&z[..4], &[0x1F, 0x8B, 8, 0]);
+        assert_eq!(gunzip(&z, 1 << 20).unwrap(), data);
+    }
+    assert!(gzip(&[0u8; 5000]).len() < 100, "repetitive data shrinks");
+}

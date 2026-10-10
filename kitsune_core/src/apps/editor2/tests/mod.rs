@@ -397,6 +397,7 @@ fn random_session(seed: u64, steps: usize, init: &str) {
 
 mod basic_editing;
 mod clipboard;
+mod encodings;
 mod keys;
 mod large_inputs;
 mod line_endings;

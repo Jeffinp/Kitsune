@@ -91,7 +91,7 @@ impl EditorState {
 
     /// Replace the buffer with `data` from `path`.
     pub(super) fn load(&mut self, path: Vec<u8>, data: &[u8]) {
-        self.ed.set_text(data);
+        self.ed.load_file(data);
         self.path = Some(path);
         self.modal = None;
         self.msg = None;

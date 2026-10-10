@@ -43,6 +43,14 @@ renomeio mantêm o nome da época.
   automática, Enter insere quebra, ↑/↓/Home/End por linha, limite de 4 KiB). O parser passou a
   fechar `<option>` implicitamente. `tools/nettest-server.py` ganhou `/form`, `/echo` e `/redir-post`;
   cenário W40 verificado em QEMU (envio, eco e POST com 303).
+- **ZIP, gzip e codificações de texto.** Novo `format::zip` (listar, extrair e criar com `stored`/`deflate`,
+  CRC-32 conferido, o tamanho declarado é teto duro contra "zip bomb", nomes com `..`, `\`, unidade ou
+  caracteres de controle são recusados) e `format::text` (UTF-8 com BOM, UTF-16 LE/BE com marca,
+  Windows-1252/Latin-1). Terminal: `zip [-r]`, `unzip [-l -o -d]`, `gzip`/`gunzip [-d -k -c -f]` e
+  `iconv -f -t`. Arquivos: "Extrair aqui" (numa pasta nova, nunca por cima do que existe) e "Compactar em
+  ZIP". O Editor abre arquivos Windows-1252 e UTF-16 como texto, mostra a codificação na barra de estado e
+  grava de volta do mesmo jeito (se o texto ganhar um caractere que ela não escreve, vira UTF-8). Fuzz
+  `archive_text`; verificado em QEMU (W41).
 - (histórico) O kernel não usava essas peças ainda (não havia login): o plano em fases está em
   [`docs/design/usuarios-seguranca.md`](docs/design/usuarios-seguranca.md) e o de compatibilidade em
   [`docs/design/compatibilidade.md`](docs/design/compatibilidade.md); o roadmap foi atualizado.

@@ -224,6 +224,12 @@ impl Desktop {
                 }
             }
             Cmd::Properties => self.files_properties(id, in_trash, &cwd, &paths),
+            Cmd::ExtractHere | Cmd::Compress => {
+                if in_trash || paths.is_empty() {
+                    return;
+                }
+                self.files_archive(id, cmd == Cmd::Compress, paths);
+            }
             // The Apps place handles these above; they do not exist on a volume path.
             Cmd::InstallApp | Cmd::RemoveApp => {}
             Cmd::SetWallpaper => {
@@ -237,6 +243,53 @@ impl Desktop {
             Cmd::SortBy(_) | Cmd::SortDir(_) | Cmd::SetView(_) | Cmd::TogglePreview => {}
         }
         self.files_sync_preview(id);
+    }
+
+    /// "Extract here" (one ZIP) or "Compress" (the selection) on `paths`, answered with a note.
+    fn files_archive(&mut self, id: WindowId, compress: bool, paths: Vec<Vec<u8>>) {
+        use kitsune_core::fileman::archive::{self, ArchiveError};
+        use kitsune_core::zip::ZipError;
+        let now = crate::storage::now();
+        let shown = |p: &[u8]| String::from_utf8_lossy(vfs::base_name(p)).into_owned();
+        let done: Result<(Vec<u8>, String), ArchiveError> = if compress {
+            vfs::with_backend(|b| archive::compress(b, &paths, t!("files.archive_name"), now))
+                .map_err(ArchiveError::Fs)
+                .and_then(|r| r)
+                .map(|out| {
+                    let note = t!("files.msg.compressed", name = shown(&out).as_str());
+                    (out, note)
+                })
+        } else {
+            vfs::with_backend(|b| archive::extract_zip(b, &paths[0], now))
+                .map_err(ArchiveError::Fs)
+                .and_then(|r| r)
+                .map(|r| {
+                    let name = shown(&r.folder);
+                    let note = if r.skipped == 0 {
+                        t!("files.msg.extracted", n = r.files, name = name.as_str())
+                    } else {
+                        t!(
+                            "files.msg.extracted_skipped",
+                            n = r.files,
+                            name = name.as_str(),
+                            skipped = r.skipped
+                        )
+                    };
+                    (r.folder, note)
+                })
+        };
+        self.fs_changed();
+        match done {
+            Ok((out, note)) => {
+                self.files_note(id, &note, false);
+                self.files_select_paths(id, &[out]);
+            }
+            Err(ArchiveError::Zip(ZipError::TooLarge)) => {
+                self.files_note(id, t!("files.msg.archive_too_big"), true);
+            }
+            Err(ArchiveError::Zip(_)) => self.files_note(id, t!("files.msg.archive_bad"), true),
+            Err(ArchiveError::Fs(e)) => self.files_note(id, e.message(), true),
+        }
     }
 
     /// Start editing the name of the item at `path` (the stem selected, or the whole name for

@@ -114,19 +114,7 @@ pub fn parse_html(input: &[u8]) -> (Vec<Node>, String) {
 
 /// Decode Windows-1252 bytes (Latin-1 plus the printable 0x80-0x9F block).
 pub(crate) fn latin1_to_string(b: &[u8]) -> String {
-    const CP1252: [char; 32] = [
-        '\u{20ac}', '\u{81}', '\u{201a}', '\u{192}', '\u{201e}', '\u{2026}', '\u{2020}',
-        '\u{2021}', '\u{2c6}', '\u{2030}', '\u{160}', '\u{2039}', '\u{152}', '\u{8d}', '\u{17d}',
-        '\u{8f}', '\u{90}', '\u{2018}', '\u{2019}', '\u{201c}', '\u{201d}', '\u{2022}', '\u{2013}',
-        '\u{2014}', '\u{2dc}', '\u{2122}', '\u{161}', '\u{203a}', '\u{153}', '\u{9d}', '\u{17e}',
-        '\u{178}',
-    ];
-    b.iter()
-        .map(|&x| match x {
-            0x80..=0x9f => CP1252[usize::from(x - 0x80)],
-            _ => char::from(x),
-        })
-        .collect()
+    crate::format::text::windows1252_to_string(b)
 }
 
 struct HtmlParser<'a> {

@@ -128,7 +128,7 @@ impl Desktop {
         let Some(e) = self.editor_mut(id) else {
             return Err(VfsError::NotFound);
         };
-        let data = e.ed.to_bytes();
+        let data = e.ed.file_bytes();
         vfs::write_file(path, &data)?;
         e.ed.mark_saved();
         e.path = Some(path.to_vec());

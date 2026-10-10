@@ -131,6 +131,7 @@ fn app_keys_install_remove_and_run() {
 #[test]
 fn apps_context_menu_offers_what_applies() {
     let ctx = |selected, installed| MenuCtx {
+        zip: false,
         in_trash: false,
         in_apps: true,
         app_installed: installed,

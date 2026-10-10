@@ -143,6 +143,19 @@ fn gzip_header_len(data: &[u8]) -> Result<usize, EncodingError> {
     Ok(pos)
 }
 
+/// Compress `data` as one gzip member (RFC 1952): DEFLATE with the fixed Huffman code, no name,
+/// no timestamp (so the output only depends on the data).
+pub fn gzip(data: &[u8]) -> Vec<u8> {
+    let body = crate::format::deflate::deflate_fixed(data);
+    let mut out = Vec::with_capacity(body.len() + 18);
+    // magic, method 8, no flags, mtime 0, no extra flags, OS 255 (unknown)
+    out.extend_from_slice(&[0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 255]);
+    out.extend_from_slice(&body);
+    out.extend_from_slice(&inflate::crc32(data).to_le_bytes());
+    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out
+}
+
 /// Decompress one gzip member (trailing garbage after the trailer is ignored,
 /// as browsers do; further members are not followed). Strict: any problem,
 /// including a cut stream, is an error; see [`gunzip_partial`] for the lenient

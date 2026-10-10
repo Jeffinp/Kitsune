@@ -51,6 +51,7 @@ pub use search::{Notice, PromptKind, PromptView};
 pub use undo::{Edit, History, Kind};
 pub use view::{Cell, Cells, RowView, VisibleRows};
 
+use crate::format::text::{self, Encoding};
 use crate::system::clipboard::{self, Clipboard};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -131,6 +132,8 @@ pub struct Status {
     pub bytes: usize,
     pub modified: bool,
     pub eol: Eol,
+    /// How the file spells its text (see [`Editor::load_file`]).
+    pub encoding: Encoding,
     /// Characters currently selected.
     pub selected_chars: usize,
 }
@@ -146,6 +149,7 @@ pub struct Editor {
     pub(crate) view: view::View,
     pub(crate) hist: History,
     pub(crate) eol: Eol,
+    pub(crate) encoding: Encoding,
     pub(crate) srch: search::Search,
     pub(crate) prompt: Option<search::Prompt>,
     pub(crate) notice: Notice,
@@ -197,6 +201,7 @@ impl Editor {
             view: view::View::new(24, 80),
             hist: History::new(),
             eol: Eol::Lf,
+            encoding: Encoding::Utf8,
             srch: search::Search::default(),
             prompt: None,
             notice: Notice::None,
@@ -210,6 +215,7 @@ impl Editor {
     pub fn set_text(&mut self, data: &[u8]) {
         self.text.set(data);
         self.eol = detect_eol(data);
+        self.encoding = Encoding::Utf8;
         self.cursor = 0;
         self.anchor = None;
         self.pref_dc = 0;
@@ -217,6 +223,32 @@ impl Editor {
         self.prompt = None;
         self.notice = Notice::None;
         self.view.reset_scroll();
+    }
+
+    /// Load the bytes of a file: UTF-16 and Windows-1252 text are converted to UTF-8 for editing
+    /// (see [`crate::format::text`]) and written back the way they came by
+    /// [`Editor::file_bytes`]. Anything else is loaded as it is.
+    pub fn load_file(&mut self, raw: &[u8]) {
+        let d = text::decode(raw);
+        self.set_text(&d.text);
+        self.encoding = d.encoding;
+    }
+
+    /// The bytes to save: the text in the encoding the file had, or in UTF-8 when it holds a
+    /// character that encoding cannot write (the document then becomes a UTF-8 one).
+    pub fn file_bytes(&mut self) -> Vec<u8> {
+        let utf8 = self.text.to_vec();
+        match text::encode(&utf8, self.encoding) {
+            Some(b) => b,
+            None => {
+                self.encoding = Encoding::Utf8;
+                utf8
+            }
+        }
+    }
+
+    pub fn encoding(&self) -> Encoding {
+        self.encoding
     }
 
     // ---- configuration -------------------------------------------------
@@ -346,6 +378,7 @@ impl Editor {
             bytes: self.text.len(),
             modified: self.is_modified(),
             eol: self.eol,
+            encoding: self.encoding,
             selected_chars,
         }
     }

@@ -586,7 +586,7 @@ pub fn status_bar(st: &Status) -> StatusBar {
     StatusBar {
         position,
         facts: [
-            String::from("UTF-8"),
+            String::from(st.encoding.label()),
             String::from(eol_text(st.eol)),
             crate::apps::fileman::format_size(st.bytes as u64),
             lines_text(st.total_lines),
