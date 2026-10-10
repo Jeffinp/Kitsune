@@ -42,6 +42,34 @@ pub fn init_frames(regions: &[(u64, u64)]) {
     *FRAMES.lock() = Some(a);
 }
 
+/// Arm SMEP and SMAP when the CPU has them: the kernel then faults if it ever executes (SMEP) or
+/// reads and writes (SMAP) a page marked user, whatever a bug or a hostile process arranged. The
+/// kernel never dereferences user pointers (every access goes through the translated copies below),
+/// so SMAP needs no `stac`/`clac` windows. Returns which of the two are on.
+pub fn harden() -> (bool, bool) {
+    use x86_64::registers::control::{Cr4, Cr4Flags};
+    // CPUID leaf 7, subleaf 0: EBX bit 7 = SMEP, bit 20 = SMAP.
+    let leaf = core::arch::x86_64::__cpuid_count(7, 0);
+    let (smep, smap) = (leaf.ebx & (1 << 7) != 0, leaf.ebx & (1 << 20) != 0);
+    let mut flags = Cr4::read();
+    if smep {
+        flags |= Cr4Flags::SUPERVISOR_MODE_EXECUTION_PROTECTION;
+    }
+    if smap {
+        flags |= Cr4Flags::SUPERVISOR_MODE_ACCESS_PREVENTION;
+    }
+    // SAFETY: only SMEP/SMAP bits are added to CR4, each only when CPUID says the CPU implements it,
+    // and the kernel neither runs user code nor touches user pages directly, so neither can fault.
+    unsafe { Cr4::write(flags) };
+    crate::klog!(
+        Info,
+        "cpu: SMEP {}, SMAP {}",
+        if smep { "on" } else { "unavailable" },
+        if smap { "on" } else { "unavailable" }
+    );
+    (smep, smap)
+}
+
 /// `(used, total)` frames of the allocator.
 pub fn frame_stats() -> (usize, usize) {
     FRAMES

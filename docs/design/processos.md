@@ -31,6 +31,7 @@ interface pequena de chamadas de sistema. É o primeiro passo da fase 3 de
 | 3 | `getpid()` | |
 | 4 | `sleep_ms(ms)` | até um minuto, bloqueia a thread sem gastar tempo |
 | 5 | `uptime_ms()` | |
+| 6 | `brk(fim)` | cresce o heap (a partir de `0x1000_0000`, até 8 MiB) com páginas zeradas; devolve o fim do heap, inalterado se recusado |
 
 Todo ponteiro é traduzido pelas tabelas do próprio processo, página por página
 (`AddressSpace::copy_in`), antes de o kernel tocar nele: um ponteiro ruim é um erro de retorno
@@ -48,14 +49,21 @@ Todo ponteiro é traduzido pelas tabelas do próprio processo, página por pági
 * 20 processos que falham em sequência: os quadros em uso voltam a **0** (nada vaza) e a vaga da thread
   é reaproveitada.
 
+## Proteções de hardware
+
+SMEP e SMAP são ligados no boot quando a CPU os tem (verificado no QEMU com `-cpu max`: o log diz
+`cpu: SMEP on, SMAP on`): o kernel passa a falhar se algum dia executar, ler ou escrever uma página
+marcada de usuário. O kernel nunca faz isso (todo acesso passa por cópias traduzidas), então não há
+janelas `stac`/`clac`. Também: NX nas pilhas e no heap do processo, W^X imposto pelo carregador, e um
+`mem` de teste mostra que tocar a página logo depois do heap mata só o processo.
+
 ## O que ainda não está
 
 * Os apps WebAssembly, o Terminal, o Editor, o Navegador e o resto do desktop **continuam no anel 0**; só
   os programas ELF rodam isolados. O próximo passo é rodar o runtime WebAssembly dentro de um processo
   de anel 3 (um hospedeiro por app) falando com o compositor por chamadas de sistema.
-* Sem SMEP/SMAP ligados (o kernel nunca desreferencia ponteiro de usuário: tudo passa por
-  `copy_in`, mas a barreira de hardware ainda não está armada); sem `brk`/`mmap`; sem arquivos, rede,
-  janelas nem entrada para processos de usuário; sem limite de CPU além da preempção.
+* Sem arquivos, rede, janelas nem entrada para processos de usuário; sem `mmap` nem memória
+  compartilhada; sem limite de CPU além da preempção.
 * As permissões de arquivo ainda não valem para eles (não abrem arquivo algum), então o `Cred` do dono
   do processo ainda não é consultado.
 * Um fio de kernel por processo de usuário, 8 processos ao mesmo tempo.

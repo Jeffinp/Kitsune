@@ -13,6 +13,7 @@
 //! | 3 | `getpid` | | the process id |
 //! | 4 | `sleep_ms` | milliseconds | 0 |
 //! | 5 | `uptime_ms` | | milliseconds since boot |
+//! | 6 | `brk` | new end of the heap (0 = just ask) | the heap's end after the call (unchanged when refused) |
 //!
 //! Every pointer is translated through the process's own page tables before the kernel touches
 //! it (`AddressSpace::copy_in`), so a bad pointer is an error return, never a kernel fault.
@@ -39,6 +40,9 @@ const IMAGE_END: u64 = 0x4000_0000;
 const MAX_IMAGE: u64 = 8 * 1024 * 1024;
 /// Most bytes one `write` accepts.
 const MAX_WRITE: usize = 4096;
+/// Where a process's heap starts, and the most it may grow to.
+const HEAP_BASE: u64 = 0x1000_0000;
+const MAX_HEAP: u64 = 8 * 1024 * 1024;
 /// Most uncollected output kept per process.
 const MAX_OUT: usize = 64 * 1024;
 /// How long a finished process waits for its output to be collected, in ticks (2 s).
@@ -75,6 +79,8 @@ struct Proc {
     /// Set by `exit`; a process whose thread died without it was killed.
     exit: Option<i32>,
     pages: usize,
+    /// End of the heap (`HEAP_BASE` when it has none).
+    heap_end: u64,
     /// What the process wrote and nobody has collected yet (at most [`MAX_OUT`] bytes).
     out: Vec<u8>,
     /// Tick at which the process was seen to be over (0 = not yet), so its output can be collected.
@@ -157,6 +163,7 @@ pub fn spawn_elf(name: &str, image: &[u8]) -> Result<u32, SpawnError> {
         aspace: Some(asp),
         exit: None,
         pages,
+        heap_end: HEAP_BASE,
         out: Vec::new(),
         over_tick: 0,
     });
@@ -359,11 +366,40 @@ pub extern "C" fn syscall_entry(rsp: u64) -> u64 {
             r.rax = crate::netd::now_ms();
             rsp
         }
+        6 => {
+            r.rax = sys_brk(slot, a);
+            rsp
+        }
         _ => {
             r.rax = ENOSYS as u64;
             rsp
         }
     }
+}
+
+/// `brk`: grow the heap to `want` (page-rounded) with zeroed pages, within [`MAX_HEAP`]. The heap
+/// only grows; asking for less than the current end, or for too much, changes nothing. Returns the
+/// end of the heap after the call.
+fn sys_brk(slot: usize, want: u64) -> u64 {
+    let mut procs = PROCS.lock();
+    let Some(p) = procs.iter_mut().find(|p| p.slot == slot) else {
+        return 0;
+    };
+    let Some(asp) = p.aspace.as_mut() else {
+        return 0;
+    };
+    if want <= p.heap_end || want > HEAP_BASE + MAX_HEAP {
+        return p.heap_end;
+    }
+    let target = want.div_ceil(PAGE_SIZE) * PAGE_SIZE;
+    while p.heap_end < target {
+        if asp.map_new(p.heap_end, true, false).is_err() {
+            break; // out of memory: keep what was mapped
+        }
+        p.heap_end += PAGE_SIZE;
+        p.pages += 1;
+    }
+    p.heap_end
 }
 
 fn sys_write(slot: usize, fd: u64, ptr: u64, len: u64) -> i64 {

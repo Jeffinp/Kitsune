@@ -208,6 +208,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     bringup::heap_smoke_test();
     trace::mark("heap init + smoke test");
     uvm::init_frames(&usable[..n_usable]);
+    uvm::harden();
 
     // First run through the native WebAssembly app engine: prove the OS can load
     // and execute a `.wasm` program (its native app format) end to end. Output

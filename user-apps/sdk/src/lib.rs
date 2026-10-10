@@ -26,6 +26,7 @@ mod nr {
     pub const GETPID: u64 = 3;
     pub const SLEEP_MS: u64 = 4;
     pub const UPTIME_MS: u64 = 5;
+    pub const BRK: u64 = 6;
 }
 
 /// A raw three-argument system call.
@@ -88,6 +89,16 @@ pub fn uptime_ms() -> u64 {
     // SAFETY: no arguments.
     unsafe { syscall3(nr::UPTIME_MS, 0, 0, 0) as u64 }
 }
+
+/// Grow the heap to at least `end` (a byte address, `0` = just ask). Returns the end of the heap
+/// after the call; the heap starts at [`HEAP_BASE`] and can reach 8 MiB. It never shrinks.
+pub fn brk(end: u64) -> u64 {
+    // SAFETY: one plain argument.
+    unsafe { syscall3(nr::BRK, end, 0, 0) as u64 }
+}
+
+/// Where the heap begins.
+pub const HEAP_BASE: u64 = 0x1000_0000;
 
 /// `fmt::Write` over `write(1, ...)`.
 pub struct Stdout;

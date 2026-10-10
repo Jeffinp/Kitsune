@@ -94,7 +94,7 @@ fn main() {
 }
 
 /// The programs of `user-apps/demo` that are embedded (each is `src/bin/<name>.rs`).
-const USER_PROGRAMS: &[&str] = &["hello", "spin", "crash", "probe"];
+const USER_PROGRAMS: &[&str] = &["hello", "spin", "crash", "probe", "mem"];
 
 /// Build `../user-apps/demo` for bare metal with the user linker script and write
 /// `out/user_gen.rs`, which lists the ELF images for `include!`.

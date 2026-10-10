@@ -13,7 +13,7 @@ renomeio mantêm o nome da época.
   tabelas do processo, processos recolhidos e vagas de thread reaproveitadas. SDK `user-apps/` e comando
   `run` no Terminal. Verificado em QEMU: escrita no endereço 0 e instrução privilegiada matam só o
   processo (`#PF`, `#GP`), um laço infinito é preemptado e encerrado com Ctrl+C, 20 falhas seguidas não
-  vazam um quadro. Fuzz `elf_frames`. Detalhes e limites em [`docs/design/processos.md`](docs/design/processos.md).
+  vazam um quadro; SMEP e SMAP ligados quando a CPU os tem; chamada `brk` (heap de até 8 MiB, quadros devolvidos ao fim). Fuzz `elf_frames`. Detalhes e limites em [`docs/design/processos.md`](docs/design/processos.md).
 
 ## 2026-10 — Contas e permissões (base), plano de segurança e compatibilidade
 
