@@ -16,10 +16,10 @@ a que muda isso, e a documentação diz essa diferença com todas as letras em c
 | Passo | O quê | Estado |
 |---|---|---|
 | 1.1 | Grupo `security` no `kitsune_core`: contas (`account`), senha PBKDF2-HMAC-SHA-256 com sal (`password`), regras de permissão `rwx` e *sticky* (`perm`), limitação de tentativas e bloqueio por inatividade (`session`). Tudo puro e testado no host. | feito |
-| 1.2 | OJFS v3 guarda `gid` no inode (campo novo em um trecho que estava sempre zerado, então discos antigos continuam válidos, com grupo 0). `stat` devolve dono, grupo e modo; `chmod` e `chown` no VFS. | a fazer |
-| 1.3 | `Secured`: um adaptador do VFS que impõe as regras de `perm` para um `Cred`, inclusive a criação com dono e `umask`, e o *sticky* em pastas compartilhadas. | a fazer |
+| 1.2 | OJFS v3 guarda `gid` no inode (campo novo em um trecho que estava sempre zerado, então discos antigos continuam válidos, com grupo 0). `stat` devolve dono, grupo e modo; `chmod` e `chown` no VFS. | feito |
+| 1.3 | `Secured`: um adaptador do VFS que impõe as regras de `perm` para um `Cred`, inclusive a criação com dono e `umask`, e o *sticky* em pastas compartilhadas. | feito |
 | 1.4 | No kernel: banco de contas em `/etc/accounts` (criado na primeira inicialização, com um assistente de criação do primeiro usuário), tela de login, tela de bloqueio, `fs=home` apontando para a pasta de quem entrou, Terminal com `whoami`, `id`, `chmod`, `chown`, `passwd`, `su`. | **feito** (sem assistente de primeiro usuário: o `kitsune` sem senha entra sozinho; `passwd` e `su` ficam para depois) |
-| 1.5 | Ajustes: página **Usuários** (criar, remover, trocar senha, administrador ou não). Registro de auditoria de login e de mudanças de conta. | **feito** a página Usuários; o registro de auditoria ainda não |
+| 1.5 | Ajustes: página **Usuários** (criar, remover, trocar senha, administrador ou não). Registro de auditoria de login e de mudanças de conta. | **feito**: página Usuários e registro de auditoria (`auth: ...` no Registro e na serial: entradas, recusas, trocas de senha, contas criadas e removidas; nunca senhas) |
 
 *Aceite da fase:* testes no host provando que um usuário não lê, escreve nem apaga o arquivo de outro; que
 a senha nunca aparece em disco nem em log; que a décima tentativa errada espera o tempo previsto; fuzz do

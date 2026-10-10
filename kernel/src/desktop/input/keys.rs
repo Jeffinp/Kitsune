@@ -61,6 +61,7 @@ impl Desktop {
     }
 
     pub fn handle_key(&mut self, scan: u8, extended: bool, pressed: bool, _time: Time) -> bool {
+        self.last_input_ms = crate::netd::now_ms();
         let alt_before = self.keymap.alt();
         let login = self.login_active();
         if pressed

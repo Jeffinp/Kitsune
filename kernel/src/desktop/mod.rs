@@ -107,6 +107,8 @@ pub struct Desktop {
     apps: Vec<AppEntry>,
     /// The WASM window that owns the pressed mouse button.
     wasm_grab: Option<WindowId>,
+    /// `netd::now_ms` of the last key or pointer event (the screen locks after a while without).
+    last_input_ms: u64,
     /// Last seen generation of app-side clipboard writes.
     clip_gen: u64,
     /// `vfs::generation()` the file managers last loaded, and the tick of that check.
@@ -163,6 +165,7 @@ impl Desktop {
             prev_right: false,
             apps: Vec::new(),
             wasm_grab: None,
+            last_input_ms: crate::netd::now_ms(),
             clip_gen: crate::wasm::clip_generation(),
             fs_gen: vfs::generation(),
             fs_gen_tick: 0,

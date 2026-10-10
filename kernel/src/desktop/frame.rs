@@ -7,6 +7,7 @@ impl Desktop {
     /// Advance all running animations by `dt`. Returns `true` while any window
     /// is still animating (the caller keeps rendering).
     pub fn animate(&mut self, dt: f32) -> bool {
+        self.auto_lock_tick();
         self.step_file_jobs();
         let files_busy = self.step_files(dt) | self.step_viewers(dt) | self.step_editors(dt);
         self.step_shell_jobs();

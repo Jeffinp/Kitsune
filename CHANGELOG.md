@@ -35,7 +35,10 @@ renomeio mantêm o nome da época.
   página **Usuários**: sua conta e troca de senha (pede a atual), lista de contas, definir senha, tornar
   administrador ou comum e remover (com confirmação) para administradores, e formulário de nova conta.
   Verificado em QEMU (W38/W39): criar `maria` com senha, reiniciar, senha errada recusada, senha certa
-  abre `/home/maria`; o PBKDF2 (20 000 iterações) leva ~140 ms em QEMU/TCG.
+  abre `/home/maria`; o PBKDF2 (20 000 iterações) leva ~140 ms em QEMU/TCG. Registro de auditoria
+  (`auth: maria: signed in`, `sign-in refused (wrong password)`, mudanças de conta e de senha; nunca a senha)
+  no Registro e na serial. **Bloqueio automático** da tela depois de 5, 15 ou 30 minutos sem teclado nem
+  mouse (Ajustes > Usuários; só para quem tem senha), registrado como `auth: screen locked ...`; verificado em QEMU.
 - **Formulários no navegador:** `method=post` (corpo `application/x-www-form-urlencoded` com
   `Content-Length`; um *redirect* 301/302/303 vira GET, 307/308 mantêm o corpo; recarregar ou voltar
   pede o endereço com GET para não repetir um envio sem querer), `<select>` (clique ou setas/letra

@@ -26,6 +26,7 @@
 //! `language` is a tag of [`Lang`] (`pt-BR`, `en`; `pt` and `en-US` read the same). `clock` is `24`,
 //! `12` or `auto` (the default: follow the language, 24 hours in Portuguese and 12 in English).
 //!
+//! `auto_lock` (minutes without input before the screen locks; 0 or absent = never; only for an account with a password).
 //! `terminal_font` and `editor_font` (text size in pixels, [`FONT_MIN`] to [`FONT_MAX`]) are written
 //! only when they differ from the default ([`FONT_DEFAULT`]).
 //!
@@ -50,6 +51,8 @@ pub const TOAST_SECS_MAX: u8 = 15;
 pub const TOAST_SECS_DEFAULT: u8 = 4;
 /// Strength of the app bar's magnification in percent (0 turns it off).
 pub const DOCK_ZOOM_MAX: u8 = 100;
+/// The choices for locking the screen after inactivity, in minutes (0 = never).
+pub const AUTO_LOCK_CHOICES: [u8; 4] = [0, 5, 15, 30];
 /// `Settings::tz_city` value for "none of the listed cities".
 pub const CITY_NONE: u8 = 255;
 
@@ -268,6 +271,8 @@ pub struct Settings {
     pub terminal_font: u8,
     /// Size of the editor text in pixels.
     pub editor_font: u8,
+    /// Minutes without input before the screen locks (0 = never).
+    pub auto_lock_min: u8,
 }
 
 impl Default for Settings {
@@ -298,6 +303,7 @@ impl Settings {
             tz_city: DEFAULT_CITY,
             terminal_font: FONT_DEFAULT,
             editor_font: FONT_DEFAULT,
+            auto_lock_min: 0,
         }
     }
 
@@ -469,6 +475,11 @@ impl Settings {
                     self.editor_font = n as u8;
                 }
             }
+            b"auto_lock" => {
+                if let Some(n) = parse_u32(val).filter(|&n| n <= 240) {
+                    self.auto_lock_min = n as u8;
+                }
+            }
             // `version` and anything unknown: nothing to do (forward compatible).
             _ => {}
         }
@@ -518,6 +529,9 @@ impl Settings {
         }
         if self.editor_font != FONT_DEFAULT {
             push_kv(&mut out, b"editor_font", self.editor_font as u32);
+        }
+        if self.auto_lock_min != 0 {
+            push_kv(&mut out, b"auto_lock", self.auto_lock_min as u32);
         }
         out
     }

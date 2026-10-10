@@ -28,7 +28,8 @@ pub(super) struct LoginGeom {
 
 pub(super) fn login_geom(sw: i32, sh: i32, users: usize) -> LoginGeom {
     let chips_h = if users > 1 { 64 } else { 0 };
-    let h = 356 + chips_h;
+    // The hint under the card exists only with several accounts.
+    let h = if users > 1 { 356 } else { 330 } + chips_h;
     let panel = Rect::new(sw / 2 - 190, sh / 2 - h / 2, 380, h);
     let mut chips = Vec::new();
     if users > 1 {
@@ -308,14 +309,7 @@ impl Desktop {
             return;
         };
         let (name, pw, locked) = (user.name.clone(), l.pw.clone(), l.locked);
-        let t0 = crate::netd::now_ms();
         let r = accounts::login(&name, &pw);
-        crate::klog!(
-            Info,
-            "login: {} took {} ms",
-            if r.is_ok() { "ok" } else { "refused" },
-            crate::netd::now_ms().saturating_sub(t0)
-        );
         match r {
             Ok(()) => {
                 if let Some(l) = self.shell.login.as_mut() {
@@ -355,6 +349,21 @@ impl Desktop {
     pub(crate) fn lock_screen(&mut self) {
         if accounts::signed_in() {
             self.open_login(true);
+        }
+    }
+
+    /// Lock the screen after `Settings::auto_lock_min` minutes without input, for an account that
+    /// has a password (for one without, the lock screen would only be a click away).
+    pub(crate) fn auto_lock_tick(&mut self) {
+        let min = crate::settings::get().auto_lock_min;
+        if min == 0 || self.login_active() || !accounts::current_has_password() {
+            return;
+        }
+        let idle = crate::netd::now_ms().saturating_sub(self.last_input_ms);
+        if idle >= u64::from(min) * 60_000 {
+            self.last_input_ms = crate::netd::now_ms();
+            crate::klog!(Info, "auth: screen locked after {min} min without input");
+            self.lock_screen();
         }
     }
 

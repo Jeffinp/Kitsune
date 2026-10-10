@@ -183,6 +183,13 @@ pub fn cred() -> Option<Cred> {
         .and_then(|g| g.as_ref().map(|s| s.cred.clone()))
 }
 
+/// Does the signed-in account have a password (so locking the screen means something)?
+pub fn current_has_password() -> bool {
+    current().is_some_and(|s| {
+        with_db(|db| db.user(&s.name).is_some_and(|u| !u.has_no_password())).unwrap_or(false)
+    })
+}
+
 /// Is somebody signed in?
 pub fn signed_in() -> bool {
     current().is_some()
@@ -203,6 +210,9 @@ fn set_session(s: Option<Session>) {
 
 /// Sign out. The desktop then shows the login screen.
 pub fn logout() {
+    if let Some(s) = current() {
+        crate::klog!(Info, "auth: {}: signed out", s.name);
+    }
     set_session(None);
 }
 
@@ -214,6 +224,11 @@ pub fn login(name: &str, password: &str) -> Result<(), LoginFail> {
         if let Some(guard) = g.as_mut()
             && let Err(th) = guard.check(name, t)
         {
+            crate::klog!(
+                Warn,
+                "auth: {name}: sign-in held back for {} ms",
+                th.retry_in_ms
+            );
             return Err(LoginFail::Throttled(th.retry_in_ms));
         }
     }
@@ -234,9 +249,23 @@ pub fn login(name: &str, password: &str) -> Result<(), LoginFail> {
                 let _ = rehash(name, password);
             }
             set_session(Some(session));
+            crate::klog!(
+                Info,
+                "auth: {name}: signed in ({} ms)",
+                now_ms().saturating_sub(t)
+            );
             Ok(())
         }
         Err(e) => {
+            crate::klog!(
+                Warn,
+                "auth: {name}: sign-in refused ({})",
+                match e {
+                    AuthError::UnknownUser => "unknown account",
+                    AuthError::BadPassword => "wrong password",
+                    AuthError::Locked => "account disabled",
+                }
+            );
             if let Ok(mut g) = GUARD.lock()
                 && let Some(guard) = g.as_mut()
             {
@@ -295,6 +324,18 @@ pub fn login_required() -> bool {
     with_db(|db| lone_passwordless(db).is_none()).unwrap_or(false)
 }
 
+/// Write the database and, when that worked, record `what` in the log (names only, never a
+/// password) as `auth: <who> <what>`.
+fn persist(what: core::fmt::Arguments<'_>) -> Result<(), ChangeFail> {
+    if with_db(|db| save(db)).unwrap_or(false) {
+        let who = current().map_or_else(|| String::from("?"), |s| s.name);
+        crate::klog!(Info, "auth: {who}: {what}");
+        Ok(())
+    } else {
+        Err(ChangeFail::Storage)
+    }
+}
+
 fn require_admin() -> Result<Session, ChangeFail> {
     match current() {
         Some(s) if s.admin => Ok(s),
@@ -324,9 +365,12 @@ pub fn add_user(
     .ok_or(ChangeFail::Storage)?;
     let t = now();
     let _ = vfs::root::with_backend(|be| layout::create_home(be, &user, t));
-    let ok = with_db(|db| save(db)).unwrap_or(false);
+    let r = persist(format_args!(
+        "created the account {name}{}",
+        if admin { " (administrator)" } else { "" }
+    ));
     vfs::root::touch();
-    if ok { Ok(()) } else { Err(ChangeFail::Storage) }
+    r
 }
 
 /// Change a password. Administrators may set anyone's; anybody may change their own by giving
@@ -356,11 +400,7 @@ pub fn set_password(name: &str, current_pw: &str, new: &str) -> Result<(), Chang
     with_db(|db| db.set_password(name, &hash))
         .ok_or(ChangeFail::Storage)?
         .map_err(ChangeFail::Account)?;
-    if with_db(|db| save(db)).unwrap_or(false) {
-        Ok(())
-    } else {
-        Err(ChangeFail::Storage)
-    }
+    persist(format_args!("changed the password of {name}"))
 }
 
 /// Make `name` an administrator or not (administrators only).
@@ -375,11 +415,10 @@ pub fn set_admin(name: &str, admin: bool) -> Result<(), ChangeFail> {
     })
     .ok_or(ChangeFail::Storage)?;
     r.map_err(ChangeFail::Account)?;
-    if with_db(|db| save(db)).unwrap_or(false) {
-        Ok(())
-    } else {
-        Err(ChangeFail::Storage)
-    }
+    persist(format_args!(
+        "{} {name} as administrator",
+        if admin { "made" } else { "unmade" }
+    ))
 }
 
 /// Delete an account (administrators only; not oneself). Its home folder goes too when
@@ -398,11 +437,10 @@ pub fn remove_user(name: &str, delete_files: bool) -> Result<(), ChangeFail> {
     if delete_files {
         let _ = vfs::root::purge(home.as_bytes());
     }
-    if with_db(|db| save(db)).unwrap_or(false) {
-        Ok(())
-    } else {
-        Err(ChangeFail::Storage)
-    }
+    persist(format_args!(
+        "removed the account {name}{}",
+        if delete_files { " and its files" } else { "" }
+    ))
 }
 
 /// `name`'s display text: the full name when there is one.

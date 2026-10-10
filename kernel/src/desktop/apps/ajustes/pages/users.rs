@@ -44,6 +44,7 @@ pub(in super::super) fn page_users(ui: &mut Ui<'_, '_>) {
     let me = accounts::current();
     let admin = me.as_ref().is_some_and(|s| s.admin);
     mine(ui, me.as_ref());
+    auto_lock(ui);
     list(ui, me.as_ref().map(|s| s.name.as_str()), admin);
     if admin {
         add_form(ui);
@@ -59,7 +60,19 @@ fn mine(ui: &mut Ui<'_, '_>, me: Option<&accounts::Session>) {
     };
     ui.header(t!("settings.users.mine"));
     let open = ui.st.users.mine_open;
-    let card = ui.card(ROW * if open { 4 } else { 1 });
+    // Without a password there is no current one to ask for.
+    let has_pw = accounts::users()
+        .iter()
+        .any(|u| u.name == me.name && u.has_password);
+    let card = ui.card(
+        ROW * if !open {
+            1
+        } else if has_pw {
+            4
+        } else {
+            3
+        },
+    );
     let r = ui.row(card, 0);
     let name = if me.full_name.is_empty() {
         me.name.as_str()
@@ -81,19 +94,19 @@ fn mine(ui: &mut Ui<'_, '_>, me: Option<&accounts::Session>) {
     let f = &ui.st.users;
     let (cur, new) = (mask(&f.cur_pw), mask(&f.new_pw));
     let (fc, fnew) = (ui.st.focus == Focus::User(3), ui.st.focus == Focus::User(4));
-    for (i, (label, val, foc, id)) in [
-        (t!("settings.users.cur_pw"), cur, fc, A_UFIELD + 3),
-        (t!("settings.users.new_pw"), new, fnew, A_UFIELD + 4),
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    let mut fields = alloc::vec::Vec::new();
+    if has_pw {
+        fields.push((t!("settings.users.cur_pw"), cur, fc, A_UFIELD + 3));
+    }
+    fields.push((t!("settings.users.new_pw"), new, fnew, A_UFIELD + 4));
+    let n_fields = fields.len() as i32;
+    for (i, (label, val, foc, id)) in fields.into_iter().enumerate() {
         let r = ui.row(card, 1 + i as i32);
         ui.label(r, label, "", true);
         let fr = Rect::new(r.x + 200, r.y + 10, r.w - 216, 28);
         ui.field(fr, &val, t!("settings.users.pw_hint"), foc, id);
     }
-    let r = ui.row(card, 3);
+    let r = ui.row(card, 1 + n_fields);
     say(ui, Rect::new(r.x + 16, r.y, r.w - 200, r.h));
     ui.button(
         Rect::new(r.right() - 16 - 88, r.y + 10, 88, 28),
@@ -109,6 +122,32 @@ fn mine(ui: &mut Ui<'_, '_>, me: Option<&accounts::Session>) {
         A_UMINE_CANCEL,
         true,
     );
+}
+
+fn auto_lock(ui: &mut Ui<'_, '_>) {
+    use kitsune_core::settings::AUTO_LOCK_CHOICES;
+    ui.header(t!("settings.users.lock_h"));
+    let card = ui.card(ROW);
+    let r = ui.row(card, 0);
+    ui.label(
+        r,
+        t!("settings.users.lock"),
+        t!("settings.users.lock_sub"),
+        true,
+    );
+    let now = ui.s.auto_lock_min;
+    let sel = AUTO_LOCK_CHOICES
+        .iter()
+        .position(|&m| m == now)
+        .unwrap_or(0);
+    let labels = [
+        t!("settings.users.lock_never"),
+        t!("settings.users.lock_5"),
+        t!("settings.users.lock_15"),
+        t!("settings.users.lock_30"),
+    ];
+    let seg = Rect::new(r.right() - 16 - 250, r.y + 10, 250, 28);
+    ui.segmented(seg, &labels, sel, A_ULOCK);
 }
 
 fn list(ui: &mut Ui<'_, '_>, me: Option<&str>, admin: bool) {

@@ -156,7 +156,13 @@ impl SettingsState {
             }
             A_UMINE => {
                 self.users.mine_open = true;
-                self.focus = Focus::User(3);
+                // Without a password there is no "current" field: start in the new one.
+                let has_pw = accounts::current().is_some_and(|me| {
+                    accounts::users()
+                        .iter()
+                        .any(|u| u.name == me.name && u.has_password)
+                });
+                self.focus = Focus::User(if has_pw { 3 } else { 4 });
             }
             A_UMINE_SAVE => {
                 self.users_save_mine();

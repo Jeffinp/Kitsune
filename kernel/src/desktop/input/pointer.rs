@@ -20,6 +20,9 @@ impl Desktop {
     }
 
     pub fn handle_mouse(&mut self, dx: i32, dy: i32, left: bool, right: bool) -> MouseResult {
+        if dx != 0 || dy != 0 || left != self.prev_left || right != self.prev_right {
+            self.last_input_ms = crate::netd::now_ms();
+        }
         self.cursor_x = (self.cursor_x + dx).clamp(0, self.sw - 1);
         self.cursor_y = (self.cursor_y - dy).clamp(0, self.sh - 1);
         let (cx, cy) = (self.cursor_x, self.cursor_y);

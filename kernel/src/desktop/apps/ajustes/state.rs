@@ -76,6 +76,8 @@ pub(super) const A_USET_SAVE: u32 = 0x580;
 pub(super) const A_USET_CANCEL: u32 = 0x581;
 pub(super) const A_UDEL_YES: u32 = 0x582;
 pub(super) const A_UDEL_NO: u32 = 0x583;
+/// The auto-lock choices (outside the 0x500 range the Users logic owns).
+pub(super) const A_ULOCK: u32 = 0x600;
 pub(super) const DOWN: u32 = 1 << 31;
 
 /// Rows of the time-zone list shown at once.

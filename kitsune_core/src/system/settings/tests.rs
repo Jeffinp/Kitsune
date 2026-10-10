@@ -415,3 +415,21 @@ fn the_city_table_is_sorted_valid_and_findable() {
     assert_eq!(city_for_offset(840), 51);
     assert_eq!(city_for_offset(1), CITY_NONE);
 }
+
+#[test]
+fn auto_lock_round_trips_and_ignores_nonsense() {
+    assert_eq!(Settings::new().auto_lock_min, 0);
+    assert!(
+        !String::from_utf8(Settings::new().to_text())
+            .unwrap()
+            .contains("auto_lock")
+    );
+    let mut s = Settings::new();
+    s.auto_lock_min = 15;
+    let back = Settings::parse(&s.to_text());
+    assert_eq!(back.auto_lock_min, 15);
+    for bad in [&b"auto_lock=999\n"[..], b"auto_lock=-1\n", b"auto_lock=x\n"] {
+        assert_eq!(Settings::parse(bad).auto_lock_min, 0);
+    }
+    assert!(AUTO_LOCK_CHOICES.contains(&0) && AUTO_LOCK_CHOICES.contains(&15));
+}

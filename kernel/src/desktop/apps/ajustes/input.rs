@@ -25,8 +25,8 @@ use kitsune_core::hw::rtc::{Field, local_to_utc};
 use kitsune_core::i18n::Lang;
 use kitsune_core::keymap::Layout;
 use kitsune_core::settings::{
-    DOCK_ZOOM_MAX, PATH_CAP, Settings, TIMEZONES, TOAST_SECS_MAX, TOAST_SECS_MIN, WallpaperChoice,
-    search_timezones,
+    AUTO_LOCK_CHOICES, DOCK_ZOOM_MAX, PATH_CAP, Settings, TIMEZONES, TOAST_SECS_MAX,
+    TOAST_SECS_MIN, WallpaperChoice, search_timezones,
 };
 use kitsune_core::tk;
 use kitsune_core::wallpaper::PRESETS;
@@ -185,6 +185,9 @@ impl Desktop {
                 s.appearance = [A::Auto, A::Light, A::Dark][(h - A_THEME) as usize];
             }
             h if (A_SWATCH..A_SWATCH + 8).contains(&h) => s.accent = (h - A_SWATCH) as u8,
+            h if (A_ULOCK..A_ULOCK + AUTO_LOCK_CHOICES.len() as u32).contains(&h) => {
+                s.auto_lock_min = AUTO_LOCK_CHOICES[(h - A_ULOCK) as usize];
+            }
             A_MOTION => s.reduce_motion = !s.reduce_motion,
             A_TOASTS => s.toasts = !s.toasts,
             A_TOAST_SECS | A_ZOOM => {
