@@ -13,4 +13,5 @@
 pub mod account;
 pub mod password;
 pub mod perm;
+pub mod secret;
 pub mod session;

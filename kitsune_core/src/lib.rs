@@ -40,7 +40,7 @@ pub use format::{
 };
 pub use network::{dns, icmp, lease, net, netstats, sntp, tlsverify, x509};
 pub use platform::{appabi, appfs, appinstall, appmanifest, appnet, wasmsec};
-pub use security::{account, password, perm, session};
+pub use security::{account, password, perm, secret, session};
 pub use storage::{blockcache, blockdev, fs, fs3, homes, secured, vfs};
 pub use system::{
     clipboard, entropy, heap, input, keymap, klog, notify, paging, process, rng, schedule,

@@ -14,9 +14,6 @@ use crate::desktop::*;
 use crate::text::{self, BODY, FOOTNOTE, TITLE2, Weight};
 use kitsune_core::t;
 
-/// Longest password the field takes.
-const MAX_PW: usize = 64;
-
 /// Where the card's parts are.
 pub(super) struct LoginGeom {
     pub panel: Rect,
@@ -81,7 +78,7 @@ impl Desktop {
         self.shell.login = Some(LoginView {
             users,
             sel,
-            pw: String::new(),
+            pw: kitsune_core::secret::Secret::new(),
             msg: None,
             locked,
             t: fade_in(OVERLAY_FADE),
@@ -187,7 +184,7 @@ impl Desktop {
             theme::solid(p.text_secondary),
         );
         // The password field: bullets only.
-        let bullets: String = "•".repeat(l.pw.len());
+        let bullets: String = "•".repeat(l.pw.chars());
         appui::field(
             c,
             g.field,
@@ -249,9 +246,7 @@ impl Desktop {
         }
         match key {
             Key::Char(ch) if (0x20..0x7F).contains(&ch) => {
-                if l.pw.len() < MAX_PW {
-                    l.pw.push(ch as char);
-                }
+                l.pw.push(ch as char);
                 l.msg = None;
             }
             Key::Backspace => {
@@ -308,8 +303,8 @@ impl Desktop {
         let Some(user) = l.users.get(l.sel) else {
             return;
         };
-        let (name, pw, locked) = (user.name.clone(), l.pw.clone(), l.locked);
-        let r = accounts::login(&name, &pw);
+        let (name, locked) = (user.name.clone(), l.locked);
+        let r = accounts::login(&name, l.pw.as_str());
         match r {
             Ok(()) => {
                 if let Some(l) = self.shell.login.as_mut() {

@@ -34,7 +34,7 @@ erro de memória ignora as permissões. Também não criptografa o disco.
 |---|---|
 | 2.1 | Assinatura dos pacotes `.wasm` (Ed25519): o instalador mostra "assinado por X" ou "sem assinatura" e o manifesto pode exigir assinatura de um usuário administrador. |
 | 2.2 | HTTPS completo: revogação, HSTS e *pinning* (item 2 do [roadmap](../ROADMAP.md)). |
-| 2.3 | Nenhum segredo em memória por mais tempo que o necessário (zerar buffers de senha), e o gerador de números aleatórios com a semente salva entre boots. |
+| 2.3 | Nenhum segredo em memória por mais tempo que o necessário, e o gerador de números aleatórios com a semente salva entre boots. | **parcial**: a senha digitada (login e Ajustes) fica num `Secret` de capacidade fixa, zerado ao limpar ou soltar; o PBKDF2 ainda deixa resíduos na pilha e a semente não é salva |
 | 2.4 | Criptografia opcional do volume do usuário, com chave derivada da senha. |
 
 *Aceite:* um `.wasm` com assinatura adulterada é recusado; um certificado revogado é recusado.

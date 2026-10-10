@@ -37,7 +37,8 @@ renomeio mantêm o nome da época.
   Verificado em QEMU (W38/W39): criar `maria` com senha, reiniciar, senha errada recusada, senha certa
   abre `/home/maria`; o PBKDF2 (20 000 iterações) leva ~140 ms em QEMU/TCG. Registro de auditoria
   (`auth: maria: signed in`, `sign-in refused (wrong password)`, mudanças de conta e de senha; nunca a senha)
-  no Registro e na serial. **Bloqueio automático** da tela depois de 5, 15 ou 30 minutos sem teclado nem
+  no Registro e na serial. A senha digitada (login e Ajustes) vive num `Secret` (`security::secret`) de
+  capacidade fixa, sem realocar, zerado ao limpar ou soltar e que não se imprime. **Bloqueio automático** da tela depois de 5, 15 ou 30 minutos sem teclado nem
   mouse (Ajustes > Usuários; só para quem tem senha), registrado como `auth: screen locked ...`; verificado em QEMU.
 - **JPEG progressivo** (seleção espectral e aproximação sucessiva, com intervalos de reinício): decodifica
   exatamente os mesmos pixels que o arquivo sequencial feito da mesma imagem (testado em 4:2:0, 4:2:2, 4:4:4,

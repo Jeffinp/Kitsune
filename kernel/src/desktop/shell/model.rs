@@ -157,7 +157,7 @@ pub(crate) struct LoginView {
     pub users: Vec<crate::desktop::services::accounts::UserRow>,
     pub sel: usize,
     /// The password typed so far (printable ASCII, as the keyboard layer delivers it).
-    pub pw: String,
+    pub pw: kitsune_core::secret::Secret,
     /// A line under the field and whether it is an error.
     pub msg: Option<(String, bool)>,
     /// A locked screen keeps the session and its windows; signing in starts one.

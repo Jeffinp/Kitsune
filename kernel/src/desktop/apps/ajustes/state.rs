@@ -6,6 +6,7 @@ use kitsune_core::activity::Glide;
 use kitsune_core::hw::rtc::{DateTime, utc_to_local};
 use kitsune_core::i18n::{self, Arg};
 use kitsune_core::iconart::Glyph;
+use kitsune_core::secret::Secret;
 use kitsune_core::settings::{PATH_CAP, search_timezones};
 use kitsune_core::tk;
 use kitsune_core::widgets as wg;
@@ -101,15 +102,15 @@ pub(super) enum Focus {
 pub(super) struct UsersForm {
     pub name: String,
     pub full: String,
-    pub pw: String,
+    pub pw: Secret,
     pub admin: bool,
     /// Changing one's own password: the form is open, with the current and the new one.
     pub mine_open: bool,
-    pub cur_pw: String,
-    pub new_pw: String,
+    pub cur_pw: Secret,
+    pub new_pw: Secret,
     /// An administrator setting somebody else's password.
     pub set_for: Option<String>,
-    pub set_pw: String,
+    pub set_pw: Secret,
     /// Asking before removing an account.
     pub confirm_del: Option<String>,
 }

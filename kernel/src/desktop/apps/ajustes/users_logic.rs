@@ -3,14 +3,44 @@
 use super::state::*;
 use crate::desktop::Key;
 use crate::desktop::services::accounts::{self, ChangeFail};
+use alloc::string::String;
 use kitsune_core::account::AccountError;
 use kitsune_core::password::PasswordError;
+use kitsune_core::secret::Secret;
 use kitsune_core::tk;
 
 /// Longest name / password typed here (the core validates the rest).
 const NAME_MAX: usize = 32;
 const FULL_MAX: usize = 40;
-const PW_MAX: usize = 64;
+
+/// A field of the page being edited.
+enum FieldRef<'a> {
+    Text(&'a mut String, usize),
+    Pass(&'a mut Secret),
+}
+
+impl FieldRef<'_> {
+    fn push(&mut self, c: char) {
+        match self {
+            FieldRef::Text(s, max) if s.len() < *max => s.push(c),
+            FieldRef::Text(..) => {}
+            FieldRef::Pass(p) => {
+                p.push(c);
+            }
+        }
+    }
+
+    fn pop(&mut self) {
+        match self {
+            FieldRef::Text(s, _) => {
+                s.pop();
+            }
+            FieldRef::Pass(p) => {
+                p.pop();
+            }
+        }
+    }
+}
 
 fn why(e: &ChangeFail) -> &'static str {
     match e {
@@ -42,16 +72,16 @@ impl SettingsState {
         }
     }
 
-    /// The text field behind `Focus::User(k)` and its limit.
-    fn user_field(&mut self, k: u8) -> (&mut alloc::string::String, usize) {
+    /// The text field behind `Focus::User(k)`: plain text (name, full name) or a password.
+    fn user_field(&mut self, k: u8) -> FieldRef<'_> {
         let f = &mut self.users;
         match k {
-            0 => (&mut f.name, NAME_MAX),
-            1 => (&mut f.full, FULL_MAX),
-            2 => (&mut f.pw, PW_MAX),
-            3 => (&mut f.cur_pw, PW_MAX),
-            4 => (&mut f.new_pw, PW_MAX),
-            _ => (&mut f.set_pw, PW_MAX),
+            0 => FieldRef::Text(&mut f.name, NAME_MAX),
+            1 => FieldRef::Text(&mut f.full, FULL_MAX),
+            2 => FieldRef::Pass(&mut f.pw),
+            3 => FieldRef::Pass(&mut f.cur_pw),
+            4 => FieldRef::Pass(&mut f.new_pw),
+            _ => FieldRef::Pass(&mut f.set_pw),
         }
     }
 
@@ -59,9 +89,7 @@ impl SettingsState {
     pub(super) fn users_key(&mut self, k: u8, key: Key) {
         match key {
             Key::Esc => self.focus = Focus::None,
-            Key::Backspace => {
-                self.user_field(k).0.pop();
-            }
+            Key::Backspace => self.user_field(k).pop(),
             Key::Tab => {
                 self.focus = Focus::User(match k {
                     0..=1 => k + 1,
@@ -90,10 +118,7 @@ impl SettingsState {
                 if b == b' ' && k == 0 {
                     return;
                 }
-                let (s, max) = self.user_field(k);
-                if s.len() < max {
-                    s.push(b as char);
-                }
+                self.user_field(k).push(b as char);
             }
             _ => {}
         }
@@ -101,7 +126,7 @@ impl SettingsState {
 
     fn users_create(&mut self) -> bool {
         let f = &self.users;
-        let r = accounts::add_user(&f.name, &f.full, &f.pw, f.admin);
+        let r = accounts::add_user(&f.name, &f.full, f.pw.as_str(), f.admin);
         let done = self.users_result(r, tk!("settings.users.ok.added"));
         if done {
             self.users = UsersForm::default();
@@ -114,7 +139,11 @@ impl SettingsState {
         let Some(me) = accounts::current() else {
             return false;
         };
-        let r = accounts::set_password(&me.name, &self.users.cur_pw, &self.users.new_pw);
+        let r = accounts::set_password(
+            &me.name,
+            self.users.cur_pw.as_str(),
+            self.users.new_pw.as_str(),
+        );
         let done = self.users_result(r, tk!("settings.users.ok.password"));
         if done {
             self.users.mine_open = false;
@@ -129,7 +158,7 @@ impl SettingsState {
         let Some(who) = self.users.set_for.clone() else {
             return false;
         };
-        let r = accounts::set_password(&who, "", &self.users.set_pw);
+        let r = accounts::set_password(&who, "", self.users.set_pw.as_str());
         let done = self.users_result(r, tk!("settings.users.ok.password"));
         if done {
             self.users.set_for = None;

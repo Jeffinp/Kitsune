@@ -7,11 +7,12 @@ use crate::desktop::kit::ui::ButtonKind;
 use crate::desktop::services::accounts;
 use crate::desktop::*;
 use crate::text::{self, BODY, FOOTNOTE, Weight};
+use kitsune_core::secret::Secret;
 use kitsune_core::t;
 
 /// Dots standing for a typed password.
-fn mask(s: &str) -> String {
-    "•".repeat(s.chars().count())
+fn mask(s: &Secret) -> String {
+    "•".repeat(s.chars())
 }
 
 fn role(admin: bool) -> &'static str {
