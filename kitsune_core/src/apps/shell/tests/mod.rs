@@ -94,6 +94,7 @@ mod accounts;
 mod archive;
 mod i18n;
 mod net;
+mod process;
 
 mod builtins;
 mod control_flow;

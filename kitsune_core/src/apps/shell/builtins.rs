@@ -20,6 +20,7 @@ mod archive;
 mod conditions;
 mod files;
 mod misc;
+mod process;
 mod session;
 mod system;
 mod text;
@@ -30,13 +31,14 @@ use archive::*;
 use conditions::*;
 use files::*;
 use misc::*;
+use process::*;
 use session::*;
 use system::*;
 use text::*;
 
 /// Register every standard builtin into `r`.
 pub fn register_all(r: &mut Registry) {
-    let table: [(&str, &'static str, BuiltinFn); 60] = [
+    let table: [(&str, &'static str, BuiltinFn); 61] = [
         ("help", tk!("sh.help.help"), help),
         ("whoami", tk!("sh.whoami.help"), whoami),
         ("id", tk!("sh.id.help"), id),
@@ -97,6 +99,7 @@ pub fn register_all(r: &mut Registry) {
         ("zip", tk!("sh.zip.help"), zip),
         ("unzip", tk!("sh.unzip.help"), unzip),
         ("iconv", tk!("sh.iconv.help"), iconv),
+        ("run", tk!("sh.run.help"), run),
     ];
     for (n, h, f) in table {
         r.register(n, h, f);

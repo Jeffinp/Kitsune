@@ -8,6 +8,7 @@ impl Desktop {
     /// is still animating (the caller keeps rendering).
     pub fn animate(&mut self, dt: f32) -> bool {
         self.auto_lock_tick();
+        crate::userproc::reap();
         self.step_file_jobs();
         let files_busy = self.step_files(dt) | self.step_viewers(dt) | self.step_editors(dt);
         self.step_shell_jobs();

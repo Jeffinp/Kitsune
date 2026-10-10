@@ -44,5 +44,7 @@ pub use fs::{FsErr, MemFs, ShellFs};
 pub use history::History;
 pub use line::{Completer, LineEditor, LineEvent, ShellCompleter};
 pub use screen::Screen;
-pub use sys::{HttpResponse, MockSys, NetInfo, SysErr, SysInfo};
+pub use sys::{
+    HttpResponse, MockSys, NetInfo, ProgramEnd, ProgramPoll, SpawnFail, SysErr, SysInfo,
+};
 pub use term::{Term, TermAction};

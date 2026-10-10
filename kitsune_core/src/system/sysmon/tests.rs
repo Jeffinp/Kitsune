@@ -67,10 +67,17 @@ fn rate_meter() {
     assert_eq!(m.rate(40, 1), 30);
 }
 
+/// Pad a short list of busy counters to all slots.
+fn pad(v: &[u64]) -> [u64; MAX_THREADS] {
+    let mut a = [0; MAX_THREADS];
+    a[..v.len()].copy_from_slice(v);
+    a
+}
+
 #[test]
 fn cpu_first_sample_is_idle() {
     let mut s = CpuSampler::new();
-    let r = s.sample(1000, &[500, 0, 0, 0, 0, 0, 0, 0]);
+    let r = s.sample(1000, &pad(&[500, 0, 0, 0, 0, 0, 0, 0]));
     assert_eq!(r.idle_pm, 1000);
     assert_eq!(r.busy_pm, 0);
 }
@@ -78,9 +85,9 @@ fn cpu_first_sample_is_idle() {
 #[test]
 fn cpu_shares_sum_to_100_percent() {
     let mut s = CpuSampler::new();
-    s.sample(0, &[0; 8]);
+    s.sample(0, &[0; MAX_THREADS]);
     // 250 ticks: thread 0 ran 100, thread 1 ran 50, thread 2 ran 25.
-    let r = s.sample(250, &[100, 50, 25, 0, 0, 0, 0, 0]);
+    let r = s.sample(250, &pad(&[100, 50, 25, 0, 0, 0, 0, 0]));
     assert_eq!(r.thread_pm[0], 400);
     assert_eq!(r.thread_pm[1], 200);
     assert_eq!(r.thread_pm[2], 100);
@@ -93,8 +100,8 @@ fn cpu_shares_sum_to_100_percent() {
 #[test]
 fn cpu_sum_is_exact_for_awkward_splits() {
     let mut s = CpuSampler::new();
-    s.sample(0, &[0; 8]);
-    let r = s.sample(3, &[1, 1, 1, 0, 0, 0, 0, 0]);
+    s.sample(0, &[0; MAX_THREADS]);
+    let r = s.sample(3, &pad(&[1, 1, 1, 0, 0, 0, 0, 0]));
     let total: u32 = r.thread_pm.iter().map(|&p| p as u32).sum::<u32>() + r.idle_pm as u32;
     assert_eq!(total, 1000);
     assert_eq!(r.idle_pm, 0);
@@ -103,9 +110,9 @@ fn cpu_sum_is_exact_for_awkward_splits() {
 #[test]
 fn cpu_over_count_is_clamped() {
     let mut s = CpuSampler::new();
-    s.sample(0, &[0; 8]);
+    s.sample(0, &[0; MAX_THREADS]);
     // Slots add up to more ticks than elapsed (racy read): still <= 100%.
-    let r = s.sample(100, &[60, 60, 0, 0, 0, 0, 0, 0]);
+    let r = s.sample(100, &pad(&[60, 60, 0, 0, 0, 0, 0, 0]));
     assert!(r.busy_pm <= 1000);
     assert_eq!(r.busy_pm + r.idle_pm, 1000);
 }
@@ -113,10 +120,10 @@ fn cpu_over_count_is_clamped() {
 #[test]
 fn cpu_zero_elapsed_and_counter_regression() {
     let mut s = CpuSampler::new();
-    s.sample(10, &[5; 8]);
-    let r = s.sample(10, &[9; 8]);
+    s.sample(10, &[5; MAX_THREADS]);
+    let r = s.sample(10, &[9; MAX_THREADS]);
     assert_eq!(r.idle_pm, 1000);
-    let r = s.sample(20, &[0; 8]); // counters went backwards
+    let r = s.sample(20, &[0; MAX_THREADS]); // counters went backwards
     assert_eq!(r.busy_pm, 0);
 }
 

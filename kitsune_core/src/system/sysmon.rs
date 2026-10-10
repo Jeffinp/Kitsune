@@ -13,7 +13,7 @@ use core::fmt::Write;
 /// Samples kept per graph: the last 60 seconds at one sample per second.
 pub const HIST: usize = 60;
 /// Scheduler slots tracked (the kernel's `MAX_THREADS`).
-pub const MAX_THREADS: usize = 8;
+pub const MAX_THREADS: usize = 16;
 
 /// Ring of the last [`HIST`] samples.
 #[derive(Clone, Copy, Debug)]

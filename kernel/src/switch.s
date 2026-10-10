@@ -72,6 +72,13 @@ timer_isr:
 yield_isr:
     CONTEXT_SWITCH_ISR {yield_schedule}
 
+/* `int 0x80` from ring 3 (gate DPL 3): the system-call entry. Same shape as the yield vector; the Rust
+ * half decodes the saved registers, writes the result into the saved `rax` and returns the stack to
+ * resume (its own, or another thread's when the call blocked or ended the process). */
+.global syscall_isr
+syscall_isr:
+    CONTEXT_SWITCH_ISR {syscall_schedule}
+
 /*
  * resume_context(rsp: u64) -> !   (System V: rsp in rdi)
  *

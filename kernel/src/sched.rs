@@ -49,7 +49,7 @@ use x86_64::registers::segmentation::{CS, SS, Segment};
 // runs the TLS 1.3 handshake (P-256 + record processing) on its own stack. Each one is
 // a page-aligned heap block with an unmapped guard page below it (see `alloc_stack`).
 const STACK_SIZE: usize = 128 * 1024;
-const MAX_THREADS: usize = 8;
+const MAX_THREADS: usize = 16;
 
 /// Sentinel written to the lowest 8 bytes of a spawned stack *that has no guard page* (the
 /// fallback when the page tables cannot be edited, see `alloc_stack`). A stack overflow grows
@@ -86,6 +86,30 @@ impl FxArea {
     }
 }
 
+/// Physical address of the kernel's own page-table root (the bootloader's), captured by [`init`].
+static KERNEL_CR3: AtomicU64 = AtomicU64::new(0);
+
+/// Make `t`'s address space and ring 3 entry stack the live ones. Runs inside the context-switch
+/// ISR / `kill_current` (IF=0), right before the new thread's registers are restored.
+fn activate(t: &Thread) {
+    let want = if t.cr3 == 0 {
+        KERNEL_CR3.load(Ordering::Relaxed)
+    } else {
+        t.cr3
+    };
+    let (cur, flags) = x86_64::registers::control::Cr3::read();
+    if cur.start_address().as_u64() != want {
+        let frame =
+            x86_64::structures::paging::PhysFrame::containing_address(x86_64::PhysAddr::new(want));
+        // SAFETY: `want` is the kernel's own root or a user root built by `uvm`, which copies every
+        // kernel mapping into it, so the code, stacks and data running now stay mapped.
+        unsafe { x86_64::registers::control::Cr3::write(frame, flags) };
+    }
+    if t.rsp0 != 0 {
+        crate::gdt::set_rsp0(t.rsp0);
+    }
+}
+
 /// Index of the running thread (read by Tarefas).
 static CURRENT: AtomicUsize = AtomicUsize::new(0);
 /// Timer ticks that found each thread slot *running* (not parked in `hlt`).
@@ -104,6 +128,14 @@ static IDLE: [AtomicBool; MAX_THREADS] = [const { AtomicBool::new(false) }; MAX_
 
 struct Thread {
     name: &'static str,
+    /// Physical address of the page-table root of a user process; `0` = the kernel's own tables.
+    cr3: u64,
+    /// Top of the kernel stack the CPU loads on a ring 3 -> ring 0 transition (`0`: kernel thread).
+    rsp0: u64,
+    /// The heap block the stack lives in (base, size in bytes), for freeing a reaped user thread.
+    block: Option<(u64, usize)>,
+    /// A dead user thread whose resources were released: the slot may be reused by `spawn_user`.
+    free: bool,
     rsp: u64,
     /// Lowest usable stack address, `0` for the boot thread (its stack is the bootloader's).
     stack_bottom: u64,
@@ -144,8 +176,19 @@ pub fn init() {
     // The boot thread runs on the bootloader's stack, which has a guard page of its own: find it so a
     // stack overflow in the compositor is reported as such (and stays fatal).
     let boot_guard = crate::vm::find_guard_below(current_sp());
+    KERNEL_CR3.store(
+        x86_64::registers::control::Cr3::read()
+            .0
+            .start_address()
+            .as_u64(),
+        Ordering::Relaxed,
+    );
     let boot = Thread {
         name: "compositor",
+        cr3: 0,
+        rsp0: 0,
+        block: None,
+        free: false,
         rsp: 0, // captured on the first preemption
         stack_bottom: 0,
         guard: boot_guard,
@@ -257,6 +300,10 @@ pub fn spawn_with_stack(name: &'static str, entry: extern "C" fn() -> !, stack_s
 
     s.threads.push(Thread {
         name,
+        cr3: 0,
+        rsp0: 0,
+        block: None,
+        free: false,
         rsp,
         stack_bottom: regions.stack_bottom,
         guard,
@@ -359,6 +406,7 @@ fn reschedule(rsp: u64, timer_tick: bool) -> u64 {
         );
     }
 
+    activate(&s.threads[next]);
     s.threads[next].rsp
 }
 
@@ -442,6 +490,7 @@ pub fn kill_current(reason: core::fmt::Arguments<'_>) -> ! {
             options(nostack, readonly, preserves_flags),
         );
     }
+    activate(&s.threads[next]);
     KILLING.store(false, Ordering::Release);
     // SAFETY: `next != cur` is runnable and not the running thread, so its `rsp` was saved by the ISR
     // (timer or yield) when it was switched out: 15 GPRs followed by an `iretq` frame, exactly what
@@ -589,4 +638,110 @@ fn scheduler() -> &'static mut Scheduler {
     // NOTE: not guaranteed by the type: safe fn returning `&'static mut`, and `spawn`'s IF=0
     // precondition is not enforced (docs/audit/01-memoria-unsafe.md #6).
     unsafe { (*SCHED.get()).as_mut().expect("scheduler not initialized") }
+}
+
+// ---- user threads (ring 3) ----
+
+/// What a reaped user thread leaves for its owner to free.
+pub struct Released {
+    /// The heap block of its kernel stack (base, size) and the guard page inside it.
+    pub block: (u64, usize),
+    pub guard: Option<u64>,
+}
+
+/// Spawn a user thread: ring 3 code at `rip` with stack pointer `user_rsp`, in the address space whose
+/// page-table root is `cr3`. Its kernel stack has a guard page like any thread's. Returns its slot, or
+/// `None` when every slot is in use. Callable from thread context (it masks interrupts itself).
+pub fn spawn_user(name: &'static str, cr3: u64, rip: u64, user_rsp: u64) -> Option<usize> {
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let s = scheduler();
+        let slot = match s.threads.iter().position(|t| t.free) {
+            Some(i) => i,
+            None if s.threads.len() < MAX_THREADS => s.threads.len(),
+            None => return None,
+        };
+        let stack_size = STACK_SIZE;
+        let (regions, guard) = alloc_stack(stack_size);
+        let top = regions.stack_top;
+        // The CPU pushes the ring 3 -> 0 frame below `RSP0`; keep it 16-aligned.
+        let rsp0 = top & !0xF;
+        let mut p = rsp0;
+        let mut push = |val: u64| {
+            p -= 8;
+            // SAFETY: `p` stays inside the freshly allocated stack block (20 words below its top) and
+            // is 8-aligned; nobody else sees this memory before the thread is runnable.
+            unsafe { (p as *mut u64).write(val) };
+        };
+        push(u64::from(crate::gdt::user_data())); // SS
+        push(user_rsp); // RSP
+        push(0x202); // RFLAGS: IF set
+        push(u64::from(crate::gdt::user_code())); // CS
+        push(rip); // RIP
+        for _ in 0..15 {
+            push(0);
+        }
+        let t = Thread {
+            name,
+            cr3,
+            rsp0,
+            block: Some((
+                regions.guard_start,
+                paging::guarded_block_size(stack_size).unwrap_or(0),
+            )),
+            free: false,
+            rsp: p,
+            stack_bottom: regions.stack_bottom,
+            guard,
+            fpu: FxArea::seeded(),
+        };
+        if slot < s.threads.len() {
+            s.threads[slot] = t;
+        } else {
+            s.threads.push(t);
+        }
+        DEAD[slot].store(false, Ordering::Release);
+        IDLE[slot].store(false, Ordering::Relaxed);
+        TICKS[slot].store(0, Ordering::Relaxed);
+        WAKE[slot].store(0, Ordering::Release);
+        STACK_KIB[slot].store((stack_size / 1024) as u32, Ordering::Relaxed);
+        Some(slot)
+    })
+}
+
+/// Block thread `slot` until tick `until` (used by a system call, which switches away right after).
+pub fn set_wake(slot: usize, until: u64) {
+    if slot < MAX_THREADS {
+        WAKE[slot].store(until, Ordering::SeqCst);
+    }
+}
+
+/// Mark user thread `slot` dead from outside (an administrator killed the process). It stops being
+/// scheduled at the next tick; the owner reaps it with [`release_dead_user`].
+pub fn kill_user(slot: usize) {
+    if slot < MAX_THREADS && slot != 0 {
+        DEAD[slot].store(true, Ordering::Release);
+    }
+}
+
+/// Take the resources of the dead user thread in `slot` so they can be freed, and let the slot be
+/// reused. `None` when the slot is not a dead user thread, or it is the thread running right now
+/// (its kernel stack is in use).
+pub fn release_dead_user(slot: usize) -> Option<Released> {
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let s = scheduler();
+        if slot == 0 || slot >= s.threads.len() || slot == s.current {
+            return None;
+        }
+        let dead = DEAD[slot].load(Ordering::Acquire);
+        let t = &mut s.threads[slot];
+        if !dead || t.cr3 == 0 || t.free {
+            return None;
+        }
+        t.free = true;
+        let block = t.block.take()?;
+        Some(Released {
+            block,
+            guard: t.guard,
+        })
+    })
 }

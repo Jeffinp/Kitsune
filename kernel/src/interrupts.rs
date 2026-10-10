@@ -35,6 +35,8 @@ const KEYBOARD_VECTOR: u8 = 33; // IRQ1
 const MOUSE_VECTOR: u8 = 44; // IRQ12 (slave PIC)
 /// Software interrupt a blocking thread raises (`int 0x81`) to hand over the CPU.
 pub const YIELD_VECTOR: u8 = 0x81;
+/// The system-call vector: a gate ring 3 may use (DPL 3), unlike every other vector here.
+pub const SYSCALL_VECTOR: u8 = 0x80;
 const SPURIOUS_MASTER_VECTOR: u8 = 39; // IRQ7 (master PIC)
 const SPURIOUS_SLAVE_VECTOR: u8 = 47; // IRQ15 (slave PIC)
 
@@ -95,6 +97,9 @@ pub fn init() {
         // switch, so it's installed by raw address instead of `set_handler_fn`.
         idt[TIMER_VECTOR].set_handler_addr(VirtAddr::from_ptr(timer_isr as *const ()));
         idt[YIELD_VECTOR].set_handler_addr(VirtAddr::from_ptr(yield_isr as *const ()));
+        idt[SYSCALL_VECTOR]
+            .set_handler_addr(VirtAddr::from_ptr(syscall_isr as *const ()))
+            .set_privilege_level(x86_64::PrivilegeLevel::Ring3);
         idt[KEYBOARD_VECTOR].set_handler_fn(keyboard);
         idt[MOUSE_VECTOR].set_handler_fn(mouse);
         // Spurious IRQ7/IRQ15 (an IRQ line that dropped before the PIC was acknowledged).
@@ -179,6 +184,7 @@ core::arch::global_asm!(
     include_str!("switch.s"),
     schedule = sym timer_schedule,
     yield_schedule = sym yield_schedule,
+    syscall_schedule = sym crate::userproc::syscall_entry,
 );
 
 unsafe extern "C" {
@@ -187,6 +193,8 @@ unsafe extern "C" {
     fn timer_isr();
     /// Same context-switch body on the yield vector (see `switch.s`).
     fn yield_isr();
+    /// The `int 0x80` system-call entry for user processes (see `switch.s`).
+    fn syscall_isr();
 }
 
 /// Rust half of the timer ISR: advance the clock, round-robin to the next

@@ -140,7 +140,7 @@ O handshake **só começa** com pelo menos 128 bits de entropia creditados; sem 
 ### 3.5 Dados
 - O OJFS guarda dono, grupo e modo em cada inode e o VFS sabe impô-los (`storage::secured`, testado
   no host e com fuzz de `security::*`), e **o kernel o usa**: há contas (`/etc/accounts`, senha PBKDF2), tela de login e bloqueio, e os
-  arquivos do usuário passam por `Secured`. Mesmo assim tudo roda no anel 0: os apps e os serviços do
+  arquivos do usuário passam por `Secured`. Programas ELF já rodam em anel 3 ([`design/processos.md`](design/processos.md)), mas os apps WebAssembly e o desktop ainda não. Mesmo assim quase tudo roda no anel 0: os apps e os serviços do
   sistema têm acesso privilegiado, então as permissões protegem um usuário de outro dentro dos apps de
   arquivos, não de código malicioso no kernel. Não há criptografia do disco. O disco dedicado é tratado como confiável
   depois de validado. O plano e a ordem estão em [`design/usuarios-seguranca.md`](design/usuarios-seguranca.md).

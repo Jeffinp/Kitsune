@@ -36,7 +36,8 @@ mod structure;
 pub use apps::{activity, calc, editor2, fileman, shell, termui, viewer};
 pub use browsing::{browser, redirect, web};
 pub use format::{
-    base64, bmp, deflate, gzip, image, inflate, png, ppm, search, text as textenc, unixtime, zip,
+    base64, bmp, deflate, elf, gzip, image, inflate, png, ppm, search, text as textenc, unixtime,
+    zip,
 };
 pub use network::{dns, icmp, lease, net, netstats, sntp, tlsverify, x509};
 pub use platform::{appabi, appfs, appinstall, appmanifest, appnet, wasmsec};

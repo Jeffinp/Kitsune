@@ -9,6 +9,10 @@
 //! and stack, whether a faulting address hit a guard) are here, where they are
 //! tested on the host.
 
+mod frames;
+
+pub use frames::{FrameAlloc, FrameError};
+
 /// Size of a (small) page.
 pub const PAGE_SIZE: u64 = 4096;
 /// Entries per page table.

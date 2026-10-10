@@ -4,6 +4,17 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — Processos em anel 3 (MVP)
+
+- Programas **ELF rodam em modo usuário**, cada um no seu espaço de endereçamento: GDT com segmentos de
+  usuário e `TSS.RSP0` por thread, alocador de quadros físicos (`paging::FrameAlloc`), tabelas de páginas
+  por processo (metade do kernel sem bit `USER`; a do usuário começa vazia), carregador ELF estrito
+  (`format::elf`: W^X, sem páginas divididas, limites), `int 0x80` com ponteiros sempre traduzidos pelas
+  tabelas do processo, processos recolhidos e vagas de thread reaproveitadas. SDK `user-apps/` e comando
+  `run` no Terminal. Verificado em QEMU: escrita no endereço 0 e instrução privilegiada matam só o
+  processo (`#PF`, `#GP`), um laço infinito é preemptado e encerrado com Ctrl+C, 20 falhas seguidas não
+  vazam um quadro. Fuzz `elf_frames`. Detalhes e limites em [`docs/design/processos.md`](docs/design/processos.md).
+
 ## 2026-10 — Contas e permissões (base), plano de segurança e compatibilidade
 
 - Novo grupo `security` no `kitsune_core`: contas (`account`: usuários, grupos, banco de dados em texto

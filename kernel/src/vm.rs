@@ -40,6 +40,22 @@ pub fn init(phys_offset: Option<u64>) {
     PHYS_OFFSET.store(phys_offset.unwrap_or(0), Ordering::Relaxed);
 }
 
+/// Where the bootloader mapped physical memory (0 before [`init`]).
+pub fn phys_offset() -> u64 {
+    PHYS_OFFSET.load(Ordering::Relaxed)
+}
+
+/// Undo [`unmap_page`]: set `PRESENT` again on the page's entry (the rest of it was kept).
+pub fn remap_page(page: u64) -> Result<(), Error> {
+    debug_assert!(page.is_multiple_of(PAGE_SIZE));
+    let pte = pte_ptr_any(page)?;
+    // SAFETY: `pte` is the live level-1 entry of `page`; only the `PRESENT` bit is set, restoring the
+    // mapping `unmap_page` removed, and the TLB entry is flushed so the change is seen at once.
+    unsafe { pte.write_volatile(pte.read_volatile() | paging::ENTRY_PRESENT) };
+    x86_64::instructions::tlb::flush(VirtAddr::new(page));
+    Ok(())
+}
+
 /// Pointer to the level-1 entry that maps `vaddr`, found by walking the active tables from CR3.
 fn pte_ptr(vaddr: u64) -> Result<*mut u64, Error> {
     let offset = PHYS_OFFSET.load(Ordering::Relaxed);
@@ -66,6 +82,36 @@ fn pte_ptr(vaddr: u64) -> Result<*mut u64, Error> {
         }
     }
     Err(Error::NotMapped) // unreachable: level 1 yields `Leaf` or `Absent`
+}
+
+/// Like [`pte_ptr`], but also finds the level-1 entry of a page whose `PRESENT` bit is clear.
+fn pte_ptr_any(vaddr: u64) -> Result<*mut u64, Error> {
+    let offset = PHYS_OFFSET.load(Ordering::Relaxed);
+    if offset == 0 {
+        return Err(Error::NoPhysicalMap);
+    }
+    if !paging::is_canonical(vaddr) {
+        return Err(Error::NotCanonical);
+    }
+    let mut table = Cr3::read().0.start_address().as_u64();
+    for (i, &index) in paging::table_indices(vaddr).iter().enumerate() {
+        let level = 4 - i as u8;
+        // SAFETY: as in `pte_ptr`: `table` is a live page table reached through the physical map and
+        // `index < 512`; only read here.
+        let entry_ptr = unsafe { ((offset + table) as *mut u64).add(index) };
+        if level == 1 {
+            return Ok(entry_ptr);
+        }
+        // SAFETY: as above.
+        let entry = unsafe { entry_ptr.read_volatile() };
+        match paging::step(level, entry) {
+            Step::Table(next) => table = next,
+            Step::Absent => return Err(Error::NotMapped),
+            Step::Huge => return Err(Error::HugePage),
+            Step::Leaf(_) => return Ok(entry_ptr),
+        }
+    }
+    Err(Error::NotMapped)
 }
 
 /// Is the 4 KiB page containing `vaddr` mapped?

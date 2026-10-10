@@ -1,5 +1,5 @@
 //! Data formats and small utilities: base64, the deflate family (`inflate`, `deflate`, `gzip`),
-//! the image codecs (`png`, `bmp`, `ppm`, `gif`, `jpeg`, and `image` over them), ZIP archives (`zip`), text encodings (`text`), Unix time and
+//! the image codecs (`png`, `bmp`, `ppm`, `gif`, `jpeg`, and `image` over them), ZIP archives (`zip`), ELF executables for user processes (`elf`), text encodings (`text`), Unix time and
 //! calendar maths (`unixtime`) and the substring matcher (`search`).
 //!
 //! May depend on: nothing else in the crate (this is the leaf layer). See
@@ -8,6 +8,7 @@
 pub mod base64;
 pub mod bmp;
 pub mod deflate;
+pub mod elf;
 pub mod gif;
 pub mod gzip;
 pub mod image;

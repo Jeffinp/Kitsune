@@ -127,6 +127,54 @@ impl SysErr {
     }
 }
 
+/// Why a ring 3 program could not start ([`SysInfo::spawn_program`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SpawnFail {
+    /// The system has no user processes.
+    Unsupported,
+    /// No embedded program has that name.
+    Unknown,
+    /// The file is not an ELF executable this system can run (the text says why in the log).
+    BadImage,
+    NoMemory,
+    /// Too many processes already.
+    TooMany,
+}
+
+impl SpawnFail {
+    /// The catalog key of the text for this failure.
+    pub const fn key(self) -> &'static str {
+        match self {
+            SpawnFail::Unsupported => tk!("sh.sys.unsupported"),
+            SpawnFail::Unknown => tk!("sh.run.unknown"),
+            SpawnFail::BadImage => tk!("sh.run.bad_image"),
+            SpawnFail::NoMemory => tk!("sh.run.no_memory"),
+            SpawnFail::TooMany => tk!("sh.run.too_many"),
+        }
+    }
+
+    pub fn message(self) -> &'static str {
+        crate::i18n::tr(self.key())
+    }
+}
+
+/// What a running ring 3 program has done since the last poll ([`SysInfo::poll_program`]).
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct ProgramPoll {
+    /// Output written since the previous poll.
+    pub output: Vec<u8>,
+    /// `Some` once it is over.
+    pub end: Option<ProgramEnd>,
+}
+
+/// How a ring 3 program ended.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ProgramEnd {
+    Exited(i32),
+    /// A fault (bad memory access, privileged instruction...) or a kill.
+    Killed,
+}
+
 /// A fetched HTTP(S) response ([`SysInfo::http_get`]).
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct HttpResponse {
@@ -253,6 +301,23 @@ pub trait SysInfo {
         None
     }
 
+    /// Start a ring 3 program (`run`): the ELF bytes in `image`, or the embedded program called
+    /// `name` when there are none. Returns its process id.
+    fn spawn_program(&mut self, _name: &str, _image: Option<&[u8]>) -> Result<u32, SpawnFail> {
+        Err(SpawnFail::Unsupported)
+    }
+
+    /// What the program `pid` wrote since the last call and whether it is over.
+    fn poll_program(&mut self, _pid: u32) -> ProgramPoll {
+        ProgramPoll {
+            output: Vec::new(),
+            end: Some(ProgramEnd::Killed),
+        }
+    }
+
+    /// Stop the program `pid` (Ctrl+C while `run` waits).
+    fn kill_program(&mut self, _pid: u32) {}
+
     /// Wait `ms` milliseconds (`sleep`). The shell already caps the value with
     /// [`crate::apps::shell::Limits::max_sleep_ms`].
     fn sleep_ms(&mut self, _ms: u64) {}
@@ -290,6 +355,11 @@ pub struct MockSys {
     /// Accounts for `users`, `chown` and `ls -l` (name, uid); groups are (name, gid).
     pub people: Vec<UserEntry>,
     pub group_list: Vec<(String, u32)>,
+    /// Programs `run` knows (name, output, exit status; `None` = killed by a fault).
+    pub programs: Vec<(String, Vec<u8>, Option<i32>)>,
+    /// Programs started through `spawn_program` (name), and the pids killed.
+    pub started: Vec<String>,
+    pub program_kills: Vec<u32>,
     /// `interrupted` turns true after this many polls (`None` = never).
     pub interrupt_after: Option<u32>,
     polls: core::cell::Cell<u32>,
@@ -337,6 +407,9 @@ impl Default for MockSys {
             who: None,
             people: Vec::new(),
             group_list: Vec::new(),
+            programs: Vec::new(),
+            started: Vec::new(),
+            program_kills: Vec::new(),
             interrupt_after: None,
             polls: core::cell::Cell::new(0),
         }
@@ -419,6 +492,43 @@ impl SysInfo for MockSys {
 
     fn identity(&self) -> Option<Identity> {
         self.who.clone()
+    }
+
+    fn spawn_program(&mut self, name: &str, image: Option<&[u8]>) -> Result<u32, SpawnFail> {
+        if let Some(img) = image {
+            if !img.starts_with(b"\x7fELF") {
+                return Err(SpawnFail::BadImage);
+            }
+            self.started.push(String::from(name));
+            return Ok(5000 + self.started.len() as u32);
+        }
+        if !self.programs.iter().any(|(n, ..)| n == name) {
+            return Err(SpawnFail::Unknown);
+        }
+        self.started.push(String::from(name));
+        Ok(5000 + self.started.len() as u32)
+    }
+
+    fn poll_program(&mut self, pid: u32) -> ProgramPoll {
+        let name = self
+            .started
+            .get(pid as usize - 5001)
+            .cloned()
+            .unwrap_or_default();
+        match self.programs.iter().find(|(n, ..)| *n == name) {
+            Some((_, out, code)) => ProgramPoll {
+                output: out.clone(),
+                end: Some(code.map_or(ProgramEnd::Killed, ProgramEnd::Exited)),
+            },
+            None => ProgramPoll {
+                output: Vec::new(),
+                end: Some(ProgramEnd::Exited(0)),
+            },
+        }
+    }
+
+    fn kill_program(&mut self, pid: u32) {
+        self.program_kills.push(pid);
     }
 
     fn user_list(&self) -> Vec<UserEntry> {

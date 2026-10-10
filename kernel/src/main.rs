@@ -43,6 +43,8 @@ mod text;
 mod theme;
 mod tlsv;
 mod trace;
+mod userproc;
+mod uvm;
 mod virtio;
 mod virtio_gpu;
 mod virtio_net;
@@ -116,6 +118,16 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     klog!(Info, "physical_memory_offset: {:#x?}", phys_offset);
     // The page tables are reached through that mapping (thread-stack guard pages, see `vm`).
     vm::init(phys_offset);
+    // Physical frames for user address spaces: every usable region the bootloader reported.
+    // (A fixed array: the heap does not exist yet.)
+    let mut usable = [(0u64, 0u64); 64];
+    let mut n_usable = 0;
+    for r in boot_info.memory_regions.iter() {
+        if r.kind == bootloader_api::info::MemoryRegionKind::Usable && n_usable < usable.len() {
+            usable[n_usable] = (r.start, r.end);
+            n_usable += 1;
+        }
+    }
 
     let framebuffer = match boot_info.framebuffer.as_mut() {
         Some(fb) => fb,
@@ -195,6 +207,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
     bringup::heap_smoke_test();
     trace::mark("heap init + smoke test");
+    uvm::init_frames(&usable[..n_usable]);
 
     // First run through the native WebAssembly app engine: prove the OS can load
     // and execute a `.wasm` program (its native app format) end to end. Output

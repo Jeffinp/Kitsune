@@ -157,3 +157,10 @@ path = "fuzz_targets/i18n_format.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "elf_frames"
+path = "fuzz_targets/elf_frames.rs"
+test = false
+doc = false
+bench = false

@@ -87,7 +87,63 @@ fn main() {
     println!("cargo:rerun-if-changed=../wasm-apps/sdk/src");
     println!("cargo:rerun-if-changed=../wasm-apps/sdk/Cargo.toml");
 
+    // 4) The ring 3 demo programs (`../user-apps/demo`), ELF executables for `x86_64-unknown-none`.
+    build_user_programs(&out);
+
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// The programs of `user-apps/demo` that are embedded (each is `src/bin/<name>.rs`).
+const USER_PROGRAMS: &[&str] = &["hello", "spin", "crash", "probe"];
+
+/// Build `../user-apps/demo` for bare metal with the user linker script and write
+/// `out/user_gen.rs`, which lists the ELF images for `include!`.
+fn build_user_programs(out: &Path) {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("user-apps");
+    let manifest = root.join("demo").join("Cargo.toml");
+    let linker = root.join("linker.ld");
+    let target_dir = out.join("userapp");
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let status = Command::new(cargo)
+        .env_remove("RUSTC_WORKSPACE_WRAPPER")
+        .env_remove("RUSTC_WRAPPER")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .env_remove("CARGO_BUILD_RUSTFLAGS")
+        .env(
+            "RUSTFLAGS",
+            format!(
+                "-C link-arg=-T{} -C relocation-model=static -C link-arg=-zmax-page-size=4096 -C link-arg=-znorelro",
+                linker.display()
+            ),
+        )
+        .args(["build", "--release", "--target", "x86_64-unknown-none"])
+        .arg("--manifest-path")
+        .arg(&manifest)
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .status()
+        .unwrap_or_else(|e| panic!("failed to launch cargo for the user programs: {e}"));
+    assert!(status.success(), "the user programs failed to build");
+    let mut list = String::new();
+    std::fs::create_dir_all(out.join("user")).expect("create user dir");
+    for name in USER_PROGRAMS {
+        let elf = target_dir.join("x86_64-unknown-none/release").join(name);
+        let dest = out.join("user").join(format!("{name}.elf"));
+        std::fs::copy(&elf, &dest).unwrap_or_else(|e| panic!("copy {}: {e}", elf.display()));
+        list.push_str(&format!(
+            "    (\"{name}\", include_bytes!(concat!(env!(\"OUT_DIR\"), \"/user/{name}.elf\"))),\n"
+        ));
+    }
+    let generated = format!(
+        "/// Ring 3 programs embedded in the image (see `build.rs`): name and ELF bytes.\n\
+         pub(crate) static USER_PROGRAMS: &[(&str, &[u8])] = &[\n{list}];\n"
+    );
+    std::fs::write(out.join("user_gen.rs"), generated).expect("write user_gen.rs");
+    println!("cargo:rerun-if-changed=../user-apps/sdk/src");
+    println!("cargo:rerun-if-changed=../user-apps/demo/src");
+    println!("cargo:rerun-if-changed=../user-apps/linker.ld");
 }
 
 /// Assemble `wat` text and write the resulting binary module to `out/name`.

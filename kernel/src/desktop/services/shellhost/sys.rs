@@ -93,6 +93,44 @@ fn fail_err(r: kitsune_core::browser::FailReason) -> SysErr {
 }
 
 impl SysInfo for KSys {
+    fn spawn_program(
+        &mut self,
+        name: &str,
+        image: Option<&[u8]>,
+    ) -> Result<u32, kitsune_core::shell::SpawnFail> {
+        use crate::userproc::{self, SpawnError};
+        use kitsune_core::shell::SpawnFail;
+        let bytes = match image {
+            Some(b) => b,
+            None => userproc::embedded(name).ok_or(SpawnFail::Unknown)?,
+        };
+        userproc::spawn_elf(name, bytes).map_err(|e| match e {
+            SpawnError::BadElf(why) => {
+                crate::klog!(Warn, "run: '{name}' is not runnable: {why:?}");
+                SpawnFail::BadImage
+            }
+            SpawnError::OutOfMemory => SpawnFail::NoMemory,
+            SpawnError::TooMany => SpawnFail::TooMany,
+        })
+    }
+
+    fn poll_program(&mut self, pid: u32) -> kitsune_core::shell::ProgramPoll {
+        use crate::userproc::End;
+        use kitsune_core::shell::{ProgramEnd, ProgramPoll};
+        let (output, end) = crate::userproc::poll(pid);
+        ProgramPoll {
+            output,
+            end: end.map(|e| match e {
+                End::Exited(c) => ProgramEnd::Exited(c),
+                _ => ProgramEnd::Killed,
+            }),
+        }
+    }
+
+    fn kill_program(&mut self, pid: u32) {
+        crate::userproc::kill(pid);
+    }
+
     fn identity(&self) -> Option<kitsune_core::shell::sys::Identity> {
         crate::desktop::services::accounts::identity()
     }
@@ -189,10 +227,30 @@ impl SysInfo for KSys {
     }
 
     fn procs(&self) -> Vec<ProcInfo> {
-        self.snap.procs.iter().map(|(p, _)| p.clone()).collect()
+        use crate::userproc::End;
+        let mut v: Vec<ProcInfo> = self.snap.procs.iter().map(|(p, _)| p.clone()).collect();
+        // Ring 3 processes follow the desktop's own table.
+        v.extend(crate::userproc::list().into_iter().map(|p| ProcInfo {
+            pid: p.pid,
+            name: p.name,
+            state: alloc::string::String::from(match p.end {
+                End::Running => "ring3",
+                End::Exited(_) => "done",
+                End::Killed => "dead",
+            }),
+            mem_bytes: p.pages as u64 * 4096,
+        }));
+        v
     }
 
     fn kill(&mut self, pid: u32, signal: i32) -> Result<(), SysErr> {
+        // A ring 3 process: any signal but 0 stops it.
+        if crate::userproc::list().iter().any(|p| p.pid == pid) {
+            if signal != 0 {
+                crate::userproc::kill(pid);
+            }
+            return Ok(());
+        }
         match self.snap.procs.iter().find(|(p, _)| p.pid == pid) {
             None => Err(SysErr::NoSuchProcess),
             Some((_, false)) => Err(SysErr::Denied),

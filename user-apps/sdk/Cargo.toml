@@ -1,0 +1,13 @@
+# Kitsune user SDK: what a ring 3 program links against. System calls over `int 0x80`, `print!`,
+# the panic handler and the `entry!` macro. `no_std`, no dependencies; see docs/design/processos.md.
+[package]
+name = "kitsune-user"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+# Detached from the repository workspace (own lock, built only for x86_64-unknown-none).
+[workspace]

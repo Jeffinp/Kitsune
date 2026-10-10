@@ -45,6 +45,9 @@ erro de memória ignora as permissões. Também não criptografa o disco.
 na GDT, tabelas de páginas por processo, `syscall`/`sysret`, e os apps WebAssembly passando a rodar em ring 3
 por trás de uma interface de chamadas de sistema que aplica as regras da fase 1 com o `Cred` do processo.
 
+*Estado:* **começou.** Programas ELF já rodam em anel 3 com espaço de endereçamento próprio e `int 0x80`
+(ver [`processos.md`](processos.md)); falta levar os apps WebAssembly e o desktop para lá.
+
 *Aceite:* um app com acesso inválido à memória não derruba o kernel nem os outros apps; um app não abre o
 arquivo de outro usuário mesmo tentando o caminho direto.
 
