@@ -39,6 +39,11 @@ renomeio mantêm o nome da época.
   (`auth: maria: signed in`, `sign-in refused (wrong password)`, mudanças de conta e de senha; nunca a senha)
   no Registro e na serial. **Bloqueio automático** da tela depois de 5, 15 ou 30 minutos sem teclado nem
   mouse (Ajustes > Usuários; só para quem tem senha), registrado como `auth: screen locked ...`; verificado em QEMU.
+- **JPEG progressivo** (seleção espectral e aproximação sucessiva, com intervalos de reinício): decodifica
+  exatamente os mesmos pixels que o arquivo sequencial feito da mesma imagem (testado em 4:2:0, 4:2:2, 4:4:4,
+  cinza e com reinício) e confere com o libjpeg onde a ampliação da cor é exata; um arquivo cortado mostra o
+  que chegou (a primeira varredura já dá a imagem, borrada). Limite de ~6 milhões de amostras, porque os
+  coeficientes ficam na memória; acima disso o Imagens e o navegador dizem que é grande demais.
 - **Formulários no navegador:** `method=post` (corpo `application/x-www-form-urlencoded` com
   `Content-Length`; um *redirect* 301/302/303 vira GET, 307/308 mantêm o corpo; recarregar ou voltar
   pede o endereço com GET para não repetir um envio sem querer), `<select>` (clique ou setas/letra

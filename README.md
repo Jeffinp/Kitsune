@@ -218,7 +218,7 @@ a seguir, em ordem, com critério de aceite para cada item, está em [`docs/ROAD
 - **Aceleração gráfica** por GPU, depois de enviar à tela só o que mudou.
 - **Isolamento por processo** (ring 3): contas e login já existem, mas apps e serviços ainda rodam no anel 0.
 - **Reiniciar e limpar threads de serviço** que falham; *fuel* retomável para apps WebAssembly.
-- **HTTPS completo**: revogação, HSTS; no navegador, JPEG progressivo e reuso de conexão (POST, `<select>`, `<textarea>`, GIF e JPEG já funcionam).
+- **HTTPS completo**: revogação, HSTS; no navegador, reuso de conexão (POST, `<select>`, `<textarea>`, GIF e JPEG, inclusive progressivo, já funcionam).
 
 ---
 

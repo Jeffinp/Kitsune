@@ -89,10 +89,6 @@ fn dimensions_without_decoding() {
 #[test]
 fn what_is_not_supported_is_said() {
     assert_eq!(
-        decode(PROGRESSIVE).unwrap_err(),
-        JpegError::Unsupported(Feature::Progressive)
-    );
-    assert_eq!(
         decode(CMYK).unwrap_err(),
         JpegError::Unsupported(Feature::Components)
     );
@@ -292,4 +288,134 @@ fn the_signature_check() {
     assert!(!is_jpeg(b"\xFF\xD8"));
     assert!(!is_jpeg(b"GIF89a"));
     let _ = vec![0u8; 0];
+}
+
+// ---- progressive ----
+
+const PROG_420: &[u8] = include_bytes!("testdata/prog_420.jpg");
+const BASE_420: &[u8] = include_bytes!("testdata/base_420.jpg");
+const PROG_422: &[u8] = include_bytes!("testdata/prog_422.jpg");
+const BASE_422: &[u8] = include_bytes!("testdata/base_422.jpg");
+const PROG_444: &[u8] = include_bytes!("testdata/prog_444.jpg");
+const BASE_444: &[u8] = include_bytes!("testdata/base_444.jpg");
+const PROG_GRAY: &[u8] = include_bytes!("testdata/prog_gray.jpg");
+const BASE_GRAY: &[u8] = include_bytes!("testdata/base_gray.jpg");
+const PROG_RST: &[u8] = include_bytes!("testdata/prog_rst.jpg");
+const BASE_RST: &[u8] = include_bytes!("testdata/base_rst.jpg");
+
+/// The coefficients of a progressive file are those of the sequential one made from the same
+/// picture with the same tables, so the two must decode to exactly the same pixels.
+#[test]
+fn progressive_equals_sequential_for_every_sampling() {
+    for (p, b, name) in [
+        (PROG_420, BASE_420, "4:2:0"),
+        (PROG_422, BASE_422, "4:2:2"),
+        (PROG_444, BASE_444, "4:4:4"),
+        (PROG_GRAY, BASE_GRAY, "gray"),
+        (PROG_RST, BASE_RST, "restart intervals"),
+    ] {
+        assert!(
+            p.windows(2).any(|w| w == [0xFF, 0xC2]),
+            "{name} is progressive"
+        );
+        let (got, want) = (decode(p).unwrap(), decode(b).unwrap());
+        assert_eq!(diff(&got, &want), (0, 0), "{name}: not identical");
+    }
+}
+
+#[test]
+fn progressive_matches_libjpeg_where_upsampling_is_exact() {
+    check(
+        PROG_444,
+        include_bytes!("testdata/prog_444.ppm"),
+        "progressive 4:4:4",
+    );
+    check(
+        PROG_GRAY,
+        include_bytes!("testdata/prog_gray.ppm"),
+        "progressive gray",
+    );
+}
+
+#[test]
+fn a_progressive_file_cut_anywhere_decodes_as_far_as_it_goes() {
+    // After the first scan the picture is already there (blurry); every later cut is at least as
+    // good, and none panics.
+    let first_ac = PROG_420
+        .windows(2)
+        .enumerate()
+        .filter(|(_, w)| *w == [0xFF, 0xDA])
+        .map(|(i, _)| i)
+        .nth(1)
+        .unwrap();
+    let full = decode(PROG_420).unwrap();
+    for n in (first_ac..PROG_420.len()).step_by(7) {
+        let img = decode(&PROG_420[..n]).unwrap_or_else(|e| panic!("cut at {n}: {e}"));
+        assert_eq!((img.width(), img.height()), (full.width(), full.height()));
+    }
+    // Only the DC scan: a recognisable, smooth version of the picture.
+    let dc_only = decode(&PROG_420[..first_ac]).unwrap();
+    let (max, mean) = diff(&dc_only, &full);
+    assert!(max > 0 && mean < 30_000, "dc only: max {max} mean {mean}");
+}
+
+#[test]
+fn progressive_scan_parameters_are_checked() {
+    let scans: Vec<usize> = PROG_420
+        .windows(2)
+        .enumerate()
+        .filter(|(_, w)| *w == [0xFF, 0xDA])
+        .map(|(i, _)| i)
+        .collect();
+    // Patch each scan header's Ss/Se/AhAl with nonsense: an error or an image, never a panic.
+    for &at in &scans {
+        let len = u16::from_be_bytes([PROG_420[at + 2], PROG_420[at + 3]]) as usize;
+        let tail = at + 2 + len - 3; // Ss, Se, Ah/Al
+        for patch in [
+            [64u8, 63, 0],
+            [5, 3, 0],
+            [0, 5, 0],
+            [1, 63, 0xFF],
+            [0, 0, 0xEF],
+            [63, 63, 0x01],
+        ] {
+            let mut v = PROG_420.to_vec();
+            v[tail..tail + 3].copy_from_slice(&patch);
+            let _ = decode(&v);
+        }
+    }
+    // A DC-only band with several components in an AC scan is refused.
+    let at = scans[1];
+    let mut v = PROG_420.to_vec();
+    v[at + 4] = 3; // Ns = 3 in an AC scan
+    assert!(decode(&v).is_err(), "an AC scan with three components");
+}
+
+#[test]
+fn damaged_progressive_data_never_panics_or_hangs() {
+    let mut x = 0x2545_F491u32;
+    for _ in 0..400 {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        let mut v = PROG_422.to_vec();
+        let i = 2 + (x as usize) % (v.len() - 2);
+        v[i] ^= (x >> 24) as u8 | 1;
+        let _ = decode(&v);
+    }
+}
+
+#[test]
+fn a_huge_progressive_frame_is_refused_up_front() {
+    let mut v = PROG_420.to_vec();
+    let sof = v.windows(2).position(|w| w == [0xFF, 0xC2]).unwrap();
+    // 4000 x 4000 4:2:0: about 24 million samples, over the limit for coefficients in memory.
+    v[sof + 5..sof + 9].copy_from_slice(&[0x0F, 0xA0, 0x0F, 0xA0]);
+    assert_eq!(
+        decode(&v).unwrap_err(),
+        JpegError::Unsupported(Feature::Progressive)
+    );
+    // The size itself is checked first.
+    v[sof + 5..sof + 9].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+    assert_eq!(decode(&v).unwrap_err(), JpegError::BadSize);
 }

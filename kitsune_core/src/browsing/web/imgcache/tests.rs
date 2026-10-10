@@ -404,13 +404,17 @@ fn gif_and_jpeg_pages_decode() {
 }
 
 #[test]
-fn progressive_and_cmyk_jpeg_are_unsupported_not_failed() {
-    for jpg in [
-        &include_bytes!("../../../format/jpeg/testdata/progressive.jpg")[..],
-        &include_bytes!("../../../format/jpeg/testdata/cmyk.jpg")[..],
-    ] {
-        assert_eq!(decode_for_page(jpg, 100).err(), Some(ImgFail::Unsupported));
-    }
+fn cmyk_jpeg_is_unsupported_and_progressive_is_an_image() {
+    let cmyk = &include_bytes!("../../../format/jpeg/testdata/cmyk.jpg")[..];
+    assert_eq!(decode_for_page(cmyk, 100).err(), Some(ImgFail::Unsupported));
+    // A progressive file is just an image; a huge one is stopped by the page's pixel limit
+    // (4000 x 4000 patched into a real header) before its coefficients are allocated.
+    let ok = include_bytes!("../../../format/jpeg/testdata/prog_420.jpg");
+    assert!(decode_for_page(ok, 100).is_ok());
+    let mut huge = ok.to_vec();
+    let sof = huge.windows(2).position(|w| w == [0xFF, 0xC2]).unwrap();
+    huge[sof + 5..sof + 9].copy_from_slice(&[0x0F, 0xA0, 0x0F, 0xA0]);
+    assert_eq!(decode_for_page(&huge, 100).err(), Some(ImgFail::TooBig));
 }
 
 #[test]

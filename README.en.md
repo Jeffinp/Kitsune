@@ -218,7 +218,7 @@ next, in order, with an acceptance criterion for each item, is in [`docs/ROADMAP
 - **GPU acceleration**, after sending only what changed to the screen.
 - **Per-process isolation** (ring 3): accounts and login exist, but apps and services still run in ring 0.
 - **Restarting and cleaning up service threads** that fail; resumable fuel for WebAssembly apps.
-- **Complete HTTPS**: revocation, HSTS; in the browser, progressive JPEG and connection reuse (POST, `<select>`, `<textarea>`, GIF and JPEG already work).
+- **Complete HTTPS**: revocation, HSTS; in the browser, connection reuse (POST, `<select>`, `<textarea>`, GIF and JPEG, progressive too, already work).
 
 ---
 

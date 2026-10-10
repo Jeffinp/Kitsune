@@ -1,12 +1,15 @@
-//! JPEG decoder: baseline and extended-sequential (8-bit, Huffman) images.
+//! JPEG decoder: baseline, extended-sequential and progressive (8-bit, Huffman) images.
 //!
 //! * Frames `SOF0` (baseline) and `SOF1` (extended sequential, 8-bit): gray (1 component) and
 //!   YCbCr (3 components, any sampling factors 1 to 4, so 4:4:4, 4:2:2, 4:2:0, 4:1:1...); an
 //!   Adobe `APP14` marker with transform 0 marks the three components as plain RGB.
 //! * Interleaved and non-interleaved scans, several scans per frame, restart intervals,
 //!   8- and 16-bit quantisation tables, Huffman tables redefined between scans.
+//! * Progressive frames (`SOF2`, see `progressive.rs`): spectral selection and successive
+//!   approximation, decoded when the file ends; limited to a few megapixels because the
+//!   coefficients are kept in memory.
 //! * **Not supported**, each reported as [`JpegError::Unsupported`] instead of a wrong picture:
-//!   progressive (`SOF2`), arithmetic coding, lossless, 12-bit samples, and CMYK/YCCK.
+//!   arithmetic coding, lossless, 12-bit samples, CMYK/YCCK and progressive frames too large.
 //! * Chroma is replicated (no smoothing), the IDCT is the integer one of `idct.rs`.
 //! * A file cut short (or with damaged entropy data) decodes as far as it goes and the rest of
 //!   the picture is mid-gray; a file with no scan at all is [`JpegError::Truncated`].
@@ -19,6 +22,7 @@
 
 mod huffman;
 mod idct;
+mod progressive;
 
 use crate::format::image::{self, Image, ImageError, rgba};
 use alloc::vec::Vec;
@@ -48,6 +52,7 @@ pub enum JpegError {
 /// What a JPEG uses that this decoder does not do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Feature {
+    /// A progressive frame over [`progressive::MAX_SAMPLES`] samples.
     Progressive,
     Arithmetic,
     Lossless,
@@ -70,7 +75,7 @@ impl fmt::Display for JpegError {
             JpegError::BadQuant => f.write_str("invalid quantisation table"),
             JpegError::BadSize => f.write_str("the JPEG has an invalid or too large size"),
             JpegError::Unsupported(Feature::Progressive) => {
-                f.write_str("progressive JPEG is not supported")
+                f.write_str("this progressive JPEG is too large to decode here")
             }
             JpegError::Unsupported(Feature::Arithmetic) => {
                 f.write_str("arithmetic-coded JPEG is not supported")
@@ -114,9 +119,17 @@ struct Comp {
     pw: usize,
     ph: usize,
     plane: Vec<u8>,
+    /// Blocks per row and column of the plane (progressive frames).
+    bw: usize,
+    bh: usize,
+    /// Progressive frames: the coefficients of every block, natural order, not yet dequantised.
+    coef: Vec<i16>,
+    /// The quantisation table in effect when this component was first scanned (progressive).
+    qlatch: Option<[u16; 64]>,
 }
 
 struct Frame {
+    progressive: bool,
     width: usize,
     height: usize,
     hmax: usize,
@@ -208,13 +221,12 @@ pub fn decode(bytes: &[u8]) -> Result<Image, JpegError> {
         match m {
             0xDB => read_dqt(&mut seg, &mut st)?,
             0xC4 => read_dht(&mut seg, &mut st)?,
-            0xC0 | 0xC1 => {
+            0xC0..=0xC2 => {
                 if st.frame.is_some() {
                     return Err(JpegError::BadMarker(m));
                 }
-                st.frame = Some(read_sof(&mut seg)?);
+                st.frame = Some(read_sof(&mut seg, m == 0xC2)?);
             }
-            0xC2 => return Err(JpegError::Unsupported(Feature::Progressive)),
             0xC3 | 0xC5..=0xC7 | 0xCB | 0xCD..=0xCF => {
                 return Err(JpegError::Unsupported(Feature::Lossless));
             }
@@ -243,9 +255,12 @@ pub fn decode(bytes: &[u8]) -> Result<Image, JpegError> {
         }
         pos = body_end;
     }
-    let frame = st.frame.take().ok_or(JpegError::Truncated)?;
+    let mut frame = st.frame.take().ok_or(JpegError::Truncated)?;
     if st.scans == 0 {
         return Err(JpegError::Truncated);
+    }
+    if frame.progressive {
+        progressive::finish(&mut frame)?;
     }
     to_image(&frame, st.adobe)
 }
@@ -288,7 +303,7 @@ fn read_dht(s: &mut Seg<'_>, st: &mut State) -> Result<(), JpegError> {
     Ok(())
 }
 
-fn read_sof(s: &mut Seg<'_>) -> Result<Frame, JpegError> {
+fn read_sof(s: &mut Seg<'_>, progressive: bool) -> Result<Frame, JpegError> {
     if s.u8()? != 8 {
         return Err(JpegError::Unsupported(Feature::Precision));
     }
@@ -338,13 +353,29 @@ fn read_sof(s: &mut Seg<'_>) -> Result<Frame, JpegError> {
             pw,
             ph,
             plane: Vec::new(),
+            bw: pw / 8,
+            bh: ph / 8,
+            coef: Vec::new(),
+            qlatch: None,
         });
+    }
+    if progressive && total > progressive::MAX_SAMPLES {
+        return Err(JpegError::Unsupported(Feature::Progressive));
     }
     // Planes are whole MCUs and sampling can be up to 4x4: bound them like the image itself.
     if total > image::MAX_PIXELS * 3 {
         return Err(JpegError::BadSize);
     }
     for c in &mut comps {
+        if progressive {
+            // The planes come at the end, once the coefficients are final.
+            let mut v: Vec<i16> = Vec::new();
+            v.try_reserve_exact(c.pw * c.ph)
+                .map_err(|_| JpegError::Image(ImageError::OutOfMemory))?;
+            v.resize(c.pw * c.ph, 0);
+            c.coef = v;
+            continue;
+        }
         let mut v: Vec<u8> = Vec::new();
         v.try_reserve_exact(c.pw * c.ph)
             .map_err(|_| JpegError::Image(ImageError::OutOfMemory))?;
@@ -352,6 +383,7 @@ fn read_sof(s: &mut Seg<'_>) -> Result<Frame, JpegError> {
         c.plane = v;
     }
     Ok(Frame {
+        progressive,
         width,
         height,
         hmax,
@@ -400,6 +432,29 @@ fn decode_scan(
         sc.push(ScanComp { ci, td, ta });
     }
     let (ss, se, ahl) = (hdr.u8()?, hdr.u8()?, hdr.u8()?);
+    if frame.progressive {
+        let p = progressive::Params {
+            ss: ss as usize,
+            se: se as usize,
+            ah: u32::from(ahl >> 4),
+            al: u32::from(ahl & 15),
+        };
+        if !p.valid(ns) {
+            return Err(JpegError::BadScan);
+        }
+        for x in &sc {
+            let c = &mut frame.comps[x.ci];
+            // The tables a scan needs: DC first scans use the DC one, every AC scan the AC one.
+            let needs_dc = p.ss == 0 && p.ah == 0;
+            if (needs_dc && st.dc[x.td].is_none()) || (p.ss > 0 && st.ac[x.ta].is_none()) {
+                return Err(JpegError::BadScan);
+            }
+            if c.qlatch.is_none() {
+                c.qlatch = Some(st.qt[c.tq].ok_or(JpegError::BadScan)?);
+            }
+        }
+        return progressive::scan(bytes, data_start, &sc, p, frame, &st.dc, &st.ac, st.restart);
+    }
     // Sequential: the whole spectrum, no successive approximation.
     if ss != 0 || se != 63 || ahl != 0 {
         return Err(JpegError::BadScan);
@@ -416,21 +471,7 @@ fn decode_scan(
     let mut unit = 0usize;
     let restart = st.restart;
 
-    // The MCU grid of this scan.
-    let (cols, rows, per_mcu): (usize, usize, Vec<(usize, usize)>) = if ns == 1 {
-        let c = &frame.comps[sc[0].ci];
-        let cw = (frame.width * c.h).div_ceil(frame.hmax);
-        let chh = (frame.height * c.v).div_ceil(frame.vmax);
-        (cw.div_ceil(8), chh.div_ceil(8), alloc::vec![(1, 1)])
-    } else {
-        (
-            frame.mcux,
-            frame.mcuy,
-            sc.iter()
-                .map(|x| (frame.comps[x.ci].h, frame.comps[x.ci].v))
-                .collect(),
-        )
-    };
+    let (cols, rows, per_mcu) = scan_grid(frame, &sc);
 
     // A damaged or cut-off interval is abandoned (its blocks stay mid-gray); with restart markers
     // decoding resumes at the next interval, otherwise the scan ends there.
@@ -487,7 +528,32 @@ fn decode_scan(
     }
     // Resume marker parsing after the entropy data: at the marker the reader stopped on, or the
     // next one found by scanning.
-    let mut p = bits.pos;
+    Ok(next_marker(bytes, bits.pos))
+}
+
+/// The MCU grid of a scan: (columns, rows, blocks per MCU of each scan component as (h, v)).
+/// A scan of one component is non-interleaved: its MCU is one block and the grid covers the
+/// component's real size, not the padded frame.
+fn scan_grid(frame: &Frame, sc: &[ScanComp]) -> (usize, usize, Vec<(usize, usize)>) {
+    if sc.len() == 1 {
+        let c = &frame.comps[sc[0].ci];
+        let cw = (frame.width * c.h).div_ceil(frame.hmax);
+        let chh = (frame.height * c.v).div_ceil(frame.vmax);
+        (cw.div_ceil(8), chh.div_ceil(8), alloc::vec![(1, 1)])
+    } else {
+        (
+            frame.mcux,
+            frame.mcuy,
+            sc.iter()
+                .map(|x| (frame.comps[x.ci].h, frame.comps[x.ci].v))
+                .collect(),
+        )
+    }
+}
+
+/// The position of the next marker at or after `from` (not a restart marker, not `FF 00`).
+fn next_marker(bytes: &[u8], from: usize) -> usize {
+    let mut p = from;
     while p + 1 < bytes.len() {
         if bytes[p] == 0xFF
             && bytes[p + 1] != 0
@@ -498,7 +564,7 @@ fn decode_scan(
         }
         p += 1;
     }
-    Ok(p)
+    p
 }
 
 /// Decode one 8x8 block into dequantised coefficients (natural order).
