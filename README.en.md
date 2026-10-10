@@ -226,6 +226,7 @@ Most technical documents are in Portuguese.
 |---|---|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Technical deep dive into each subsystem |
 | [`docs/BUILDING.md`](docs/BUILDING.md) | Build, run, DOOM, writing an app, common problems |
+| [`docs/SDK.md`](docs/SDK.md) | Your first app in ten minutes (SDK tutorial, in Portuguese) |
 | [`docs/BOOT-USB.md`](docs/BOOT-USB.md) | Writing the image to a USB stick |
 | [`docs/HARDWARE.md`](docs/HARDWARE.md) | Video adapters tested and drivers still missing |
 | [`docs/design/usuarios-seguranca.md`](docs/design/usuarios-seguranca.md) | Plan for accounts, permissions and per-process isolation (Portuguese) |

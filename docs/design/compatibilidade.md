@@ -8,7 +8,7 @@ verificável. O hardware tem seu próprio documento: [`../HARDWARE.md`](../HARDW
 | Passo | O quê | Estado |
 |---|---|---|
 | A.1 | Plataforma de apps WebAssembly (manifesto, permissões, cotas, `/data/<id>`, instalação em `/apps`) | feito |
-| A.2 | **SDK documentado**: `kitsune-sdk` com tutorial "seu primeiro app em dez minutos", modelo de projeto e referência do ABI (funções, eventos, limites). | a fazer |
+| A.2 | **SDK documentado**: tutorial "seu primeiro app em dez minutos" ([`SDK.md`](../SDK.md)), do código ao app rodando sem recompilar o sistema (compilar, `wget` no Terminal, Enter no Arquivos); referência do ABI em [`apps.md`](apps.md). | feito (o texto foi seguido de ponta a ponta em QEMU, W42) |
 | A.3 | **WASI de verdade** sobre o OJFS: `wasi_snapshot_preview1` com `fd_*`, `path_*`, relógio e aleatoriedade, respeitando o sandbox do app; para rodar programas escritos em C, Rust ou Go sem o SDK. | a fazer (há uma base em `kernel/src/wasm/wasi.rs`) |
 | A.4 | Vários apps ao mesmo tempo, um deles hostil, sem afetar os outros (item 5 do [roadmap](../ROADMAP.md)). | a fazer |
 | A.5 | Combustível retomável: um quadro pesado legítimo deixa de ser encerrado. | a fazer |

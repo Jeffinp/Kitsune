@@ -51,6 +51,10 @@ renomeio mantêm o nome da época.
   ZIP". O Editor abre arquivos Windows-1252 e UTF-16 como texto, mostra a codificação na barra de estado e
   grava de volta do mesmo jeito (se o texto ganhar um caractere que ela não escreve, vira UTF-8). Fuzz
   `archive_text`; verificado em QEMU (W41).
+- **SDK documentado:** [`docs/SDK.md`](docs/SDK.md), "seu primeiro app em dez minutos": criar a crate, escrever
+  o app (com arquivo e idioma), compilar, baixar o `.wasm` com `wget` no Terminal e abri-lo com Enter no
+  Arquivos (instala e executa), sem recompilar o sistema. O texto foi seguido de ponta a ponta em QEMU
+  (W42). `fs=home` agora é a pasta de quem entrou.
 - (histórico) O kernel não usava essas peças ainda (não havia login): o plano em fases está em
   [`docs/design/usuarios-seguranca.md`](docs/design/usuarios-seguranca.md) e o de compatibilidade em
   [`docs/design/compatibilidade.md`](docs/design/compatibilidade.md); o roadmap foi atualizado.

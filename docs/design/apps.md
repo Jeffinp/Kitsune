@@ -77,7 +77,7 @@ novo ao iniciar (defesa em profundidade: um arquivo copiado à mão para `/apps`
 |---|---|
 | `fs=none` | toda função `fs_*` devolve `ERR_PERM` |
 | `fs=own` | `/` do guest = `/data/<id>/` (criada na primeira escrita) |
-| `fs=home` | `/` do guest = `/home/` (a pasta do usuário) |
+| `fs=home` | `/` do guest = a pasta do usuário que entrou (`/home/<nome>`; `/home` antes de alguém entrar) |
 | `net=http` | `net_http_get` liberado, com o filtro de destinos abaixo e, se houver, a lista `net_hosts` (fora dela: `ERR_PERM`) |
 | `net=tcp` | implica `http`; reservado para sockets TCP (**fora do escopo desta entrega**: a permissão é aceita e validada, mas a ABI v2.0 não exporta sockets) |
 | `clipboard=rw` | `clip_get` / `clip_set` |
