@@ -1,7 +1,7 @@
 # W39: boot with two accounts: the login screen. Wrong password, then the right one, for maria.
 # Run with FS_IMG = the disk W38 left behind. UEFI, 1280x800.
 source "$(dirname "$0")/../lib.sh"
-sleep 16
+sleep 24
 shot a-login
 key tab; sleep 0.5
 typestr "errada1"; key ret; sleep 2
