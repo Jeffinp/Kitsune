@@ -8,6 +8,8 @@ publish = false
 [dependencies]
 bootloader_api = "0.11"
 kitsune_core = { path = "../kitsune_core" }
+# What ring 3 programs and the kernel agree on for files and arguments (also linked by the SDK).
+kitsune-userabi = { path = "../user-apps/abi" }
 x86_64 = "0.15"
 # no_std TCP/IP stack layered over our NE2000 driver (the browser's networking).
 smoltcp = { version = "0.14", default-features = false, features = [

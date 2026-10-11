@@ -7,6 +7,7 @@ the dependency rules of the core.
 ## The tree
 
 ```
+user-apps/                   ring 3 programs (detached workspaces): abi (shared contract, no deps) | sdk | demo | wasmhost
 kitsune_core/src/            pure no_std logic, host-tested (forbid(unsafe_code))
   ui/         drawing and visual identity: gfx raster | ttf glyph fontcache textlayout | iconart appart
               brand pointer cursor | anim | style | widgets chrome layout | wallpaper

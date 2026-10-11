@@ -599,6 +599,7 @@ dependencies = [
  "bootloader_api",
  "embedded-io",
  "embedded-tls",
+ "kitsune-userabi",
  "kitsune_core",
  "rand_core",
  "sha2",
@@ -607,6 +608,10 @@ dependencies = [
  "wat",
  "x86_64",
 ]
+
+[[package]]
+name = "kitsune-userabi"
+version = "0.1.0"
 
 [[package]]
 name = "kitsune_core"

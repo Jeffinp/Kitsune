@@ -4,6 +4,18 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — Arquivos, argumentos e pipe para processos em anel 3
+
+- Programas ELF ganham **arquivos**: `open`, `close`, `read`, `write`, `seek`, `stat`, `readdir`, `mkdir`,
+  `remove` (para a lixeira), `rename` e `getargs` (chamadas 32–42), com os **direitos de quem os iniciou**
+  (`Secured` + `Cred` guardada no `run`: `EACCES` quando o dono, o grupo e o modo não deixam). As chamadas só
+  enfileiram o pedido; a thread `procfsd` faz o disco em contexto de thread e o processo é reiniciado para pegar o
+  resultado. `run PROGRAMA [ARGS...]` passa argumentos, a pasta do terminal e o pipe (`echo oi | run cat`).
+- Novo crate sem dependências `user-apps/abi` (`kitsune-userabi`): números, flags, `errno`, `StatRec`,
+  `resolve` de caminhos, `pack_args`/`unpack_args`; testado no host, fuzz `userabi`. SDK: `kitsune_user::fs`;
+  programas `cat`, `ls`, `fstest`; `print!` agora faz uma só chamada por linha.
+- Cenário `w46-ring3-files.sh` (22 passos do `fstest` + `cat`/`ls`, inclusive a recusa de gravar em `/etc/accounts`).
+
 ## 2026-10 — Desempenho: disco, boot e catálogo
 
 Medido com `-icount shift=0` (repetível; ver `docs/BENCHMARKS.md`), primeiro boot em disco vazio e boot seguinte:

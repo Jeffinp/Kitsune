@@ -139,6 +139,8 @@ pub enum SpawnFail {
     NoMemory,
     /// Too many processes already.
     TooMany,
+    /// The arguments do not fit (4 KiB in all) or hold a NUL.
+    BadArgs,
 }
 
 impl SpawnFail {
@@ -150,12 +152,22 @@ impl SpawnFail {
             SpawnFail::BadImage => tk!("sh.run.bad_image"),
             SpawnFail::NoMemory => tk!("sh.run.no_memory"),
             SpawnFail::TooMany => tk!("sh.run.too_many"),
+            SpawnFail::BadArgs => tk!("sh.run.bad_args"),
         }
     }
 
     pub fn message(self) -> &'static str {
         crate::i18n::tr(self.key())
     }
+}
+
+/// What a ring 3 program is started with besides its image: what `run` was given after the program's
+/// name, the folder it runs in (relative paths in the program start from there) and what was piped to it.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct ProgramCtx {
+    pub args: Vec<String>,
+    pub cwd: String,
+    pub stdin: Vec<u8>,
 }
 
 /// What a running ring 3 program has done since the last poll ([`SysInfo::poll_program`]).
@@ -302,8 +314,13 @@ pub trait SysInfo {
     }
 
     /// Start a ring 3 program (`run`): the ELF bytes in `image`, or the embedded program called
-    /// `name` when there are none. Returns its process id.
-    fn spawn_program(&mut self, _name: &str, _image: Option<&[u8]>) -> Result<u32, SpawnFail> {
+    /// `name` when there are none, with the arguments, folder and input in `ctx`. Returns its process id.
+    fn spawn_program(
+        &mut self,
+        _name: &str,
+        _image: Option<&[u8]>,
+        _ctx: &ProgramCtx,
+    ) -> Result<u32, SpawnFail> {
         Err(SpawnFail::Unsupported)
     }
 
@@ -359,6 +376,8 @@ pub struct MockSys {
     pub programs: Vec<(String, Vec<u8>, Option<i32>)>,
     /// Programs started through `spawn_program` (name), and the pids killed.
     pub started: Vec<String>,
+    /// What each started program was given, in the same order as `started`.
+    pub started_with: Vec<ProgramCtx>,
     pub program_kills: Vec<u32>,
     /// `interrupted` turns true after this many polls (`None` = never).
     pub interrupt_after: Option<u32>,
@@ -409,6 +428,7 @@ impl Default for MockSys {
             group_list: Vec::new(),
             programs: Vec::new(),
             started: Vec::new(),
+            started_with: Vec::new(),
             program_kills: Vec::new(),
             interrupt_after: None,
             polls: core::cell::Cell::new(0),
@@ -494,7 +514,13 @@ impl SysInfo for MockSys {
         self.who.clone()
     }
 
-    fn spawn_program(&mut self, name: &str, image: Option<&[u8]>) -> Result<u32, SpawnFail> {
+    fn spawn_program(
+        &mut self,
+        name: &str,
+        image: Option<&[u8]>,
+        ctx: &ProgramCtx,
+    ) -> Result<u32, SpawnFail> {
+        self.started_with.push(ctx.clone());
         if let Some(img) = image {
             if !img.starts_with(b"\x7fELF") {
                 return Err(SpawnFail::BadImage);

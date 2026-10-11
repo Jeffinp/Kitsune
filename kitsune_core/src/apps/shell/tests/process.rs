@@ -67,3 +67,21 @@ fn portuguese_messages() {
     t.lang(Lang::Pt);
     assert!(t.run("run nothing").text().contains("nenhum programa"));
 }
+
+#[test]
+fn run_hands_over_the_arguments_the_folder_and_the_piped_input() {
+    let mut t = with_programs();
+    assert_eq!(t.run("run hello one 'two words' three").status, 0);
+    let got = &t.sys.started_with[0];
+    assert_eq!(got.args, ["one", "two words", "three"]);
+    assert_eq!(got.cwd, "/");
+    assert!(got.stdin.is_empty());
+    assert_eq!(t.run("cd /bin").status, 0);
+    assert_eq!(t.run("echo piped | run hello -x").status, 0);
+    let got = &t.sys.started_with[1];
+    assert_eq!(
+        (got.cwd.as_str(), got.args.as_slice()),
+        ("/bin", &["-x".to_string()][..])
+    );
+    assert_eq!(got.stdin, b"piped\n");
+}

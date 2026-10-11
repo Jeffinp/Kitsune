@@ -14,7 +14,8 @@
 //! | 4 | `sleep_ms` | milliseconds | 0 |
 //! | 5 | `uptime_ms` | | milliseconds since boot |
 //! | 6 | `brk` | new end of the heap (0 = just ask) | the heap's end after the call (unchanged when refused) |
-//! | 16–20 | `host_*` | only for a WebAssembly host process, see [`HostLink`] | |
+//! | 16–21 | `host_*` | only for a WebAssembly host process, see [`HostLink`] | |
+//! | 32–42 | `open`, `close`, `read`, `write`, `seek`, `stat`, `readdir`, `mkdir`, `remove`, `rename`, `getargs` | files and arguments, see `kitsune_userabi` and [`crate::userfs`] | |
 //!
 //! Every pointer is translated through the process's own page tables before the kernel touches
 //! it (`AddressSpace::copy_in`), so a bad pointer is an error return, never a kernel fault.
@@ -32,6 +33,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use kitsune_core::appabi::remote::{self, Done, HostCall, Job};
 use kitsune_core::elf;
 use kitsune_core::paging::PAGE_SIZE;
+use kitsune_core::perm::Cred;
+use kitsune_userabi as abi;
 
 /// Pages of user stack, and for a WebAssembly host (its interpreter and module translator recurse).
 const STACK_PAGES: u64 = 16;
@@ -97,6 +100,89 @@ struct Proc {
     heap_max: u64,
     /// Set for a WebAssembly host process (`wasm::remote`).
     host: Option<HostLink>,
+    /// Who the program acts as when it touches files: the user that started it (`None` before any
+    /// account exists: full rights, like the rest of the desktop in early boot).
+    cred: Option<Cred>,
+    /// The folder it was started in, and the arguments blob `getargs` returns.
+    cwd: String,
+    args: Vec<u8>,
+    /// What was piped to it (descriptor 0) and how much it has read.
+    stdin: Vec<u8>,
+    stdin_pos: usize,
+    /// Open files (descriptor `FIRST_FD + index`).
+    fds: Vec<Option<Fd>>,
+    /// The file request in flight (served by the `procfsd` thread, see `userfs`).
+    fs: FsState,
+}
+
+/// An open file: where it is and where the next read or write happens.
+#[derive(Clone)]
+pub struct Fd {
+    pub path: Vec<u8>,
+    pub pos: u64,
+    pub write: bool,
+    pub append: bool,
+}
+
+/// A file request, with the paths already absolute and copied out of the process.
+pub enum FsReq {
+    Open {
+        path: Vec<u8>,
+        flags: u64,
+    },
+    Read {
+        fd: i64,
+        ptr: u64,
+        len: usize,
+    },
+    Write {
+        fd: i64,
+        ptr: u64,
+        len: usize,
+    },
+    Seek {
+        fd: i64,
+        off: i64,
+        whence: u64,
+    },
+    Stat {
+        path: Vec<u8>,
+        out: u64,
+    },
+    ReadDir {
+        path: Vec<u8>,
+        index: u64,
+        out: u64,
+        cap: usize,
+    },
+    Mkdir {
+        path: Vec<u8>,
+    },
+    Remove {
+        path: Vec<u8>,
+    },
+    Rename {
+        from: Vec<u8>,
+        to: Vec<u8>,
+    },
+}
+
+enum FsState {
+    Idle,
+    Pending(FsReq),
+    /// The `procfsd` thread took it.
+    Running,
+    Done(i64),
+}
+
+/// What a program is started with besides its image.
+#[derive(Default)]
+pub struct Launch {
+    pub cwd: String,
+    /// Made by `kitsune_userabi::pack_args`.
+    pub args: Vec<u8>,
+    pub stdin: Vec<u8>,
+    pub cred: Option<Cred>,
 }
 
 /// The kernel's side of a WebAssembly host process: the module it runs, the job the kernel posted
@@ -159,8 +245,8 @@ pub fn embedded(name: &str) -> Option<&'static [u8]> {
 }
 
 /// Start the ELF program `image` as process `name`. Returns its process id.
-pub fn spawn_elf(name: &str, image: &[u8]) -> Result<u32, SpawnError> {
-    spawn(name, image, MAX_HEAP, None)
+pub fn spawn_elf(name: &str, image: &[u8], launch: Launch) -> Result<u32, SpawnError> {
+    spawn(name, image, MAX_HEAP, None, launch)
 }
 
 /// Start the embedded WebAssembly host as process `name`, to run `module`. `heap` is how much memory
@@ -174,10 +260,22 @@ pub fn spawn_host(name: &str, module: Arc<[u8]>, heap: u64) -> Result<u32, Spawn
         call: CallState::Idle,
         done: None,
     };
-    spawn(name, image, heap.min(MAX_HOST_HEAP), Some(link))
+    spawn(
+        name,
+        image,
+        heap.min(MAX_HOST_HEAP),
+        Some(link),
+        Launch::default(),
+    )
 }
 
-fn spawn(name: &str, image: &[u8], heap: u64, host: Option<HostLink>) -> Result<u32, SpawnError> {
+fn spawn(
+    name: &str,
+    image: &[u8],
+    heap: u64,
+    host: Option<HostLink>,
+    launch: Launch,
+) -> Result<u32, SpawnError> {
     if PROCS.lock().len() >= MAX_PROCS {
         return Err(SpawnError::TooMany);
     }
@@ -237,6 +335,13 @@ fn spawn(name: &str, image: &[u8], heap: u64, host: Option<HostLink>) -> Result<
         over_tick: 0,
         heap_max: HEAP_BASE + heap,
         host,
+        cred: launch.cred,
+        cwd: launch.cwd,
+        args: launch.args,
+        stdin: launch.stdin,
+        stdin_pos: 0,
+        fds: Vec::new(),
+        fs: FsState::Idle,
     });
     crate::klog!(
         Info,
@@ -446,6 +551,7 @@ pub extern "C" fn syscall_entry(rsp: u64) -> u64 {
             rsp
         }
         remote::SYS_HOST_MODULE_LEN..=remote::SYS_HOST_BATCH => host_call(r, rsp, slot),
+        abi::SYS_OPEN..=abi::SYS_GETARGS => file_call(r, rsp, slot),
         _ => {
             r.rax = ENOSYS as u64;
             rsp
@@ -482,6 +588,11 @@ fn sys_write(slot: usize, fd: u64, ptr: u64, len: u64) -> i64 {
     if fd != 1 && fd != 2 {
         return EBADF;
     }
+    write_out(slot, ptr, len)
+}
+
+/// The standard output: kept for the shell to collect, and logged.
+fn write_out(slot: usize, ptr: u64, len: u64) -> i64 {
     let len = (len as usize).min(MAX_WRITE);
     let mut procs = PROCS.lock();
     let Some(p) = procs.iter_mut().find(|p| p.slot == slot) else {
@@ -740,4 +851,225 @@ pub fn host_write(pid: u32, va: u64, bytes: &[u8]) -> bool {
         }
     }
     true
+}
+
+// ---- files and arguments (calls 32-42) ----
+
+fn copy_path(asp: &AddressSpace, cwd: &str, ptr: u64, len: u64) -> Result<Vec<u8>, i64> {
+    let len = usize::try_from(len).map_err(|_| abi::errno::EINVAL)?;
+    if len == 0 {
+        return Err(abi::errno::EINVAL);
+    }
+    if len > abi::MAX_PATH {
+        return Err(abi::errno::ENAMETOOLONG);
+    }
+    let mut raw = alloc::vec![0u8; len];
+    asp.copy_in(ptr, &mut raw).map_err(|_| abi::errno::EFAULT)?;
+    let text = core::str::from_utf8(&raw).map_err(|_| abi::errno::EINVAL)?;
+    abi::resolve_string(cwd, text)
+        .map(String::into_bytes)
+        .ok_or(abi::errno::ENAMETOOLONG)
+}
+
+/// Calls 32–42. The ones that touch the disk are only *queued* here (this runs with interrupts off,
+/// where a disk transfer must not happen and a held lock could never be waited for): the process
+/// blocks, the `procfsd` thread does the work in thread context and the call is restarted to pick
+/// the result up, the same way the WebAssembly host's calls wait.
+fn file_call(r: &mut Regs, rsp: u64, slot: usize) -> u64 {
+    let number = r.rax;
+    let (a, b, c, d, e) = (r.rdi, r.rsi, r.rdx, r.r10, r.r8);
+    let mut procs = PROCS.lock();
+    let Some(p) = procs.iter_mut().find(|p| p.slot == slot) else {
+        r.rax = EINVAL as u64;
+        return rsp;
+    };
+    // A request already in flight (this is the restarted call): wait, or take its result.
+    match core::mem::replace(&mut p.fs, FsState::Idle) {
+        FsState::Done(v) => {
+            r.rax = v as u64;
+            return rsp;
+        }
+        busy @ (FsState::Pending(_) | FsState::Running) => {
+            p.fs = busy;
+            drop(procs);
+            return block_restart(r, rsp, slot, number);
+        }
+        FsState::Idle => {}
+    }
+    let Some(asp) = p.aspace.as_ref() else {
+        r.rax = EINVAL as u64;
+        return rsp;
+    };
+    let cwd = p.cwd.as_str();
+    let req = match number {
+        abi::SYS_GETARGS => {
+            let n = p.args.len().min(b as usize);
+            r.rax = match asp.poke(a, &p.args[..n]) {
+                Ok(()) => p.args.len() as u64,
+                Err(_) => EFAULT as u64,
+            };
+            return rsp;
+        }
+        abi::SYS_CLOSE => {
+            r.rax = close_fd(p, a as i64) as u64;
+            return rsp;
+        }
+        abi::SYS_READ if a == 0 => {
+            // Standard input: what was piped in; no disk involved.
+            let len = (c as usize).min(abi::MAX_IO);
+            let have = p.stdin.len().saturating_sub(p.stdin_pos);
+            let n = len.min(have);
+            r.rax = match asp.poke(b, &p.stdin[p.stdin_pos..p.stdin_pos + n]) {
+                Ok(()) => {
+                    p.stdin_pos += n;
+                    n as u64
+                }
+                Err(_) => EFAULT as u64,
+            };
+            return rsp;
+        }
+        abi::SYS_WRITE if a == 1 || a == 2 => {
+            drop(procs);
+            r.rax = write_out(slot, b, c) as u64;
+            return rsp;
+        }
+        abi::SYS_OPEN => copy_path(asp, cwd, a, b).map(|path| FsReq::Open { path, flags: c }),
+        abi::SYS_READ => Ok(FsReq::Read {
+            fd: a as i64,
+            ptr: b,
+            len: (c as usize).min(abi::MAX_IO),
+        }),
+        abi::SYS_WRITE => Ok(FsReq::Write {
+            fd: a as i64,
+            ptr: b,
+            len: (c as usize).min(abi::MAX_IO),
+        }),
+        abi::SYS_SEEK => Ok(FsReq::Seek {
+            fd: a as i64,
+            off: b as i64,
+            whence: c,
+        }),
+        abi::SYS_STAT => copy_path(asp, cwd, a, b).map(|path| FsReq::Stat { path, out: c }),
+        abi::SYS_READDIR => copy_path(asp, cwd, a, b).map(|path| FsReq::ReadDir {
+            path,
+            index: c,
+            out: d,
+            cap: e as usize,
+        }),
+        abi::SYS_MKDIR => copy_path(asp, cwd, a, b).map(|path| FsReq::Mkdir { path }),
+        abi::SYS_REMOVE => copy_path(asp, cwd, a, b).map(|path| FsReq::Remove { path }),
+        // SYS_RENAME: (from, from_len, to, to_len)
+        _ => copy_path(asp, cwd, a, b)
+            .and_then(|from| copy_path(asp, cwd, c, d).map(|to| FsReq::Rename { from, to })),
+    };
+    match req {
+        Ok(req) => {
+            p.fs = FsState::Pending(req);
+            drop(procs);
+            crate::userfs::wake();
+            crate::userfs::hand_off();
+            block_restart(r, rsp, slot, number)
+        }
+        Err(e) => {
+            r.rax = e as u64;
+            rsp
+        }
+    }
+}
+
+fn close_fd(p: &mut Proc, fd: i64) -> i64 {
+    let Ok(i) = usize::try_from(fd - abi::FIRST_FD) else {
+        return abi::errno::EBADF;
+    };
+    match p.fds.get_mut(i) {
+        Some(slot @ Some(_)) => {
+            *slot = None;
+            0
+        }
+        _ => abi::errno::EBADF,
+    }
+}
+
+// What the `procfsd` thread (see `userfs`) does with the processes' tables.
+
+/// Take a queued file request: (pid, request, who it acts as). `None` when nothing is waiting.
+pub(crate) fn fs_take() -> Option<(u32, FsReq, Option<Cred>)> {
+    let mut procs = PROCS.lock();
+    for p in procs.iter_mut() {
+        if end_of(p) != End::Running {
+            continue;
+        }
+        if matches!(p.fs, FsState::Pending(_))
+            && let FsState::Pending(req) = core::mem::replace(&mut p.fs, FsState::Running)
+        {
+            return Some((p.pid, req, p.cred.clone()));
+        }
+    }
+    None
+}
+
+/// Is a request waiting (what the daemon blocks on)?
+pub(crate) fn fs_pending() -> bool {
+    PROCS
+        .lock()
+        .iter()
+        .any(|p| matches!(p.fs, FsState::Pending(_)) && end_of(p) == End::Running)
+}
+
+/// A copy of descriptor `fd` of process `pid`.
+pub(crate) fn fs_fd(pid: u32, fd: i64) -> Option<Fd> {
+    let i = usize::try_from(fd - abi::FIRST_FD).ok()?;
+    PROCS
+        .lock()
+        .iter()
+        .find(|p| p.pid == pid)?
+        .fds
+        .get(i)?
+        .clone()
+}
+
+/// Replace descriptor `fd` of `pid` (after a read, write or seek moved it).
+pub(crate) fn fs_set_fd(pid: u32, fd: i64, new: Fd) {
+    let Ok(i) = usize::try_from(fd - abi::FIRST_FD) else {
+        return;
+    };
+    if let Some(slot) = PROCS
+        .lock()
+        .iter_mut()
+        .find(|p| p.pid == pid)
+        .and_then(|p| p.fds.get_mut(i))
+    {
+        *slot = Some(new);
+    }
+}
+
+/// Give `pid` the new descriptor `fd`: its number, or `EMFILE`.
+pub(crate) fn fs_new_fd(pid: u32, fd: Fd) -> i64 {
+    let mut procs = PROCS.lock();
+    let Some(p) = procs.iter_mut().find(|p| p.pid == pid) else {
+        return abi::errno::EBADF;
+    };
+    if let Some(i) = p.fds.iter().position(Option::is_none) {
+        p.fds[i] = Some(fd);
+        return abi::FIRST_FD + i as i64;
+    }
+    if p.fds.len() >= abi::MAX_FDS {
+        return abi::errno::EMFILE;
+    }
+    p.fds.push(Some(fd));
+    abi::FIRST_FD + p.fds.len() as i64 - 1
+}
+
+/// Finish the request of `pid` with `value` and let the process go on.
+pub(crate) fn fs_done(pid: u32, value: i64) {
+    let slot = {
+        let mut procs = PROCS.lock();
+        let Some(p) = procs.iter_mut().find(|p| p.pid == pid) else {
+            return;
+        };
+        p.fs = FsState::Done(value);
+        p.slot
+    };
+    crate::sched::wake(slot);
+    crate::sched::hand_off(slot);
 }

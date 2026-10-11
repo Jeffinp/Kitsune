@@ -1,0 +1,17 @@
+# The contract between ring 3 programs and the kernel for files and arguments: system-call numbers,
+# flags, error codes and the records that cross the boundary. No dependencies, `no_std`; shared by
+# the kernel (`kernel/src/userproc.rs`), the program SDK (`user-apps/sdk`) and host tests.
+[package]
+name = "kitsune-userabi"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+# `pack_args` and `resolve_string` (they allocate): for the kernel and host tests. Programs have no
+# allocator and use the allocation-free `unpack_args` and `resolve`.
+default = ["alloc"]
+alloc = []

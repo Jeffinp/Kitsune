@@ -1,16 +1,16 @@
-//! `run`: start a ring 3 program and wait for it, showing what it writes.
+//! `run PROGRAM [ARGS...]`: start a ring 3 program and wait for it, showing what it writes. The program
+//! gets the arguments, the folder the shell is in and what was piped into `run`.
 
 use super::*;
-use crate::apps::shell::sys::{ProgramEnd, SpawnFail};
+use crate::apps::shell::sys::{ProgramCtx, ProgramEnd, SpawnFail};
 
 /// How often the output of a running program is collected, in milliseconds.
 const POLL_MS: u64 = 25;
 
 pub(super) fn run(cx: &mut CmdCtx<'_>) -> i32 {
-    let Some(o) = parse_opts(cx, "", "", None) else {
-        return 2;
-    };
-    let Some(target) = o.operands.first().cloned() else {
+    // No options of its own: everything after `run` is the program and what it is given (`-x` too).
+    let operands: Vec<String> = cx.args[1..].to_vec();
+    let Some(target) = operands.first().cloned() else {
         cx.error(t!("sh.run.usage"));
         return 2;
     };
@@ -29,7 +29,12 @@ pub(super) fn run(cx: &mut CmdCtx<'_>) -> i32 {
         None
     };
     let name = basename(&target).trim_end_matches(".elf").to_string();
-    let pid = match cx.sys.spawn_program(&name, image.as_deref()) {
+    let ctx = ProgramCtx {
+        args: operands[1..].to_vec(),
+        cwd: cx.fs.cwd(),
+        stdin: cx.stdin.to_vec(),
+    };
+    let pid = match cx.sys.spawn_program(&name, image.as_deref(), &ctx) {
         Ok(p) => p,
         Err(e) => {
             let msg = if e == SpawnFail::Unknown {

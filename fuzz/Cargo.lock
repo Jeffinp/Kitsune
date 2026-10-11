@@ -241,9 +241,14 @@ name = "kitsune-fuzz"
 version = "0.0.0"
 dependencies = [
  "arbitrary",
+ "kitsune-userabi",
  "kitsune_core",
  "libfuzzer-sys",
 ]
+
+[[package]]
+name = "kitsune-userabi"
+version = "0.1.0"
 
 [[package]]
 name = "kitsune_core"

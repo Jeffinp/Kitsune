@@ -43,6 +43,7 @@ mod text;
 mod theme;
 mod tlsv;
 mod trace;
+mod userfs;
 mod userproc;
 mod uvm;
 mod virtio;
@@ -304,6 +305,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         // The terminal's command thread: sleep, ping and curl wait here, not in the compositor.
         sched::spawn("shelld", desktop::shell_worker);
         sched::spawn("shelld2", desktop::shell_worker2);
+        // File requests of ring 3 processes (see `userfs`).
+        sched::spawn_with_stack("procfsd", userfs::worker, 128 * 1024);
     });
 
     trace::mark("threads spawned (fetcher, appd, shelld x2)");

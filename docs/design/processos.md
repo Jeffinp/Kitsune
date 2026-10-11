@@ -21,7 +21,7 @@ interface pequena de chamadas de sistema. É o primeiro passo da fase 3 de
 
 ## Chamadas de sistema
 
-`rax` = número, `rdi`, `rsi`, `rdx` = argumentos, resultado em `rax` (negativo = `-errno`).
+`rax` = número, `rdi`, `rsi`, `rdx`, `r10`, `r8` = argumentos, resultado em `rax` (negativo = `-errno`).
 
 | N | Chamada | Efeito |
 |---|---|---|
@@ -32,10 +32,47 @@ interface pequena de chamadas de sistema. É o primeiro passo da fase 3 de
 | 4 | `sleep_ms(ms)` | até um minuto, bloqueia a thread sem gastar tempo |
 | 5 | `uptime_ms()` | |
 | 6 | `brk(fim)` | cresce o heap (a partir de `0x1000_0000`, até 8 MiB) com páginas zeradas; devolve o fim do heap, inalterado se recusado |
+| 16–21 | `host_*` | só para o hospedeiro WebAssembly (seção abaixo) |
+| 32 | `open(caminho, len, flags)` | `O_WRITE` 1, `O_CREATE` 2, `O_TRUNC` 4, `O_APPEND` 8; devolve o descritor (3 em diante, até 16 abertos) |
+| 33 | `close(fd)` | |
+| 34 | `read(fd, ptr, len)` | fd 0 é a entrada padrão (o que veio num pipe); até 64 KiB; 0 no fim do arquivo |
+| 35 | `write(fd, ptr, len)` | fd 1 e 2 são a saída; de 3 em diante, o arquivo aberto |
+| 36 | `seek(fd, desloc, origem)` | `SEEK_SET` 0, `SEEK_CUR` 1, `SEEK_END` 2; devolve a posição |
+| 37 | `stat(caminho, len, saida)` | 32 bytes: tipo, modo, tamanho, mtime, dono, grupo |
+| 38 | `readdir(caminho, len, indice, saida, cap)` | uma entrada por chamada: tipo (1 byte) e nome; 0 depois da última |
+| 39 | `mkdir(caminho, len)` | |
+| 40 | `remove(caminho, len)` | vai para a lixeira, como em todo lugar do sistema |
+| 41 | `rename(de, len, para, len)` | o destino não pode existir |
+| 42 | `getargs(ptr, cap)` | a pasta de trabalho e os argumentos, cada um terminado em NUL; devolve o tamanho |
 
 Todo ponteiro é traduzido pelas tabelas do próprio processo, página por página
 (`AddressSpace::copy_in`), antes de o kernel tocar nele: um ponteiro ruim é um erro de retorno
 (`-14`), nunca uma falta no kernel. Uma chamada desconhecida devolve `-38`.
+
+## Arquivos, argumentos e entrada padrão
+
+`run PROGRAMA [ARGUMENTOS...]` passa ao programa os argumentos, a pasta em que o terminal está (os caminhos
+relativos do programa partem dela) e o que veio num pipe (`echo oi | run cat`). O contrato (números, flags,
+códigos de erro e registros, `resolve` de caminhos, `pack_args`/`unpack_args`) vive no crate sem dependências
+`user-apps/abi` (`kitsune-userabi`), testado no host, fuzzado (`userabi`) e usado pelo kernel e pelo SDK. O SDK tem
+`kitsune_user::fs` (`File`, `stat`, `read_dir`, `mkdir`, `remove`, `rename`, `Env`) e três programas de exemplo:
+`cat`, `ls` e `fstest`.
+
+* **Com os direitos de quem o iniciou.** O processo guarda as credenciais do usuário da sessão no momento do
+  `run` (`Cred`); toda operação passa por `Secured` com elas (`vfs::as_cred`), então ele lê e escreve exatamente
+  o que esse usuário pode, e o resultado é `-13` (`EACCES`) quando o dono, o grupo e o modo não deixam. Trocar de
+  usuário depois não muda o que o programa pode. Antes de existir conta alguma, tem direitos totais, como o resto
+  do desktop nessa fase. A permissão é pedida na abertura (`open` para escrita num arquivo sem permissão falha ali,
+  não no primeiro byte).
+* **No fio certo.** A chamada roda numa interrupção (sem poder esperar disco nem uma trava que outro segura); ela
+  só **enfileira** o pedido e bloqueia o processo, e a thread `procfsd` faz o trabalho em contexto de thread,
+  leva os bytes para a memória do processo página por página e responde; a chamada é reiniciada e devolve o
+  resultado (o mesmo esquema do hospedeiro WebAssembly). Um `fstest` inteiro (22 passos de criar, ler, anexar,
+  buscar, listar, renomear, remover e recusar) leva ~200 ms.
+* **Limites.** 16 arquivos abertos por processo, 64 KiB por leitura ou escrita, caminhos de até 1024 bytes, 4 KiB de
+  argumentos; `readdir` percorre a pasta a cada chamada (O(n²) para listar tudo), como o `osj.fs_readdir`.
+* **Provado.** Cenário `tools/perf/scen/w46-ring3-files.sh`: `cat` de um arquivo, de um pipe e de um arquivo que
+  não existe, `ls /`, e o `fstest` com todos os passos `ok`, inclusive "gravar em `/etc/accounts` é recusado".
 
 ## O que foi provado em QEMU (cenário W43)
 
@@ -109,9 +146,7 @@ janelas `stac`/`clac`. Também: NX nas pilhas e no heap do processo, W^X imposto
   isolados os programas ELF e os apps WebAssembly v2. As funções `osj.*` (e o estado de arquivos, rede e
   desktop) ainda executam no kernel, a serviço do processo, e o `wasmi` do kernel segue compilado para os
   apps que não podem sair dele.
-* Sem arquivos, rede, janelas nem entrada para processos ELF genéricos (os hospedeiros recebem tudo isso
-  pelo kernel, pelo contrato acima); sem `mmap` nem memória
+* Sem rede, janelas nem entrada de teclado/mouse para processos ELF genéricos (têm arquivos e argumentos; os
+  hospedeiros WebAssembly recebem tudo isso pelo kernel, pelo contrato acima); sem `mmap` nem memória
   compartilhada; sem limite de CPU além da preempção.
-* As permissões de arquivo ainda não valem para eles (não abrem arquivo algum), então o `Cred` do dono
-  do processo ainda não é consultado.
 * Um fio de kernel por processo de usuário, 8 processos ao mesmo tempo.

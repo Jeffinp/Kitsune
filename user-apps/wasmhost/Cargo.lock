@@ -202,6 +202,13 @@ dependencies = [
 [[package]]
 name = "kitsune-user"
 version = "0.1.0"
+dependencies = [
+ "kitsune-userabi",
+]
+
+[[package]]
+name = "kitsune-userabi"
+version = "0.1.0"
 
 [[package]]
 name = "kitsune_core"

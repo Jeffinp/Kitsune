@@ -205,6 +205,23 @@ fn with_user<R>(f: impl FnOnce(&mut dyn Backend) -> R) -> Result<R> {
     })
 }
 
+/// Run `f` on the active volume as `cred` (`None`: full rights, like [`with_user`] before any account
+/// exists). For a program that outlives the session it was started in: it keeps acting as the user
+/// who ran it. The volume being unavailable is an `Err`.
+pub(crate) fn as_cred<R>(
+    cred: Option<kitsune_core::perm::Cred>,
+    f: impl FnOnce(&mut dyn Backend) -> R,
+) -> Result<R> {
+    with_sys(|be| match cred {
+        Some(c) => {
+            let mut s =
+                kitsune_core::secured::Secured::new(be, c, kitsune_core::secured::DEFAULT_UMASK);
+            f(&mut s)
+        }
+        None => f(be),
+    })
+}
+
 fn mut_sys<R>(f: impl FnOnce(&mut dyn Backend) -> R) -> Result<R> {
     let r = with_sys(f);
     touched();

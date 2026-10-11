@@ -21,6 +21,7 @@ que precisam de mais tempo e de OVMF.
 
 ```bash
 cargo test-core          # alias de `cargo test -p kitsune_core`
+cargo test -p kitsune-userabi   # o contrato de arquivos e argumentos dos programas ring 3
 ```
 
 Por que só o core: um binário `no_std`/`no_main` não tem harness de teste. Por isso
@@ -128,6 +129,7 @@ Alvos em `fuzz/fuzz_targets/` (crate independente, fora do workspace):
 | `compositor_ops` | sequência de operações de área de trabalho (abrir, fechar, mover, redimensionar, focar, minimizar, encaixar, áreas de trabalho, overlays, ticks de animação, janelas vivas, relógio, quadros ociosos), 1 a 4 por quadro | `kitsune_core::compositor`: depois de cada quadro o resultado incremental é idêntico ao redesenho completo, o pintor nunca escreve fora do footprint, um quadro ocioso não planeja nada. 5 minutos: 25 351 execuções (84/s, até 400 quadros cada), 0 falhas |
 | `i18n_format` | `[modo, idioma, ...bytes]`: modelos de mensagem hostis (chaves desbalanceadas, nomes enormes, índices posicionais), números/tamanhos crus, datas fora de faixa, chaves e etiquetas de idioma arbitrárias | `kitsune_core::i18n`: nunca pânico, saída limitada, números só com dígitos e separadores, todo texto do catálogo formata com argumentos hostis |
 | `security_db` | texto como banco de contas (`parse` e ida e volta), modos e credenciais para as regras de permissão, hashes de senha malformados | `kitsune_core::security`: o que lê tem de reescrever igual; root nunca perde leitura e escrita; `password::verify` não entra em pânico |
+| `userabi` | caminhos de programas ring 3 (`resolve`), blobs de argumentos (`pack_args`/`unpack_args`) arbitrários | `kitsune-userabi`: caminho normalizado, absoluto, idempotente, sem `.`/`..`; nada além do blob; ida e volta dos argumentos |
 | `archive_text` | bytes como arquivo ZIP (listar e extrair com teto), nomes de entrada e conteúdo reescritos por `ZipWriter` e relidos, e bytes como texto em qualquer codificação | `format::zip`, `format::text`: nunca pânico, nada extraído passa do teto, nomes seguros nunca saem da pasta, o que escrevemos lemos igual, Windows-1252 volta idêntico |
 | `entropy_api` | sequência de operações (`add` com id e crédito declarado quaisquer, timestamps, `fill` de qualquer tamanho, reseed, relógio) | `kitsune_core::entropy`: nunca pânico; crédito por fonte <= 8 bits por byte e nunca decrescente; nota nunca decrescente e timing sozinho nunca Strong; crédito na chave <= 256 por classe; nenhuma saída de 32 bytes se repete |
 | `app_sandbox` | sequência de operações com caminhos em bytes crus sobre dois apps que dividem um `MemFs` **ou** um `VolumeFs` sobre um OJFS v3 de 1 MiB em RAM (o primeiro bool escolhe; mais URLs) | `appfs` (normalização, `Sandbox`, `VolumeFs`, cota, descritores) e `appnet`: nada existe fora de `/data/<id>`, os arquivos do sistema e do usuário ficam intactos, a cota vale, `fsck` limpo, URL aceita nunca é local |

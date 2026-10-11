@@ -18,6 +18,9 @@
 
 use core::fmt;
 
+pub mod fs;
+pub use kitsune_userabi as abi;
+
 /// System call numbers.
 mod nr {
     pub const EXIT: u64 = 0;
@@ -45,6 +48,29 @@ pub unsafe fn syscall3(n: u64, a: u64, b: u64, c: u64) -> i64 {
             in("rdi") a,
             in("rsi") b,
             in("rdx") c,
+            options(nostack),
+        );
+    }
+    ret
+}
+
+/// A raw five-argument system call (`rdi`, `rsi`, `rdx`, `r10`, `r8`).
+///
+/// # Safety
+/// As [`syscall3`].
+#[inline]
+pub unsafe fn syscall5(n: u64, a: u64, b: u64, c: u64, d: u64, e: u64) -> i64 {
+    let ret: i64;
+    // SAFETY: `int 0x80` enters the kernel, which preserves every register but `rax`.
+    unsafe {
+        core::arch::asm!(
+            "int 0x80",
+            inlateout("rax") n as i64 => ret,
+            in("rdi") a,
+            in("rsi") b,
+            in("rdx") c,
+            in("r10") d,
+            in("r8") e,
             options(nostack),
         );
     }
@@ -117,9 +143,51 @@ impl fmt::Write for Stdout {
     }
 }
 
+/// Collects a whole `print!` into one buffer and writes it with a single call (a formatted line is
+/// many small pieces; one call per piece would be many system calls and many log lines).
+struct Line {
+    buf: [u8; 512],
+    len: usize,
+}
+
+impl fmt::Write for Line {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let mut rest = s.as_bytes();
+        while !rest.is_empty() {
+            if self.len == self.buf.len() {
+                self.flush();
+            }
+            let n = rest.len().min(self.buf.len() - self.len);
+            self.buf[self.len..self.len + n].copy_from_slice(&rest[..n]);
+            self.len += n;
+            rest = &rest[n..];
+        }
+        Ok(())
+    }
+}
+
+impl Line {
+    fn flush(&mut self) {
+        let mut rest = &self.buf[..self.len];
+        while !rest.is_empty() {
+            let n = write(1, rest);
+            if n <= 0 {
+                break;
+            }
+            rest = &rest[n as usize..];
+        }
+        self.len = 0;
+    }
+}
+
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments<'_>) {
-    let _ = fmt::Write::write_fmt(&mut Stdout, args);
+    let mut line = Line {
+        buf: [0; 512],
+        len: 0,
+    };
+    let _ = fmt::Write::write_fmt(&mut line, args);
+    line.flush();
 }
 
 /// Print to the process output.

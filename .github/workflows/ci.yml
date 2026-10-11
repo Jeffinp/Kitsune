@@ -21,6 +21,7 @@ jobs:
       - run: rustup show # installs the nightly pinned in rust-toolchain.toml
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p kitsune_core
+      - run: cargo test -p kitsune-userabi
       # Proves the core really is no_std / bare-metal clean.
       - run: cargo build -p kitsune_core --target x86_64-unknown-none
 

@@ -64,8 +64,10 @@ dono/grupo/modo nos arquivos, login e bloqueio de tela, sem ring 3; **(2)** assi
 e volume criptografado; **(3)** processos em ring 3, que levam a fronteira entre apps e kernel do WebAssembly com limites
 para o hardware. Custo estimado da fase 3: 22 a 33 dias de um desenvolvedor para o MVP de um processo, 50 a 75 com os
 apps portados ([ADR](audit/adr-isolamento.md)).
-*Estado:* o modelo de contas, as regras de permissão, o `gid` no inode e o adaptador `Secured` do VFS já existem e são
-testados no host; falta ligá-los ao kernel (login, Ajustes > Usuários, Terminal).
+*Estado:* contas, login, permissões e `Secured` estão ligados ao kernel. Fase 3: programas ELF em ring 3 com
+arquivos (nos direitos do usuário), argumentos e pipe, e apps WebAssembly v2 em ring 3, um processo por app
+([`design/processos.md`](design/processos.md)). Falta: janelas e entrada para processos genéricos, mover o
+Terminal, o Editor e o Navegador para ring 3, e rede para processos.
 *Aceite:* a fase 1 prova, com testes, que um usuário não lê nem apaga o arquivo de outro; a fase 3, que um app nativo
 com falha de memória não derruba o kernel nem os outros apps.
 

@@ -23,7 +23,10 @@ fn main() -> i32 {
         println!("wrote and read back 1 MiB, checksum {sum}");
     }
     let refused = brk(HEAP_BASE + 64 * 1024 * 1024);
-    println!("asked for 64 MiB -> end {refused:#x} (unchanged: {})", refused == end);
+    println!(
+        "asked for 64 MiB -> end {refused:#x} (unchanged: {})",
+        refused == end
+    );
     println!("touching the page after the heap...");
     // SAFETY: deliberately not: this must fault and kill only this process.
     unsafe { core::ptr::write_volatile(core::hint::black_box(end as usize) as *mut u8, 1) };

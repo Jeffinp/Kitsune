@@ -97,14 +97,23 @@ impl SysInfo for KSys {
         &mut self,
         name: &str,
         image: Option<&[u8]>,
+        ctx: &kitsune_core::shell::ProgramCtx,
     ) -> Result<u32, kitsune_core::shell::SpawnFail> {
-        use crate::userproc::{self, SpawnError};
+        use crate::userproc::{self, Launch, SpawnError};
         use kitsune_core::shell::SpawnFail;
         let bytes = match image {
             Some(b) => b,
             None => userproc::embedded(name).ok_or(SpawnFail::Unknown)?,
         };
-        userproc::spawn_elf(name, bytes).map_err(|e| match e {
+        let args = kitsune_userabi::pack_args(&ctx.cwd, &ctx.args).ok_or(SpawnFail::BadArgs)?;
+        let launch = Launch {
+            cwd: ctx.cwd.clone(),
+            args,
+            stdin: ctx.stdin.clone(),
+            // It acts as the user who runs it, even if the session changes meanwhile.
+            cred: crate::desktop::services::accounts::cred(),
+        };
+        userproc::spawn_elf(name, bytes, launch).map_err(|e| match e {
             SpawnError::BadElf(why) => {
                 crate::klog!(Warn, "run: '{name}' is not runnable: {why:?}");
                 SpawnFail::BadImage

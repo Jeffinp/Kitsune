@@ -96,7 +96,12 @@ fn main() {
 /// The ring 3 programs that are embedded: the crate under `user-apps/` and the binaries
 /// (`src/bin/<name>.rs`) taken from it.
 const USER_CRATES: &[(&str, &[&str])] = &[
-    ("demo", &["hello", "spin", "crash", "probe", "mem"]),
+    (
+        "demo",
+        &[
+            "hello", "spin", "crash", "probe", "mem", "cat", "ls", "fstest",
+        ],
+    ),
     // The WebAssembly host that runs an app inside a process (see `src/wasm/remote.rs`).
     ("wasmhost", &["wasmhost"]),
 ];

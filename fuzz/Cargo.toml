@@ -11,6 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 kitsune_core = { path = "../kitsune_core" }
+kitsune-userabi = { path = "../user-apps/abi" }
 
 # Standalone workspace: the fuzz crate must NOT be a member of the main
 # workspace (kernel/os are bare-metal builds with their own flags).
@@ -161,6 +162,13 @@ bench = false
 [[bin]]
 name = "elf_frames"
 path = "fuzz_targets/elf_frames.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "userabi"
+path = "fuzz_targets/userabi.rs"
 test = false
 doc = false
 bench = false
