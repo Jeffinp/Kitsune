@@ -70,8 +70,17 @@ impl TermState {
     /// Whether the window needs frames beyond a running command: a blinking caret, a fading
     /// scrollbar.
     pub(crate) fn animating(&self, focused: bool) -> bool {
-        (focused && appui::caret_animating(self.last_input))
-            || self.scroll_fade.active(appui::now_ms())
+        self.blinking(focused) || self.moving()
+    }
+
+    /// Only the caret's blink needs frames (an ambient animation: it can run at a low rate).
+    pub(crate) fn blinking(&self, focused: bool) -> bool {
+        focused && appui::caret_animating(self.last_input)
+    }
+
+    /// The scrollbar fades: frames at the full animation rate.
+    pub(crate) fn moving(&self) -> bool {
+        self.scroll_fade.active(appui::now_ms())
     }
 
     pub(super) fn click_count(&mut self, ticks: u64, cell: (usize, usize)) -> u8 {

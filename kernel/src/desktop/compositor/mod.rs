@@ -23,6 +23,7 @@ mod paint;
 mod present;
 mod verify;
 
+use super::frame::Animation;
 use super::*;
 use crate::perf::Perf;
 use crate::trace;
@@ -69,6 +70,11 @@ pub struct FrameOut {
     pub worked: bool,
 }
 
+/// Ticks (4 ms) between two frames of moving animations: at most 125 a second.
+const MOTION_TICKS: u64 = 2;
+/// Ticks between two frames of an ambient animation (a caret's blink): about 31 a second.
+const AMBIENT_TICKS: u64 = 8;
+
 /// The desktop compositor.
 pub struct Compositor {
     engine: Engine,
@@ -80,6 +86,8 @@ pub struct Compositor {
     was_anim: bool,
     /// Tick of the last frame that repainted live windows (they glide at 50 fps).
     live_tick: u64,
+    /// Tick of the last frame an animation asked for (see `MOTION_TICKS`).
+    anim_tick: u64,
     /// Debugging: compare every frame with a full redraw (Ctrl+Alt+V).
     verify: verify::Verifier,
 }
@@ -94,6 +102,7 @@ impl Compositor {
             prev_focused: None,
             was_anim: false,
             live_tick: 0,
+            anim_tick: 0,
             verify: verify::Verifier::new(),
         }
     }
@@ -112,19 +121,28 @@ impl Compositor {
         perf: &mut Perf,
         i: &FrameIn,
     ) -> FrameOut {
-        let any_anim = desk.has_animation();
+        let anim = desk.animation();
+        let any_anim = anim != Animation::None;
         let cursor_moved = i.cursor_moved | self.passes.stale(desk);
         let settle = self.was_anim && !any_anim;
         let hover = cursor_moved && desk.overlay_open();
-        let tick = any_anim && (i.tick_changed || cursor_moved);
+        // Animations are timed in real time, so frames beyond what the eye or the screen takes
+        // only burn CPU: at most one every `MOTION_TICKS` (125 Hz) for moving things and one every
+        // `AMBIENT_TICKS` (31 Hz) for a blinking caret. A moved pointer always gets its frame.
+        let gap = if anim == Animation::Motion {
+            MOTION_TICKS
+        } else {
+            AMBIENT_TICKS
+        };
+        let anim_due = any_anim && i.tick_changed && i.tick.wrapping_sub(self.anim_tick) >= gap;
+        let tick = (anim_due || (any_anim && cursor_moved)) && {
+            self.anim_tick = i.tick;
+            true
+        };
         let reference = desk.reference_mode() && (any_anim || i.input || i.clock_tick);
         let due = i.input || hover || tick || settle || i.clock_tick || i.client.is_some();
-        let work = any_anim
-            || i.input
-            || i.client.is_some()
-            || i.clock_tick
-            || cursor_moved
-            || self.was_anim;
+        // (`settle` is the frame after an animation: it needs the cursor passes too.)
+        let work = tick || i.input || i.client.is_some() || i.clock_tick || cursor_moved || settle;
         let frame_start = crate::io::rdtsc();
         let cpu_start = trace::cpu_now();
 

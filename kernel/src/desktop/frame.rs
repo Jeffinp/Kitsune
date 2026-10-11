@@ -88,26 +88,46 @@ impl Desktop {
         w.visual_rect()
     }
 
-    /// True while any window is opening, closing, being dragged, or is a live
-    /// WASM app — i.e. the compositor should run its per-frame damage path so the
-    /// app gets continuous frames, rather than the steady (repaint-on-change) one.
-    pub fn has_animation(&self) -> bool {
-        self.drag.is_some()
+    /// While any window is opening, closing, being dragged, or is a live WASM app (and more: see
+    /// below) the compositor runs its per-frame damage path so the app gets continuous frames, rather
+    /// than the steady (repaint-on-change) one.
+    ///
+    /// What kind of frames the screen needs now: [`Animation::Motion`] when something moves, glides,
+    /// fades or runs live (frames at the full animation rate), [`Animation::Ambient`] when the only
+    /// thing changing is a caret's blink (a few frames a second look the same and cost a quarter).
+    pub fn animation(&self) -> Animation {
+        let focused = self.focused();
+        let motion = self.drag.is_some()
             || self.shell_animating()
             || self.toasts_sliding()
-            || self.live_busy()
-            || self.wm.windows().iter().any(|w| {
-                w.shown()
-                    && (w.anim.is_some()
-                        || w.zoom.is_some()
-                        || self.focus_busy(w.id)
-                        || w.app.kind() == Kind::WasmApp
-                        || matches!(&w.app.app, App::Files(f) if f.animating())
-                        || matches!(&w.app.app, App::Viewer(v) if v.animating())
-                        || matches!(&w.app.app, App::Editor(e) if e.animating(self.focused() == Some(w.id)))
-                        || matches!(&w.app.app, App::Terminal(t) if t.term.is_running() || t.animating(self.focused() == Some(w.id)))
-                        || self.browser_busy(w))
-            })
+            || self.live_busy() || self.wm.windows().iter().any(|w| {
+            w.shown()
+                && (w.anim.is_some()
+                    || w.zoom.is_some()
+                    || self.focus_busy(w.id)
+                    || w.app.kind() == Kind::WasmApp
+                    || matches!(&w.app.app, App::Files(f) if f.animating())
+                    || matches!(&w.app.app, App::Viewer(v) if v.animating())
+                    || matches!(&w.app.app, App::Editor(e) if e.moving())
+                    || matches!(&w.app.app, App::Terminal(t) if t.term.is_running() || t.moving())
+                    || self.browser_busy(w))
+        });
+        if motion {
+            return Animation::Motion;
+        }
+        let blinking = self.wm.windows().iter().any(|w| {
+            w.shown()
+                && match &w.app.app {
+                    App::Editor(e) => e.blinking(focused == Some(w.id)),
+                    App::Terminal(t) => t.blinking(focused == Some(w.id)),
+                    _ => false,
+                }
+        });
+        if blinking {
+            Animation::Ambient
+        } else {
+            Animation::None
+        }
     }
 
     /// Is the verify mode (Ctrl+Alt+V, see the `verify` field) on?
@@ -140,4 +160,14 @@ impl Desktop {
     pub(crate) fn mark_dirty(&mut self, r: Rect) {
         self.extra_dirty = self.extra_dirty.union(&r);
     }
+}
+
+/// How much the screen is changing on its own (see [`Desktop::animation`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Animation {
+    None,
+    /// Only a caret blinks.
+    Ambient,
+    /// Something moves, fades, glides or runs live.
+    Motion,
 }

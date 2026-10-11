@@ -111,8 +111,14 @@ impl Desktop {
         };
         let sel_a = (sel_a as u32 * sel_level / 256) as u16;
         let guide = p.separator;
+        let clip = c.clip_rect();
         for (i, row) in ed.visible_rows().enumerate().take(lay.rows) {
             let y = lay.top + i as i32 * m.lh;
+            // A frame that repaints only a part of the window (the caret's blink) skips the rows
+            // that lie outside it: their text would be clipped away anyway.
+            if y + m.lh <= clip.y || y >= clip.bottom() {
+                continue;
+            }
             // The line the caret is on.
             if cursor_row == Some(i) && !ed.has_selection() {
                 let (col, a) = theme::tint(0x14_00_00_00 | appui::rgb_of(acc));
@@ -351,5 +357,20 @@ impl Desktop {
             Weight::Semibold,
             if on { theme::accent() } else { secondary() },
         );
+    }
+}
+
+impl Desktop {
+    /// The rectangle the caret of the editor in window box `r` occupies (the bar, a little larger),
+    /// where it is now; `None` when there is no caret to show.
+    pub(crate) fn editor_caret_rect(&self, r: Rect, e: &EditorState) -> Option<Rect> {
+        let lay = geom(r, &e.ed);
+        let (row, col) = e.ed.cursor_screen()?;
+        if row >= lay.rows || col >= lay.cols {
+            return None;
+        }
+        let x = lay.text_x + appui::round(e.caret_x.value().max(0.0));
+        let y = lay.top + row as i32 * lay.m.lh;
+        Some(Rect::new(x, y, 2, lay.m.lh).inflated(3))
     }
 }

@@ -21,6 +21,14 @@ Medido com `-icount shift=0` (repetível; ver `docs/BENCHMARKS.md`), primeiro bo
   de 4): 291 → 146 Mciclos por derivação (login, troca de senha). Mesmos vetores RFC e teste contra o laço HMAC simples.
 - **Papel de parede**: `Canvas::glow` só percorre a corda do círculo em cada linha, sem divisão nem teste
   por pixel (-24 %; pixels idênticos: 0 de diferença contra a captura anterior).
+- **Quadros de animação**: os quadros eram gerados a cada tick (até 250 por segundo) enquanto qualquer coisa
+  animasse, e o pisca do cursor do Terminal e do Editor mantém a tela animando por 12 s após cada tecla. Agora
+  `Desktop::animation()` separa *movimento* (arrastar, abrir/fechar, apps ao vivo, rolagem: no máximo 125
+  quadros/s) de *ambiente* (só o cursor piscando: ~31/s), e o pisca repinta só a célula do cursor (o `Layer`
+  já aceitava um retângulo sujo), pulando as linhas fora do recorte. Digitar e esperar: 51 % de CPU → ~3 %
+  (quadro de 6,4 ms → 0,9 ms, 120 → 31 por segundo). As animações são por tempo real, então o movimento é o
+  mesmo. O modo de verificação (Ctrl+Alt+V) só aponta a própria célula do cursor, igual à versão anterior
+  (o alfa do pisca depende da hora em que se pinta).
 - Ferramentas: `bench ata`, `bench password`, `bench app` no build `perf-trace`, marcas dentro de
   `Desktop::new`, tempos do papel de parede.
 

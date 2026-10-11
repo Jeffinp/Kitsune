@@ -124,6 +124,27 @@ impl Desktop {
         // Content that animates by itself (a caret, a copy, a running command, a viewer's
         // transition): the window's rectangle; the shadow outside it is untouched.
         let focused = self.focused() == Some(w.id);
+        // A terminal whose only motion is the caret's blink repaints just the caret's cell.
+        if let App::Terminal(t) = &w.app.app
+            && !t.term.is_running()
+            && !t.moving()
+            && t.blinking(focused)
+            && self.drag.as_ref().is_none_or(|d| d.win != w.id)
+            && let Some(caret) = self.terminal_caret_rect(box_, t)
+            && let Some(area) = caret.intersection(&box_)
+        {
+            return Some((area, false));
+        }
+        // The same for an editor: only the bar of the caret changes.
+        if let App::Editor(e) = &w.app.app
+            && !e.moving()
+            && e.blinking(focused)
+            && self.drag.as_ref().is_none_or(|d| d.win != w.id)
+            && let Some(caret) = self.editor_caret_rect(box_, e)
+            && let Some(area) = caret.intersection(&box_)
+        {
+            return Some((area, false));
+        }
         let content_busy = match &w.app.app {
             App::Files(f) => f.animating(),
             App::Viewer(v) => v.animating(),

@@ -42,8 +42,14 @@ impl Desktop {
                 0x40_70_70_78
             })
         };
+        let clip = c.clip_rect();
         for (i, row) in v.rows.iter().enumerate() {
             let y = g.y + i as i32 * g.m.lh;
+            // A frame that repaints only a part of the window (the caret's blink) skips the rows
+            // that lie outside it: their text would be clipped away anyway.
+            if y + g.m.lh <= clip.y || y >= clip.bottom() {
+                continue;
+            }
             let len = row.chars().count();
             if let Some((first, n)) = t.sel.and_then(|s| s.span(i, len)) {
                 let rx = g.x + first as i32 * g.m.cw;
@@ -155,5 +161,15 @@ impl Desktop {
             Weight::Medium,
             theme::text(),
         );
+    }
+}
+
+impl Desktop {
+    /// The rectangle the caret of the terminal in window box `r` occupies, a little larger than the
+    /// cell (the bar and the block are drawn inside it, anti-aliased).
+    pub(crate) fn terminal_caret_rect(&self, r: Rect, t: &TermState) -> Option<Rect> {
+        let g = term_grid(r);
+        let (row, col) = t.term.view_in(g.cols, g.rows).cursor?;
+        Some(g.cell_rect(row, col).inflated(3))
     }
 }

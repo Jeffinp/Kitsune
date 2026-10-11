@@ -134,8 +134,17 @@ impl EditorState {
     /// Whether the window needs frames: a blinking or gliding caret, a selection fading in, a
     /// sheet sliding, a fading scrollbar. `focused` windows blink their caret, others rest.
     pub(crate) fn animating(&self, focused: bool) -> bool {
-        (focused && self.modal.is_none() && appui::caret_animating(self.last_input))
-            || !self.caret_x.at_rest()
+        self.blinking(focused) || self.moving()
+    }
+
+    /// Only the caret's blink needs frames (an ambient animation: it can run at a low rate).
+    pub(crate) fn blinking(&self, focused: bool) -> bool {
+        focused && self.modal.is_none() && appui::caret_animating(self.last_input)
+    }
+
+    /// Something glides, fades or slides: frames at the full animation rate.
+    pub(crate) fn moving(&self) -> bool {
+        !self.caret_x.at_rest()
             || !self.sel_t.finished()
             || !self.sheet_t.finished()
             || !self.hover_t.finished()
