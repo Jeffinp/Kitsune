@@ -4,8 +4,9 @@
 
 use crate::desktop::Desktop;
 use crate::fb::Canvas;
+use crate::interrupts;
 use crate::{
-    boot, fetch, icons, io, klog, logd, pci, rtc, serial_println, text, trace, virtio, virtio_gpu,
+    boot, fetch, icons, io, klog, logd, pci, serial_println, text, trace, virtio, virtio_gpu,
 };
 use bootloader_api::info::FrameBufferInfo;
 
@@ -189,13 +190,15 @@ pub fn report_first_frame() {
     logd::request_boot_flush();
 }
 
-fn secs_of_day(t: rtc::Time) -> u32 {
-    t.h as u32 * 3600 + t.m as u32 * 60 + t.s as u32
-}
+/// Shortest the splash plays, so the mark is seen and the fades finish (ms).
+const SPLASH_MIN_MS: u64 = 1500;
+/// How long the bar takes to fill the last fifth once the boot work is done (ms).
+const SPLASH_FINISH_MS: u64 = 300;
 
-/// Plays the boot splash, driving the progress bar from real elapsed RTC time
-/// so it always lasts at least 5 seconds regardless of CPU speed. `step` is boot work run
-/// between frames (see `main.rs`); the splash does not end before it has finished.
+/// Plays the boot splash until the desktop is ready. `step` is the boot work, run once between two
+/// frames; it says whether more is left. The bar follows the clock but waits at 80 % while the
+/// work is not done, then fills; the splash ends when the work is done and at least
+/// [`SPLASH_MIN_MS`] have passed (it used to last five seconds whatever the machine did).
 pub fn run_splash(
     framebuffer: &mut bootloader_api::info::FrameBuffer,
     back: &mut [u8],
@@ -210,20 +213,22 @@ pub fn run_splash(
         let mut c = Canvas::new(&mut cache[..n], info);
         boot::draw_splash_background(&mut c);
     }
-    // Boot work to do while the splash plays: `step` runs once between two frames and says
-    // whether more is left.
+    let ms = || interrupts::ticks() * 1000 / u64::from(interrupts::TIMER_HZ);
     let mut more = true;
-    let start = secs_of_day(rtc::now());
-    let mut prev_el = 0u32;
-    let mut frac = 0.0f32;
+    let start = ms();
+    let mut done_at = 0u64;
     let (mut frames, mut draw_cyc, mut blit_cyc) = (0u64, 0u64, 0u64);
     loop {
-        let el = (secs_of_day(rtc::now()) + 86_400 - start) % 86_400;
-        if el != prev_el {
-            frac = 0.0;
-            prev_el = el;
-        }
-        let p = ((el as f32) + frac.min(0.99)) / 5.0;
+        let elapsed = ms() - start;
+        let base = (elapsed as f32 / SPLASH_MIN_MS as f32).min(1.0);
+        let p = if more {
+            base.min(0.8)
+        } else if done_at <= SPLASH_MIN_MS {
+            base
+        } else {
+            // Late: the bar was held at 80 %; fill the rest now.
+            (0.8 + 0.2 * (elapsed - done_at) as f32 / SPLASH_FINISH_MS as f32).min(1.0)
+        };
         let t0 = trace::t();
         back[..n].copy_from_slice(&cache[..n]);
         {
@@ -238,14 +243,16 @@ pub fn run_splash(
             draw_cyc += t1 - t0;
             blit_cyc += t2 - t1;
         }
+        if !more && elapsed >= SPLASH_MIN_MS && p >= 1.0 {
+            break;
+        }
         if more {
             more = step();
+            if !more {
+                done_at = ms() - start;
+            }
         } else {
             io::delay_cycles(20_000_000);
-        }
-        frac += 0.06;
-        if el >= 5 && !more {
-            break;
         }
     }
     if trace::ON {

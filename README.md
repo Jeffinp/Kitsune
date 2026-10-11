@@ -48,7 +48,7 @@ documentados.
 
 | | O que o Kitsune faz | Prova |
 |---|---|---|
-| **Boot** | Da entrada do kernel ao primeiro quadro do desktop em **cerca de 8 s** no QEMU **sem KVM** (emulação em software); 5 s desse tempo são a vinheta de abertura, de duração mínima fixa. Firmware e bootloader somam mais ~6 s (UEFI) ou ~11 s (BIOS) na mesma emulação | [`BENCHMARKS.md`](docs/BENCHMARKS.md#boot) |
+| **Boot** | Da entrada do kernel ao primeiro quadro do desktop em **cerca de 3,5 s (BIOS) a 4 s (UEFI)** no QEMU **sem KVM** (emulação em software, disco novo); a vinheta de abertura dura até o desktop ficar pronto (mínimo de 1,5 s). Firmware e bootloader somam mais ~6 s (UEFI) ou ~11 s (BIOS) na mesma emulação | [`BENCHMARKS.md`](docs/BENCHMARKS.md#boot) |
 | **Leve** | Imagem de **8,9 MB** (BIOS) ou **8,5 MB** (UEFI), desktop completo com 13 apps. Ocioso, usa **2,2 MiB** do heap de 64 MiB | [`BENCHMARKS.md`](docs/BENCHMARKS.md#tamanho-e-memória) |
 | **Silencioso** | Desktop ocioso: **0 % de CPU ocupada** e um único quadro por segundo, o do relógio (0,5 ms). O compositor dorme até haver o que desenhar | [`BENCHMARKS.md`](docs/BENCHMARKS.md#desktop-ocioso) |
 | **Fluido** | Interface animada com molas, sombras e transparência: **~6 ms por quadro** ao arrastar uma janela, medido em emulação em software | [`BENCHMARKS.md`](docs/BENCHMARKS.md#quadros) |

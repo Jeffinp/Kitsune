@@ -23,8 +23,8 @@ pub fn prewarm() {
 /// Opacity (`0..=256`) of the mark and the name at `progress` of the splash: a quick fade
 /// in, steady, a short fade out.
 fn fade(progress: f32) -> u32 {
-    const IN: f32 = 0.14; // 0.7 s of 5
-    const OUT: f32 = 0.08; // 0.4 s of 5
+    const IN: f32 = 0.30; // 0.45 s of the 1.5 s minimum
+    const OUT: f32 = 0.20; // 0.3 s, once the boot work is done
     let p = progress.clamp(0.0, 1.0);
     let a = if p < IN {
         p / IN

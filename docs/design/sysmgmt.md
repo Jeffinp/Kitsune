@@ -173,7 +173,7 @@ acha o hover pelo mesmo código. Um controle deslizante aplica ao vivo e **grava
   clique para confirmar; bateria n/d), **Sobre**.
 
 **Aplicação no boot**: a ordem em `main.rs` é `storage::init()` (monta/migra/formata o OJFS v3)
--> splash -> `Desktop::new` -> `load_settings` -> pintar o fundo; as configurações só são lidas
+-> splash (que toca enquanto o resto roda, em passos entre os quadros) -> `Desktop::new` -> `load_settings` -> pintar o fundo; as configurações só são lidas
 **depois** de o volume existir, e o papel de parede por imagem também sai do volume. Sem arquivo
 valem os padrões. O arquivo é escrito quando o usuário muda algo (por isso o boot padrão não
 muda). **Persistência** (provada em dois boots no mesmo disco, `w18-settings-{1,2}.sh`: papel de

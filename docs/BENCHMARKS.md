@@ -29,13 +29,16 @@ Marcos `[trace] boot +N ms` que o kernel escreve na serial em qualquer build; `t
 
 | Cenário | Comando | Primeiro quadro do desktop, após a entrada do kernel |
 |---|---|---|
-| BIOS, disco novo (formata o OJFS), 3 execuções | `tools/qemu-headless.sh bios <saida> 20`, depois `python3 tools/perf/boot.py <saida>...` | mediana **8,78 s** (mín. 8,28, máx. 8,88) |
-| BIOS, disco já formatado (`KEEP_FS=1`), 3 execuções | `KEEP_FS=1 tools/qemu-headless.sh bios <saida> 20` com o `fs.img` da execução anterior | mediana **8,10 s** (mín. 8,08, máx. 8,19) |
-| UEFI, 192 MiB de RAM, disco novo, 2 execuções | `QEMU_MEM=192M tools/qemu-headless.sh uefi <saida> 45` | mediana **8,83 s** (mín. 8,78, máx. 8,88) |
+| BIOS, disco novo (formata o OJFS), 3 execuções | `tools/qemu-headless.sh bios <saida> 20`, depois `python3 tools/perf/boot.py <saida>...` | mediana **3,49 s** (mín. 3,45, máx. 3,86) |
+| UEFI, 192 MiB de RAM, disco novo, 2 execuções | `QEMU_MEM=192M tools/qemu-headless.sh uefi <saida> 45` | mediana **4,01 s** (mín. 3,97, máx. 4,06) |
 
-Onde o tempo vai (BIOS, disco novo, mediana): 0,2 s até o relógio calibrado; **2,6 s** montando e formatando o
-disco (0,65 s num disco já formatado); **5 s de vinheta de abertura**, que tem duração mínima fixa por desenho
-(`splash end (artificial >= 5 s)`); 0,65 s carregando o desktop do disco; 0,16 s pintando o papel de parede.
+Antes das otimizações de 2026-10 (ver `CHANGELOG.md`): 8,78 s (BIOS, disco novo), 8,10 s (BIOS, disco já formatado) e 8,83 s (UEFI) — 5 s deles eram uma vinheta de duração fixa e 2,6 s a formatação do disco.
+
+Onde o tempo vai (BIOS, disco novo, mediana, `boot.py`): 0,2 s até o relógio calibrado; 0,3 s formatando o disco;
+0,5 s criando as contas e as pastas e 1,2 s semeando os apps embutidos (só no primeiro boot; num disco já
+formatado são milissegundos); a vinheta toca durante tudo isso (`Desktop::new`, configurações e papel de parede
+são passos entre os quadros dela) e termina em `splash end (desktop ready)`, no mínimo 1,5 s depois de começar;
+0,2 s para compor o primeiro quadro.
 
 Firmware e bootloader, antes da entrada do kernel (TSC desde o reset da VM, em TCG): BIOS ~**11,1 s**
 (mín. 10,7, máx. 11,2), UEFI ~**5,7 s** (mín. 5,6, máx. 5,9). Esse trecho é dominado pela emulação do

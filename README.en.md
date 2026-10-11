@@ -48,7 +48,7 @@ documents and most of the technical docs are in Portuguese.)
 
 | | What Kitsune does | Proof |
 |---|---|---|
-| **Boot** | From kernel entry to the first desktop frame in **about 8 s** on QEMU **without KVM** (software emulation); 5 s of that is the opening vignette, a fixed minimum length. Firmware and bootloader add ~6 s (UEFI) or ~11 s (BIOS) in the same emulation | [`BENCHMARKS.md`](docs/BENCHMARKS.md#boot) |
+| **Boot** | From kernel entry to the first desktop frame in **about 3.5 s (BIOS) to 4 s (UEFI)** on QEMU **without KVM** (software emulation, new disk); the opening vignette plays until the desktop is ready (1.5 s minimum). Firmware and bootloader add ~6 s (UEFI) or ~11 s (BIOS) in the same emulation | [`BENCHMARKS.md`](docs/BENCHMARKS.md#boot) |
 | **Small** | **8.9 MB** image (BIOS) or **8.5 MB** (UEFI), a complete desktop with 13 apps. Idle, it uses **2.2 MiB** of its 64 MiB heap | [`BENCHMARKS.md`](docs/BENCHMARKS.md#tamanho-e-memória) |
 | **Quiet** | Idle desktop: **0 % busy CPU** and a single frame per second, the clock's (0.5 ms). The compositor sleeps until there is something to draw | [`BENCHMARKS.md`](docs/BENCHMARKS.md#desktop-ocioso) |
 | **Fluid** | Animated interface with springs, shadows and translucency: **~6 ms per frame** while dragging a window, measured under software emulation | [`BENCHMARKS.md`](docs/BENCHMARKS.md#quadros) |

@@ -1,3 +1,5 @@
+> **Nota (2026-10):** as medições deste relatório são anteriores às otimizações de disco, catálogo, animações e boot; os números atuais estão em [`../BENCHMARKS.md`](../BENCHMARKS.md) e no [`CHANGELOG.md`](../../CHANGELOG.md). A vinheta de 5 s e o laço ocupado descritos aqui não existem mais.
+
 > *Written when the project was called OSjeff (renamed Kitsune in 2026-10; names and paths below are the historical ones).*
 
 # Auditoria 04 — Desempenho

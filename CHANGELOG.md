@@ -34,6 +34,10 @@ Medido com `-icount shift=0` (repetível; ver `docs/BENCHMARKS.md`), primeiro bo
   trabalho se somava). O fundo da vinheta (gradiente + brilhos, a parte cara) é desenhado uma vez e copiado a
   cada quadro; a cor de destaque é fixada no começo, então carregar as configurações não a troca no meio.
   Primeiro quadro do desktop (disco já formatado, TCG): ~6,5 s → ~5,0 s, agora limitado pelos 5 s da vinheta.
+- **Vinheta**: agora termina quando o desktop está pronto (mínimo de 1,5 s, em ticks e não em segundos inteiros do
+  RTC); a barra segue o relógio, espera em 80 % se o trabalho atrasa e completa ao fim. Primeiro quadro do
+  desktop em disco novo: 8,8 s → 3,5 s (BIOS) e 8,8 s → 4,0 s (UEFI); disco já formatado, medido no TCG:
+  ~2,6 s.
 - Ferramentas: `bench ata`, `bench password`, `bench app` no build `perf-trace`, marcas dentro de
   `Desktop::new`, tempos do papel de parede.
 

@@ -43,9 +43,9 @@ endereçamento**; o isolamento entre "app" e "kernel" vem do `#![forbid(unsafe_c
   interface, `smoltcp` configurado pelo lease (fallback estático do SLIRP), TLS 1.3
   **com verificação de cadeia e nome** (§9), motor HTML/CSS próprio, `wasmi` com apps
   instaláveis que guardam dados no disco OJFS v3 e usam a rede pelo mesmo `fetcher`.
-- **Boot [M]:** primeiro quadro do desktop em ~8 s (BIOS e UEFI, QEMU sem KVM) após a entrada
-  do kernel: 5 s são a vinheta de abertura (duração mínima fixa) e ~2,6 s a montagem do disco
-  num disco novo (0,65 s num já formatado). Números e comandos em [`BENCHMARKS.md`](BENCHMARKS.md).
+- **Boot [M]:** primeiro quadro do desktop em ~3,5 s (BIOS) a ~4 s (UEFI) após a entrada do kernel
+  (QEMU sem KVM, disco novo). A vinheta toca *enquanto* o desktop é montado e termina quando ele
+  fica pronto (mínimo de 1,5 s); o resto é o primeiro boot (semear apps, criar contas). Números e comandos em [`BENCHMARKS.md`](BENCHMARKS.md).
 
 > **Mapa do código:** a estrutura de pastas, as regras de dependência e os checklists (novo app, janela, overlay,
 > driver, módulo do core) estão em [`docs/design/code-structure.md`](design/code-structure.md).
@@ -127,8 +127,9 @@ da pilha de boot) -> ps2::init
 -> spawn fetcher (só com NIC, stack com guard page; sem NIC, `fetch::init_offline`) e appd
 -> storage::init (OJFS v3: monta, migra ou formata; sempre antes de qualquer arquivo)
 -> spawn logd
--> splash -> Desktop::new (semeia os apps embutidos uma vez, monta o catálogo, abre o terminal)
--> load_settings (/etc/kitsune.conf, já com o volume pronto) -> wallpaper em BG
+-> splash, e durante ela, um passo entre dois quadros: Desktop::new (semeia os apps embutidos uma vez,
+   monta o catálogo, abre o terminal) -> load_settings (/etc/kitsune.conf, já com o volume pronto)
+   -> wallpaper em BG; a vinheta termina quando o último passo acaba (e passou 1,5 s)
 -> laço do compositor (no 1º quadro: logd grava /var/log/boot.log)
 ```
 
@@ -137,9 +138,9 @@ da IDT e `spawn` capturam os seletores `CS`/`SS` vivos, e `vm::init` precede `sp
 porque criar a guard page exige o `physical_memory_offset`; `ps2::init` roda antes de `sti`
 para o handshake não correr com as ISRs. Marcos de boot saem na serial em qualquer build
 (`[trace] boot + N ms`). Medidos [M]: demo WASM 60-75 ms, calibração do TSC ~100 ms,
-splash 4,2 s (UEFI) a 4,8 s (BIOS), `Desktop::new` 30-40 ms. O splash é um laço ocupado
-que sai com `el >= 5` em segundos inteiros do RTC, então dura entre 4 e 5 s, não "≥ 5 s"
-como diz o rótulo do marco. O virtio-gpu é **só sondado**: o scanout continua sendo o
+vinheta de 1,5 s no mínimo (agora medida em ticks e encerrada quando o desktop está pronto;
+antes era um laço de 4 a 5 s em segundos inteiros do RTC), `Desktop::new` 30-40 ms (a leitura
+do catálogo só lê as seções do manifesto e do ícone). O virtio-gpu é **só sondado**: o scanout continua sendo o
 framebuffer do bootloader, e no runner padrão o dispositivo nem existe [M].
 
 ### 2.3 Layout de memória
@@ -1289,7 +1290,7 @@ código seguro em `kitsune_core`, testado e fuzzado, mas a cola em `abi2.rs` e `
 - **Plataforma.** Nenhum teste em hardware real **[NV]**; imagem não assinada (Secure Boot
   desligado). BIOS fixa em 1280x720 e 24 bpp; telas maiores que 1920x1080x4 são recusadas,
   sem adaptação. UEFI exige ≥ 192 MiB e o excedente não é usado. Single-core, PIC 8259,
-  sem ACPI, APIC ou SMP. Splash obrigatório de 4-5 s.
+  sem ACPI, APIC ou SMP. Vinheta de abertura de 1,5 s no mínimo.
 - **Robustez.** O compositor é ponto único de falha, e #DF, NMI, #MC e qualquer falha com
   IF=0 param a máquina. Uma thread morta (`fetcher`, `appd`) **não é liberada** (pilha,
   heap, `Store` do `wasmi`), **não reinicia**, deixa presos os locks que segurava com IF=1

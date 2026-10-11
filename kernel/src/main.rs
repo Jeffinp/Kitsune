@@ -324,7 +324,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         sched::spawn("logd", logd::worker);
     });
 
-    // Boot splash: progress tracks real elapsed time (>= 5 seconds). The brand mark is drawn
+    // Boot splash: it plays until the desktop is ready (at least 1.5 s). The brand mark is drawn
     // once up front; its cost is logged below, the TSC is already calibrated.
     let brand_t0 = io::rdtsc();
     boot::prewarm();
@@ -338,8 +338,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // The desktop (and its filesystem, which holds the stored settings) comes first so the wallpaper
     // and accent can honour them; with no settings file the defaults paint exactly what the desktop
     // always looked like. None of it touches the splash's buffers, so it is done *during* the
-    // splash (one step between two splash frames) instead of after it: the splash lasts at least
-    // five seconds anyway, and the work used to be added on top of that.
+    // splash (one step between two splash frames), and the splash ends when it is done.
     let mut desk_slot: Option<Desktop> = None;
     let mut step = 0u8;
     let mut build = || -> bool {
@@ -372,7 +371,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         &mut *static_buf,
         &mut build,
     );
-    trace::mark("splash end (>= 5 s)");
+    trace::mark("splash end (desktop ready)");
     let Some(mut desk) = desk_slot else {
         crash::halt()
     };
@@ -380,7 +379,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // The compositor owns the cursor sprite, the toasts and the HUD (all framebuffer-only) and
     // the damage engine; the first frame it plans repaints the whole screen over the splash.
     let mut comp = Compositor::new(info.width as i32, info.height as i32);
-    // Seed from the live tick count, NOT 0: the splash ran for ~5 s with the
+    // Seed from the live tick count, NOT 0: the splash ran for a while with the
     // timer firing, so a 0 seed would make the first frame's delta enormous and
     // instantly complete the open animation (skipping the full-screen blit that
     // clears the splash).
