@@ -29,6 +29,11 @@ Medido com `-icount shift=0` (repetível; ver `docs/BENCHMARKS.md`), primeiro bo
   (quadro de 6,4 ms → 0,9 ms, 120 → 31 por segundo). As animações são por tempo real, então o movimento é o
   mesmo. O modo de verificação (Ctrl+Alt+V) só aponta a própria célula do cursor, igual à versão anterior
   (o alfa do pisca depende da hora em que se pinta).
+- **Boot**: o desktop (`Desktop::new`, configurações, papel de parede) passou a ser montado *durante* a vinheta,
+  um passo entre dois quadros, em vez de depois dela (a vinheta dura ao menos 5 s de qualquer jeito, e o
+  trabalho se somava). O fundo da vinheta (gradiente + brilhos, a parte cara) é desenhado uma vez e copiado a
+  cada quadro; a cor de destaque é fixada no começo, então carregar as configurações não a troca no meio.
+  Primeiro quadro do desktop (disco já formatado, TCG): ~6,5 s → ~5,0 s, agora limitado pelos 5 s da vinheta.
 - Ferramentas: `bench ata`, `bench password`, `bench app` no build `perf-trace`, marcas dentro de
   `Desktop::new`, tempos do papel de parede.
 

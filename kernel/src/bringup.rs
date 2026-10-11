@@ -194,13 +194,25 @@ fn secs_of_day(t: rtc::Time) -> u32 {
 }
 
 /// Plays the boot splash, driving the progress bar from real elapsed RTC time
-/// so it always lasts at least 5 seconds regardless of CPU speed.
+/// so it always lasts at least 5 seconds regardless of CPU speed. `step` is boot work run
+/// between frames (see `main.rs`); the splash does not end before it has finished.
 pub fn run_splash(
     framebuffer: &mut bootloader_api::info::FrameBuffer,
     back: &mut [u8],
     info: FrameBufferInfo,
     n: usize,
+    cache: &mut [u8],
+    step: &mut dyn FnMut() -> bool,
 ) {
+    // The background is the same in every frame: draw it once into `cache` and copy it.
+    let accent = crate::theme::accent();
+    {
+        let mut c = Canvas::new(&mut cache[..n], info);
+        boot::draw_splash_background(&mut c);
+    }
+    // Boot work to do while the splash plays: `step` runs once between two frames and says
+    // whether more is left.
+    let mut more = true;
     let start = secs_of_day(rtc::now());
     let mut prev_el = 0u32;
     let mut frac = 0.0f32;
@@ -213,9 +225,10 @@ pub fn run_splash(
         }
         let p = ((el as f32) + frac.min(0.99)) / 5.0;
         let t0 = trace::t();
+        back[..n].copy_from_slice(&cache[..n]);
         {
             let mut c = Canvas::new(back, info);
-            boot::draw_splash(&mut c, p);
+            boot::draw_splash(&mut c, p, accent);
         }
         let t1 = trace::t();
         fb_full_blit(framebuffer.buffer_mut(), back, n);
@@ -225,9 +238,13 @@ pub fn run_splash(
             draw_cyc += t1 - t0;
             blit_cyc += t2 - t1;
         }
-        io::delay_cycles(20_000_000);
+        if more {
+            more = step();
+        } else {
+            io::delay_cycles(20_000_000);
+        }
         frac += 0.06;
-        if el >= 5 {
+        if el >= 5 && !more {
             break;
         }
     }

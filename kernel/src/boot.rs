@@ -4,7 +4,6 @@
 
 use crate::fb::{Canvas, Color, Corner};
 use crate::text::{self, BODY, Weight};
-use crate::theme;
 use kitsune_core::Rect;
 use kitsune_core::wallpaper::{PRESETS, lerp_rgb};
 
@@ -39,8 +38,9 @@ fn fade(progress: f32) -> u32 {
     (a * 256.0) as u32
 }
 
-/// Renders one frame of the splash. `progress` in `0.0..=1.0` fills the bar.
-pub fn draw_splash(c: &mut Canvas, progress: f32) {
+/// Renders the splash's background once: the dark scheme of the default wallpaper, gradient and
+/// soft glows (the glows are the expensive part, so they are not redrawn every frame).
+pub fn draw_splash_background(c: &mut Canvas) {
     let w = c.width();
     let h = c.height();
 
@@ -57,19 +57,21 @@ pub fn draw_splash(c: &mut Canvas, progress: f32) {
         let rad = (w as i64 * b.r as i64 / 1000) as i32;
         c.glow(cx, cy, rad, rgb24(b.color), b.alpha as u32, &lut);
     }
+}
+
+/// Draws what changes from frame to frame over [`draw_splash_background`]: the brand mark and the
+/// name fading in and out, and the progress bar. `progress` in `0.0..=1.0` fills the bar, `accent`
+/// is the colour it was started with (the settings, loaded meanwhile, may change `theme::accent`).
+pub fn draw_splash(c: &mut Canvas, progress: f32, accent: Color) {
+    let w = c.width();
+    let h = c.height();
+    let lut = kitsune_core::raster::glow_lut();
 
     // Brand mark with a soft glow, the name below it.
     let a = fade(progress);
     let cx = w as i32 / 2;
     let gy = h as i32 * 19 / 100;
-    c.glow(
-        cx,
-        gy + MARK / 2,
-        MARK * 2,
-        theme::accent(),
-        70 * a / 256,
-        &lut,
-    );
+    c.glow(cx, gy + MARK / 2, MARK * 2, accent, 70 * a / 256, &lut);
     c.blit_surface(
         crate::icons::surface(crate::icons::Icon::Halo, MARK),
         cx - MARK / 2,
@@ -108,7 +110,7 @@ pub fn draw_splash(c: &mut Canvas, progress: f32) {
             Rect::new(bar.x, bar.y, fill, bar.h),
             3,
             Corner::Circle,
-            theme::accent().lerp(Color::rgb(255, 255, 255), 60),
+            accent.lerp(Color::rgb(255, 255, 255), 60),
             256,
         );
     }

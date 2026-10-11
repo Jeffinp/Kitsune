@@ -335,23 +335,47 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         brand_cyc.saturating_mul(1000) / tsc_khz.max(1),
         brand_cyc / 1_000_000
     );
-    bringup::run_splash(&mut *framebuffer, &mut *back, info, n);
-    trace::mark("splash end (artificial >= 5 s)");
-
-    // The desktop (and its filesystem, which holds the stored settings) comes first so
-    // the wallpaper and accent can honour them; with no settings file the defaults
-    // paint exactly what the desktop always looked like.
-    let mut desk = Desktop::new(info.width as i32, info.height as i32);
-    trace::mark("Desktop::new (fs load from ATA) done");
-    desk.load_settings();
-    trace::mark("settings loaded");
-
-    // Static layer painted once.
-    {
-        let mut c = Canvas::new(&mut *bg, info);
-        desktop::paint_background(&mut c);
-    }
-    trace::mark("wallpaper painted");
+    // The desktop (and its filesystem, which holds the stored settings) comes first so the wallpaper
+    // and accent can honour them; with no settings file the defaults paint exactly what the desktop
+    // always looked like. None of it touches the splash's buffers, so it is done *during* the
+    // splash (one step between two splash frames) instead of after it: the splash lasts at least
+    // five seconds anyway, and the work used to be added on top of that.
+    let mut desk_slot: Option<Desktop> = None;
+    let mut step = 0u8;
+    let mut build = || -> bool {
+        match step {
+            0 => {
+                desk_slot = Some(Desktop::new(info.width as i32, info.height as i32));
+                trace::mark("Desktop::new (fs load from ATA) done");
+            }
+            1 => {
+                if let Some(d) = desk_slot.as_mut() {
+                    d.load_settings();
+                }
+                trace::mark("settings loaded");
+            }
+            _ => {
+                // Static layer painted once.
+                let mut c = Canvas::new(&mut *bg, info);
+                desktop::paint_background(&mut c);
+                trace::mark("wallpaper painted");
+            }
+        }
+        step += 1;
+        step < 3
+    };
+    bringup::run_splash(
+        &mut *framebuffer,
+        &mut *back,
+        info,
+        n,
+        &mut *static_buf,
+        &mut build,
+    );
+    trace::mark("splash end (>= 5 s)");
+    let Some(mut desk) = desk_slot else {
+        crash::halt()
+    };
     let mut last_sec = 0xFFu8; // force first render
     // The compositor owns the cursor sprite, the toasts and the HUD (all framebuffer-only) and
     // the damage engine; the first frame it plans repaints the whole screen over the splash.
