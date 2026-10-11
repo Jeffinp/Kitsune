@@ -173,7 +173,9 @@ impl Desktop {
             verify: false,
         };
         // Install the bundled apps into /apps (first boot) and build the launcher catalog.
+        crate::trace::mark("  Desktop::new: struct built");
         desk.init_apps();
+        crate::trace::mark("  Desktop::new: apps installed + catalog");
         // The sign-in screen when accounts need one (several users, or a password set); else the
         // terminal is open (and focused) at boot.
         if services::accounts::login_required() && !services::accounts::signed_in() {

@@ -638,6 +638,104 @@ pub fn bench_alloc(khz: u64) {
     );
 }
 
+/// Boot-time micro-benchmark of the disk (`perf-trace` only): reads and write-backs of the same bytes
+/// (so the contents never change) in 1-sector and 128-sector commands, and `FLUSH CACHE`.
+pub fn bench_ata(khz: u64) {
+    if !ON {
+        return;
+    }
+    use kitsune_core::blockdev::BlockDevice;
+    let Some(mut d) = crate::ata::AtaDisk::open() else {
+        return;
+    };
+    if d.sector_count() < 1024 {
+        return;
+    }
+    let mut one = [0u8; 512];
+    let mut many = alloc::vec![0u8; 512 * 128];
+    let avg = |total: u64, n: u64| total / n.max(1);
+    let t0 = io::rdtsc();
+    for i in 0..16 {
+        let _ = d.read_sectors(200 + i, &mut one);
+    }
+    let r1 = avg(io::rdtsc() - t0, 16);
+    let t0 = io::rdtsc();
+    let _ = d.read_sectors(300, &mut many);
+    let r128 = io::rdtsc() - t0;
+    let t0 = io::rdtsc();
+    for i in 0..16 {
+        let _ = d.read_sectors(200 + i, &mut one);
+        let _ = d.write_sectors(200 + i, &one);
+    }
+    let w1 = avg(io::rdtsc() - t0, 16).saturating_sub(r1);
+    let t0 = io::rdtsc();
+    let _ = d.write_sectors(300, &many);
+    let w128 = io::rdtsc() - t0;
+    let t0 = io::rdtsc();
+    for _ in 0..4 {
+        let _ = d.flush();
+    }
+    let fl = avg(io::rdtsc() - t0, 4);
+    crate::serial_println!(
+        "[trace] bench ata: read 1 sector {} cyc | read 128 sectors {} cyc ({}/sector) | write 1 sector {} cyc | write 128 sectors {} cyc ({}/sector) | flush {} cyc | khz {}",
+        r1,
+        r128,
+        r128 / 128,
+        w1,
+        w128,
+        w128 / 128,
+        fl,
+        khz
+    );
+}
+
+/// Cost of the account password hash (`perf-trace` only): what logging in or creating an account pays.
+pub fn bench_password(khz: u64) {
+    if !ON {
+        return;
+    }
+    let t0 = io::rdtsc();
+    let k = kitsune_core::security::password::pbkdf2(b"correct horse", b"0123456789abcdef", 20_000);
+    let cyc = io::rdtsc() - t0;
+    crate::serial_println!(
+        "[trace] bench password: pbkdf2 20000 iterations {} Mcyc ({} ms at {} kHz) key[0]={}",
+        cyc / 1_000_000,
+        cyc / khz.max(1),
+        khz,
+        k[0]
+    );
+}
+
+/// Cost of reading the bundled app packages (`perf-trace` only): manifest and icon decode, and the
+/// launcher-size resize, per package: what the app catalog pays at every boot.
+pub fn bench_apps(khz: u64) {
+    if !ON {
+        return;
+    }
+    for pkg in crate::wasm::BUNDLED {
+        let t0 = io::rdtsc();
+        let parsed = kitsune_core::appmanifest::parse_package(pkg);
+        let parse = io::rdtsc() - t0;
+        let Ok(p) = parsed else { continue };
+        let t0 = io::rdtsc();
+        let ok = p
+            .icon
+            .as_ref()
+            .and_then(kitsune_core::appinstall::launcher_icon)
+            .is_some();
+        let icon = io::rdtsc() - t0;
+        crate::serial_println!(
+            "[trace] bench app {}: package {} B, parse+icon decode {} kcyc, launcher resize {} kcyc (icon {}) | khz {}",
+            p.manifest.id,
+            pkg.len(),
+            parse / 1000,
+            icon / 1000,
+            ok,
+            khz
+        );
+    }
+}
+
 /// Boot-time micro-benchmark of the drawing primitives on the back buffer
 /// (`perf-trace` only). Prints cycles and cycles/pixel of the best of 4 runs,
 /// which separates "this primitive is slow" from "it is called too often".

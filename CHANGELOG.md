@@ -4,6 +4,26 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — Desempenho: disco, boot e catálogo
+
+Medido com `-icount shift=0` (repetível; ver `docs/BENCHMARKS.md`), primeiro boot em disco vazio e boot seguinte:
+
+- **Disco (ATA PIO)**: a transferência cedia a CPU após *cada setor*, então cada setor esperava a vez de todas
+  as outras threads (uma escrita de 16 setores levava ~24 ms com o compositor ocupado). Agora cede a cada 32
+  setores. Formatar o disco no primeiro boot: 2,53 s → 0,18 s; contas e pastas: 4,97 s → 0,44 s; a primeira
+  leitura de diretório de um app: 716 Mciclos → 9,6.
+- **Catálogo de apps**: o launcher lia cada pacote *inteiro* (o `paint` tem 590 KB) só para ler manifesto e
+  ícone, e a atualização de pacotes embutidos lia todos de novo a cada boot. `appinstall::read_package_meta`
+  anda pela tabela de seções (mesmas checagens do `wasmsec`) e lê só os cabeçalhos mais as seções do
+  manifesto e do ícone. Boot seguinte: 377 ms → 10 ms nessa etapa. Testado contra a leitura completa
+  (válidos, truncados, magia/versão/id ruins, duplicados, nomes antigos) e que o código nunca é lido.
+- **Senha**: `pbkdf2` guarda os estados do hash após `ipad` e `opad` (2 compressões por iteração em vez
+  de 4): 291 → 146 Mciclos por derivação (login, troca de senha). Mesmos vetores RFC e teste contra o laço HMAC simples.
+- **Papel de parede**: `Canvas::glow` só percorre a corda do círculo em cada linha, sem divisão nem teste
+  por pixel (-24 %; pixels idênticos: 0 de diferença contra a captura anterior).
+- Ferramentas: `bench ata`, `bench password`, `bench app` no build `perf-trace`, marcas dentro de
+  `Desktop::new`, tempos do papel de parede.
+
 ## 2026-10 — Apps WebAssembly em anel 3
 
 - Os apps **v2** (`osj.*`) rodam num **processo de anel 3 por app**: `user-apps/wasmhost` carrega o

@@ -211,6 +211,108 @@ pub fn read_package(fs: &mut dyn AppFs, id: &str) -> Result<Vec<u8>, InstallErro
     Ok(buf)
 }
 
+/// Reads at `off`, looping over short reads, until `buf` is full. `Ok(false)` at the end of the file.
+fn read_full_at(fs: &mut dyn AppFs, path: &str, off: u64, buf: &mut [u8]) -> Result<bool, FsError> {
+    let mut got = 0;
+    while got < buf.len() {
+        let n = fs.read_at(path, off + got as u64, &mut buf[got..])?;
+        if n == 0 {
+            return Ok(false);
+        }
+        got += n;
+    }
+    Ok(true)
+}
+
+/// A compact module made of the header and the manifest and icon sections of `/apps/<id>.wasm`,
+/// read without touching the code: [`appmanifest::parse_package`] gives the same answer on it as on
+/// the whole file. The launcher catalog only needs those two sections, and a package can be hundreds
+/// of kilobytes of code (a 590 KB one meant ~1200 sectors of disk reads at every boot).
+///
+/// It walks the section table with the checks of [`crate::platform::wasmsec`] (header, section ids,
+/// at most `MAX_SECTIONS` sections, sizes inside the file, custom names inside their payload), reading
+/// only each section's first bytes, and copies only the sections named like the manifest or the icon.
+pub fn read_package_meta(fs: &mut dyn AppFs, id: &str) -> Result<Vec<u8>, InstallError> {
+    use crate::platform::wasmsec::{self, HEADER, MAX_SECTIONS};
+    const NAMES: [&str; 4] = [
+        appmanifest::MANIFEST_SECTION,
+        appmanifest::ICON_SECTION,
+        appmanifest::LEGACY_MANIFEST_SECTION,
+        appmanifest::LEGACY_ICON_SECTION,
+    ];
+    // Longest name worth reading: the longest of NAMES, plus its LEB length byte.
+    const PEEK: usize = 32;
+    let bad = |e: wasmsec::WasmError| InstallError::Package(PackageError::Wasm(e));
+    if !valid_id(id) {
+        return Err(InstallError::BadId);
+    }
+    let path = package_path(id);
+    let size = match fs.stat(&path) {
+        Ok(s) if s.kind == Kind::File => s.size,
+        Ok(_) => return Err(InstallError::NotInstalled),
+        Err(FsError::NotFound) => return Err(InstallError::NotInstalled),
+        Err(e) => return Err(e.into()),
+    };
+    if size > MAX_PACKAGE_BYTES as u64 {
+        return Err(InstallError::TooLarge);
+    }
+    let mut head = [0u8; 8];
+    if size < 8 || !read_full_at(fs, &path, 0, &mut head)? {
+        return Err(bad(wasmsec::WasmError::TooShort));
+    }
+    if head[..4] != HEADER[..4] {
+        return Err(bad(wasmsec::WasmError::BadMagic));
+    }
+    if head[4..8] != HEADER[4..8] {
+        return Err(bad(wasmsec::WasmError::BadVersion));
+    }
+    let mut out = HEADER.to_vec();
+    let mut pos = 8u64;
+    let mut count = 0usize;
+    while pos < size {
+        if count >= MAX_SECTIONS {
+            return Err(bad(wasmsec::WasmError::TooManySections));
+        }
+        count += 1;
+        // The section id, its size (LEB128, at most 5 bytes) and the start of a custom name.
+        let want = ((size - pos) as usize).min(6 + PEEK);
+        let mut hdr = [0u8; 6 + PEEK];
+        if !read_full_at(fs, &path, pos, &mut hdr[..want])? {
+            return Err(InstallError::Fs(FsError::Io));
+        }
+        let kind = hdr[0];
+        if kind > wasmsec::MAX_SECTION_ID {
+            return Err(bad(wasmsec::WasmError::BadSectionId));
+        }
+        let (len, after) = wasmsec::read_leb_u32(&hdr[..want], 1).map_err(bad)?;
+        let end = pos + after as u64 + u64::from(len);
+        if end > size {
+            return Err(bad(wasmsec::WasmError::Truncated));
+        }
+        if kind == 0 {
+            let (nlen, name_at) = wasmsec::read_leb_u32(&hdr[..want], after).map_err(bad)?;
+            if u64::from(nlen) + (name_at - after) as u64 > u64::from(len) {
+                return Err(bad(wasmsec::WasmError::Truncated));
+            }
+            let name_end = name_at + nlen as usize;
+            let keep = name_end <= want
+                && core::str::from_utf8(&hdr[name_at..name_end]).is_ok_and(|n| NAMES.contains(&n));
+            if keep {
+                let total = (end - pos) as usize;
+                let at = out.len();
+                out.try_reserve_exact(total)
+                    .map_err(|_| InstallError::Fs(FsError::NoSpace))?;
+                out.resize(at + total, 0);
+                if !read_full_at(fs, &path, pos, &mut out[at..])? {
+                    return Err(InstallError::Fs(FsError::Io));
+                }
+            }
+        }
+        pos = end;
+    }
+    Ok(out)
+}
+
 /// A catalog entry for the launcher: the manifest and a 24x24 icon.
 #[derive(Debug)]
 pub struct CatalogEntry {
@@ -245,7 +347,7 @@ pub fn load_catalog_in(fs: &mut dyn AppFs, lang: Lang) -> Vec<CatalogEntry> {
         return out;
     };
     for id in ids {
-        let Ok(bytes) = read_package(fs, &id) else {
+        let Ok(bytes) = read_package_meta(fs, &id) else {
             continue;
         };
         let Ok(pkg) = appmanifest::parse_package(&bytes) else {
@@ -317,7 +419,8 @@ fn write_seeded(fs: &mut dyn AppFs, ids: &[String]) -> Result<(), FsError> {
 /// Replace the installed copy of `m.id` with `pkg` when that copy is older. The new bytes are
 /// written to a temporary file first, so a failed write leaves the old package in place.
 fn upgrade_if_older(fs: &mut dyn AppFs, pkg: &[u8], m: &Manifest) -> bool {
-    let Ok(old) = read_package(fs, &m.id) else {
+    // Only the manifest matters here: do not read the code of every installed app at every boot.
+    let Ok(old) = read_package_meta(fs, &m.id) else {
         return false;
     };
     match check(&old) {

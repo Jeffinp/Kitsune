@@ -257,6 +257,9 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     trace::calibrated(tsc_khz);
     trace::bench_prims(back, info, tsc_khz);
     trace::bench_alloc(tsc_khz);
+    trace::bench_ata(tsc_khz);
+    trace::bench_password(tsc_khz);
+    trace::bench_apps(tsc_khz);
     let mut perf = perf::Perf::new(tsc_khz);
 
     // Bring up the NIC (if present), lease an IP over DHCP (falling back to the
@@ -341,6 +344,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let mut desk = Desktop::new(info.width as i32, info.height as i32);
     trace::mark("Desktop::new (fs load from ATA) done");
     desk.load_settings();
+    trace::mark("settings loaded");
 
     // Static layer painted once.
     {

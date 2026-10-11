@@ -148,3 +148,20 @@ fn an_overlong_attempt_does_not_verify() {
     let good = hash_with("secret!", &[9; 16], 1_000).unwrap();
     assert!(!verify(&"x".repeat(MAX_PASSWORD + 1), &good));
 }
+
+#[test]
+fn pbkdf2_agrees_with_the_plain_hmac_loop_for_long_and_empty_keys() {
+    for key in [&b""[..], &[0xAB; 64][..], &[0xCD; 65][..], &[0xEF; 200][..]] {
+        let mut s = b"salt".to_vec();
+        s.extend_from_slice(&1u32.to_be_bytes());
+        let mut u = hmac_sha256(key, &s);
+        let mut t = u;
+        for _ in 1..5 {
+            u = hmac_sha256(key, &u);
+            for (a, b) in t.iter_mut().zip(u.iter()) {
+                *a ^= b;
+            }
+        }
+        assert_eq!(pbkdf2(key, b"salt", 5), t);
+    }
+}

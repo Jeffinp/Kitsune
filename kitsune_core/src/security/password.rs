@@ -51,15 +51,41 @@ pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
 }
 
 /// PBKDF2-HMAC-SHA-256 (RFC 8018), `OUT` bytes of derived key.
+///
+/// The key block is the same in every iteration, so the hash states after absorbing `ipad` and
+/// `opad` are computed once and cloned: each iteration then costs two compressions instead of four.
 pub fn pbkdf2(password: &[u8], salt: &[u8], iterations: u32) -> [u8; 32] {
+    let mut k = [0u8; BLOCK];
+    if password.len() > BLOCK {
+        k[..OUT].copy_from_slice(&Sha256::digest(password));
+    } else {
+        k[..password.len()].copy_from_slice(password);
+    }
+    let mut ipad = [0x36u8; BLOCK];
+    let mut opad = [0x5cu8; BLOCK];
+    for i in 0..BLOCK {
+        ipad[i] ^= k[i];
+        opad[i] ^= k[i];
+    }
+    let mut inner0 = Sha256::new();
+    inner0.update(ipad);
+    let mut outer0 = Sha256::new();
+    outer0.update(opad);
+    let hmac = |data: &[u8]| -> [u8; 32] {
+        let mut inner = inner0.clone();
+        inner.update(data);
+        let mut outer = outer0.clone();
+        outer.update(inner.finalize());
+        outer.finalize().into()
+    };
     // One block is enough (dkLen = hLen): U1 = HMAC(P, salt || INT(1)).
     let mut s = Vec::with_capacity(salt.len() + 4);
     s.extend_from_slice(salt);
     s.extend_from_slice(&1u32.to_be_bytes());
-    let mut u = hmac_sha256(password, &s);
+    let mut u = hmac(&s);
     let mut t = u;
     for _ in 1..iterations.max(1) {
-        u = hmac_sha256(password, &u);
+        u = hmac(&u);
         for (a, b) in t.iter_mut().zip(u.iter()) {
             *a ^= b;
         }

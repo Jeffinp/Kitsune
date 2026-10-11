@@ -277,6 +277,12 @@ fn dead() -> bool {
     true
 }
 
+/// Sectors moved between two cooperative yields. A PIO sector is a few microseconds of CPU, so
+/// yielding after each one made a transfer wait for every other runnable thread's whole turn once
+/// per sector (a 16-sector write took ~24 ms with the compositor busy); every 32 keeps the
+/// latency other threads see under a tenth of a millisecond.
+const SECTORS_PER_YIELD: usize = 32;
+
 /// Read `buf` (a multiple of 512 bytes) starting at `lba`, sliced into commands of
 /// at most 255 sectors. The ports lock must be held and the range validated.
 fn read_chunks(lba: u64, buf: &mut [u8], coop: bool) -> Result<(), Fail> {
@@ -285,10 +291,10 @@ fn read_chunks(lba: u64, buf: &mut [u8], coop: bool) -> Result<(), Fail> {
         outb(REG_CMD, CMD_READ);
         settle();
         let region = &mut buf[c.offset..c.offset + c.sectors as usize * SECTOR];
-        for sector in region.as_chunks_mut::<SECTOR>().0.iter_mut() {
+        for (i, sector) in region.as_chunks_mut::<SECTOR>().0.iter_mut().enumerate() {
             wait_drq(coop)?;
             read_sector_data(sector);
-            if coop {
+            if coop && (i + 1) % SECTORS_PER_YIELD == 0 {
                 crate::sched::yield_now();
             }
         }
@@ -305,10 +311,10 @@ fn write_chunks(lba: u64, buf: &[u8], coop: bool) -> Result<(), Fail> {
         outb(REG_CMD, CMD_WRITE);
         settle();
         let region = &buf[c.offset..c.offset + c.sectors as usize * SECTOR];
-        for sector in region.as_chunks::<SECTOR>().0.iter() {
+        for (i, sector) in region.as_chunks::<SECTOR>().0.iter().enumerate() {
             wait_drq(coop)?;
             write_sector_data(sector);
-            if coop {
+            if coop && (i + 1) % SECTORS_PER_YIELD == 0 {
                 crate::sched::yield_now();
             }
         }
@@ -372,6 +378,12 @@ impl BlockDevice for AtaDisk {
         }
         if dead() {
             return Err(IoError::Read);
+        }
+        if crate::trace::ON && buf.len() >= 32 * 1024 {
+            crate::serial_println!(
+                "[trace] ata big read: lba {lba}, {} sectors",
+                buf.len() / SECTOR
+            );
         }
         let t0 = crate::trace::t();
         let _ports = PORTS.lock().map_err(|_| IoError::Read)?;

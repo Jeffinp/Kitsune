@@ -61,6 +61,7 @@ fn paint_preset(c: &mut Canvas, p: &kitsune_core::wallpaper::Preset) {
     use kitsune_core::wallpaper::{Style, lerp_rgb};
     let (w, h) = (c.width(), c.height());
     let sc = p.scheme(theme::dark());
+    let t0 = crate::trace::t();
     match p.style {
         Style::Solid => c.fill_rect(0, 0, w, h, rgb24(sc.top)),
         Style::Gradient | Style::Glow | Style::Shapes => {
@@ -70,6 +71,7 @@ fn paint_preset(c: &mut Canvas, p: &kitsune_core::wallpaper::Preset) {
             }
         }
     }
+    let t1 = crate::trace::t();
     if matches!(p.style, Style::Glow | Style::Shapes) {
         let lut = kitsune_core::raster::glow_lut();
         for b in sc.blobs.iter().filter(|b| b.alpha > 0 && b.r > 0) {
@@ -79,6 +81,7 @@ fn paint_preset(c: &mut Canvas, p: &kitsune_core::wallpaper::Preset) {
             c.glow(cx, cy, rad, rgb24(b.color), b.alpha as u32, &lut);
         }
     }
+    let t2 = crate::trace::t();
     if p.style == Style::Shapes && !p.shapes.is_empty() {
         // The facets / hills / bands: anti-aliased polygons on a transparent layer of the
         // screen's size (freed right after), laid over the gradient and the glows.
@@ -101,7 +104,17 @@ fn paint_preset(c: &mut Canvas, p: &kitsune_core::wallpaper::Preset) {
             path.polygon(&pts);
             layer.fill_path(&path, Paint::Solid(rgba(col, a)));
         }
+        let t3 = crate::trace::t();
         c.blit_surface(&layer, 0, 0, 256);
+        if crate::trace::ON {
+            crate::serial_println!(
+                "[trace] wallpaper: gradient {} kcyc, glow {} kcyc, polygons {} kcyc, blit {} kcyc",
+                (t1 - t0) / 1000,
+                (t2 - t1) / 1000,
+                (t3 - t2) / 1000,
+                (crate::trace::t() - t3) / 1000
+            );
+        }
     }
 }
 

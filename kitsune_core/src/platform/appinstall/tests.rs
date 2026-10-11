@@ -447,3 +447,152 @@ fn seed_once_does_not_resurrect_a_removed_app_when_upgrading() {
     assert_eq!(seed_once(&mut f, &[&v2]), 0);
     assert!(!is_installed(&mut f, "alpha"));
 }
+
+// ---- read_package_meta: the catalog reads sections, not whole packages ----
+
+fn put(fs: &mut MemFs, id: &str, bytes: &[u8]) {
+    fs.mkdir_all(APPS_DIR).unwrap();
+    let path = package_path(id);
+    fs.create(&path).unwrap();
+    write_all(fs, &path, bytes).unwrap();
+}
+
+/// Same module with a fat code section and an unrelated custom section around the metadata.
+fn padded(manifest: &str, icon: Option<&[u8]>) -> Vec<u8> {
+    let mut w = wasmsec::HEADER.to_vec();
+    w.extend_from_slice(&section("name", &[7u8; 5000]));
+    // a type section (id 1) and a code section (id 10) with some payload
+    for id in [1u8, 10] {
+        let mut s = alloc::vec![id];
+        leb(&mut s, 3000);
+        s.extend_from_slice(&[0xAA; 3000]);
+        w.extend_from_slice(&s);
+    }
+    w.extend_from_slice(&section(MANIFEST_SECTION, manifest.as_bytes()));
+    if let Some(i) = icon {
+        w.extend_from_slice(&section(ICON_SECTION, i));
+    }
+    w.extend_from_slice(&section("producers", &[1u8; 700]));
+    w
+}
+
+fn same_answer(bytes: &[u8]) {
+    let mut fs = MemFs::new(1 << 20);
+    put(&mut fs, "x", bytes);
+    let whole = appmanifest::parse_package(bytes).map(|p| (p.manifest, p.icon.is_some()));
+    let meta = read_package_meta(&mut fs, "x")
+        .map_err(|e| match e {
+            InstallError::Package(p) => p,
+            other => panic!("unexpected {other:?}"),
+        })
+        .and_then(|m| appmanifest::parse_package(&m))
+        .map(|p| (p.manifest, p.icon.is_some()));
+    assert_eq!(format!("{whole:?}"), format!("{meta:?}"));
+}
+
+#[test]
+fn meta_reads_give_the_same_answer_as_reading_the_whole_package() {
+    let m = "id=x\nname=X\nversion=1.0.0\n";
+    same_answer(&pkg(m));
+    same_answer(&padded(m, None));
+    same_answer(&padded(m, Some(&icon_png(24, 0xFF3366CC))));
+    // no manifest at all
+    let mut none = wasmsec::HEADER.to_vec();
+    none.extend_from_slice(&section("name", &[1; 40]));
+    same_answer(&none);
+    // two manifests, a bad manifest, the legacy section names
+    let mut two = pkg(m);
+    two.extend_from_slice(&section(MANIFEST_SECTION, m.as_bytes()));
+    same_answer(&two);
+    same_answer(&pkg("id=Bad Id\nname=X\nversion=1\n"));
+    let mut legacy = wasmsec::HEADER.to_vec();
+    legacy.extend_from_slice(&section("osjeff.manifest", m.as_bytes()));
+    same_answer(&legacy);
+}
+
+#[test]
+fn meta_reads_reject_what_the_section_walk_rejects() {
+    let m = "id=x\nname=X\nversion=1.0.0\n";
+    let good = padded(m, None);
+    // truncated anywhere inside the file
+    for cut in [3, 8, 20, 6000, good.len() - 1] {
+        same_answer(&good[..cut]);
+    }
+    // bad magic, bad version, an unknown section id
+    let mut bad = good.clone();
+    bad[1] = b'x';
+    same_answer(&bad);
+    let mut bad = good.clone();
+    bad[4] = 2;
+    same_answer(&bad);
+    let mut bad = wasmsec::HEADER.to_vec();
+    bad.extend_from_slice(&[14, 0]);
+    same_answer(&bad);
+    // a custom section whose name does not fit in its payload
+    let mut bad = wasmsec::HEADER.to_vec();
+    bad.extend_from_slice(&[0, 2, 9, b'a']);
+    same_answer(&bad);
+}
+
+#[test]
+fn meta_reads_never_pull_in_the_code() {
+    struct Counting {
+        inner: MemFs,
+        read: usize,
+    }
+    impl AppFs for Counting {
+        fn stat(&mut self, p: &str) -> Result<crate::platform::appfs::Stat, FsError> {
+            self.inner.stat(p)
+        }
+        fn read_at(&mut self, p: &str, off: u64, buf: &mut [u8]) -> Result<usize, FsError> {
+            let n = self.inner.read_at(p, off, buf)?;
+            self.read += n;
+            Ok(n)
+        }
+        fn write_at(&mut self, p: &str, off: u64, d: &[u8]) -> Result<usize, FsError> {
+            self.inner.write_at(p, off, d)
+        }
+        fn set_len(&mut self, p: &str, len: u64) -> Result<(), FsError> {
+            self.inner.set_len(p, len)
+        }
+        fn create(&mut self, p: &str) -> Result<(), FsError> {
+            self.inner.create(p)
+        }
+        fn mkdir(&mut self, p: &str) -> Result<(), FsError> {
+            self.inner.mkdir(p)
+        }
+        fn remove(&mut self, p: &str) -> Result<(), FsError> {
+            self.inner.remove(p)
+        }
+        fn rename(&mut self, a: &str, b: &str) -> Result<(), FsError> {
+            self.inner.rename(a, b)
+        }
+        fn read_dir(
+            &mut self,
+            p: &str,
+            i: usize,
+        ) -> Result<Option<crate::platform::appfs::DirEntry>, FsError> {
+            self.inner.read_dir(p, i)
+        }
+        fn tree_size(&mut self, p: &str) -> Result<u64, FsError> {
+            self.inner.tree_size(p)
+        }
+    }
+    let m = "id=x\nname=X\nversion=1.0.0\n";
+    let bytes = padded(m, Some(&icon_png(24, 0xFF112233)));
+    let mut fs = Counting {
+        inner: MemFs::new(1 << 20),
+        read: 0,
+    };
+    put(&mut fs.inner, "x", &bytes);
+    let meta = read_package_meta(&mut fs, "x").unwrap();
+    assert!(appmanifest::parse_package(&meta).unwrap().icon.is_some());
+    // The 11 KB of padding is never read; only headers and the two sections are.
+    assert!(
+        fs.read < bytes.len() / 2,
+        "read {} of {}",
+        fs.read,
+        bytes.len()
+    );
+    assert!(meta.len() < bytes.len() / 2);
+}

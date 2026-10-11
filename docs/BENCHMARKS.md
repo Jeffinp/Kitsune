@@ -14,6 +14,15 @@ Preparo comum: `cargo build --release -p os` (imagem normal) e
 `cargo build --release -p os --features perf-trace` (a mesma imagem com os contadores de quadro e de heap na
 serial). As imagens ficam em `target/release/build/os/*/out/kitsune-{bios,uefi}.img`.
 
+## Como comparar duas imagens (medida repetível)
+
+O TCG sem KVM varia ~2× entre execuções com a carga do host, então duas imagens comparadas assim dão ruído.
+Com `QEMU_EXTRA="-cpu max -icount shift=0"` o tempo virtual conta instruções (1 ns cada) e o resultado repete;
+os números "virtuais" desta seção de otimização são assim (a vinheta de abertura usa o RTC, que não segue o
+tempo virtual: compare só as etapas medidas em TSC). Use o build `perf-trace` e `tools/perf/summ.py`; para a
+variante dos apps no kernel, `KITSUNE_APPS_LOCAL=1`. Capturas de tela dependem da hora (tema automático): fixe
+`-rtc base=...` ao comparar pixels.
+
 ## Boot
 
 Marcos `[trace] boot +N ms` que o kernel escreve na serial em qualquer build; `tools/perf/boot.py` tira a mediana.
