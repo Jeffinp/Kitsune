@@ -79,9 +79,11 @@ Detalhes que importam:
 * **Reserva.** Se não há vaga de processo ou de thread (8 processos, 16 threads), o app roda no kernel
   como antes; o log diz. Apps v1 (cobrinha, plasma, DOOM) e WASI continuam no kernel.
 * **Custo e como ficou barato.** Medido com `tools/perf/scen/w45-wasm-cost.sh` (build `perf-trace`, linha
-  `[trace] wasm:`; QEMU TCG, então vale como proporção). A primeira versão custava ~8,6× o app no kernel
+  `[trace] wasm:`; QEMU com `-icount shift=0`, que conta instruções e dá números repetíveis: sem ele o TCG
+  varia ~2× de uma execução para outra com a carga do host, e comparar duas imagens vira ruído. A
+  variante no kernel se compila com `KITSUNE_APPS_LOCAL=1`). A primeira versão custava ~8,6× o app no kernel
   por job, porque cada chamada era duas trocas de contexto atrás de qualquer outra thread. Hoje o custo
-  estável é ~1,14× (1,13 contra 0,99 Mciclos por job): (1) **passagem direta** (`sched::hand_off`): o
+  estável é ~1,2× (291 contra 242 kciclos por job estável; 1,08× contando o trabalho único): (1) **passagem direta** (`sched::hand_off`): o
   processo e o `appd` passam a CPU um ao outro sem esperar a vez na fila; (2) **lote**: `fill_rect` e
   `request_redraw` (75 % das chamadas) não têm resultado nem ponteiro, então o hospedeiro os junta e
   manda em uma troca (`SYS_HOST_BATCH`, até 64; ordem preservada, descarregados antes de qualquer
