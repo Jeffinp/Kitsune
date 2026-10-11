@@ -14,6 +14,7 @@
 //! | 4 | `sleep_ms` | milliseconds | 0 |
 //! | 5 | `uptime_ms` | | milliseconds since boot |
 //! | 6 | `brk` | new end of the heap (0 = just ask) | the heap's end after the call (unchanged when refused) |
+//! | 16–20 | `host_*` | only for a WebAssembly host process, see [`HostLink`] | |
 //!
 //! Every pointer is translated through the process's own page tables before the kernel touches
 //! it (`AddressSpace::copy_in`), so a bad pointer is an error return, never a kernel fault.
@@ -25,13 +26,16 @@
 use crate::allocator::SpinLock;
 use crate::uvm::{AddressSpace, USER_BASE, USER_END};
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
+use kitsune_core::appabi::remote::{self, Done, HostCall, Job};
 use kitsune_core::elf;
 use kitsune_core::paging::PAGE_SIZE;
 
-/// Pages of user stack.
+/// Pages of user stack, and for a WebAssembly host (its interpreter and module translator recurse).
 const STACK_PAGES: u64 = 16;
+const HOST_STACK_PAGES: u64 = 256;
 /// The stack's top: the last page of the user range, with the guard page (unmapped) below the stack.
 const STACK_TOP: u64 = USER_END - PAGE_SIZE;
 /// What an ELF may occupy: the first gigabyte (so the small code model reaches everything).
@@ -43,6 +47,8 @@ const MAX_WRITE: usize = 4096;
 /// Where a process's heap starts, and the most it may grow to.
 const HEAP_BASE: u64 = 0x1000_0000;
 const MAX_HEAP: u64 = 8 * 1024 * 1024;
+/// The most a WebAssembly host may use (guest memory included).
+const MAX_HOST_HEAP: u64 = 96 * 1024 * 1024;
 /// Most uncollected output kept per process.
 const MAX_OUT: usize = 64 * 1024;
 /// How long a finished process waits for its output to be collected, in ticks (2 s).
@@ -61,6 +67,8 @@ pub enum SpawnError {
     BadElf(elf::ElfError),
     OutOfMemory,
     TooMany,
+    /// The image has no WebAssembly host embedded.
+    NoHost,
 }
 
 /// How a process ended.
@@ -85,6 +93,39 @@ struct Proc {
     out: Vec<u8>,
     /// Tick at which the process was seen to be over (0 = not yet), so its output can be collected.
     over_tick: u64,
+    /// The most the heap may grow to (end address).
+    heap_max: u64,
+    /// Set for a WebAssembly host process (`wasm::remote`).
+    host: Option<HostLink>,
+}
+
+/// The kernel's side of a WebAssembly host process: the module it runs, the job the kernel posted
+/// and the host call the process is waiting on. The process blocks in `int 0x80` (the call is
+/// restarted when it is woken) until the `appd` thread answers; see `wasm::remote`.
+pub struct HostLink {
+    module: Arc<[u8]>,
+    /// How much of the module the process has read.
+    module_pos: usize,
+    job: Option<Job>,
+    call: CallState,
+    done: Option<(Done, Vec<u8>)>,
+}
+
+enum CallState {
+    Idle,
+    Pending(HostCall),
+    /// `appd` took the call and is working on it.
+    Serving,
+    Served(i64),
+}
+
+/// What the process did since `appd` last looked.
+pub enum HostEvent {
+    Nothing,
+    Call(HostCall),
+    Done(Done, Vec<u8>),
+    /// The process is gone (exited, faulted or was killed).
+    Dead,
 }
 
 /// Process ids start high, clear of the desktop's own process table (`ps` lists both).
@@ -118,9 +159,32 @@ pub fn embedded(name: &str) -> Option<&'static [u8]> {
 
 /// Start the ELF program `image` as process `name`. Returns its process id.
 pub fn spawn_elf(name: &str, image: &[u8]) -> Result<u32, SpawnError> {
+    spawn(name, image, MAX_HEAP, None)
+}
+
+/// Start the embedded WebAssembly host as process `name`, to run `module`. `heap` is how much memory
+/// it may use for the interpreter, the module and the guest's linear memory.
+pub fn spawn_host(name: &str, module: Arc<[u8]>, heap: u64) -> Result<u32, SpawnError> {
+    let image = embedded("wasmhost").ok_or(SpawnError::NoHost)?;
+    let link = HostLink {
+        module,
+        module_pos: 0,
+        job: None,
+        call: CallState::Idle,
+        done: None,
+    };
+    spawn(name, image, heap.min(MAX_HOST_HEAP), Some(link))
+}
+
+fn spawn(name: &str, image: &[u8], heap: u64, host: Option<HostLink>) -> Result<u32, SpawnError> {
     if PROCS.lock().len() >= MAX_PROCS {
         return Err(SpawnError::TooMany);
     }
+    let stack_pages = if host.is_some() {
+        HOST_STACK_PAGES
+    } else {
+        STACK_PAGES
+    };
     let prog = elf::parse(image, USER_BASE, IMAGE_END, MAX_IMAGE).map_err(SpawnError::BadElf)?;
     let mut asp = AddressSpace::new().map_err(|_| SpawnError::OutOfMemory)?;
     let mut pages = 0usize;
@@ -139,7 +203,7 @@ pub fn spawn_elf(name: &str, image: &[u8]) -> Result<u32, SpawnError> {
                 &image[seg.file_off..seg.file_off + seg.file_size],
             )?;
         }
-        for i in 0..STACK_PAGES {
+        for i in 0..stack_pages {
             asp.map_new(STACK_TOP - (i + 1) * PAGE_SIZE, true, false)?;
             pages += 1;
         }
@@ -150,7 +214,11 @@ pub fn spawn_elf(name: &str, image: &[u8]) -> Result<u32, SpawnError> {
         return Err(SpawnError::OutOfMemory);
     }
     let root = asp.root();
-    let tname = intern(name);
+    let tname = if host.is_some() {
+        intern("wasmhost")
+    } else {
+        intern(name)
+    };
     let Some(slot) = crate::sched::spawn_user(tname, root, prog.entry, STACK_TOP) else {
         asp.destroy();
         return Err(SpawnError::TooMany);
@@ -166,6 +234,8 @@ pub fn spawn_elf(name: &str, image: &[u8]) -> Result<u32, SpawnError> {
         heap_end: HEAP_BASE,
         out: Vec::new(),
         over_tick: 0,
+        heap_max: HEAP_BASE + heap,
+        host,
     });
     crate::klog!(
         Info,
@@ -225,6 +295,8 @@ pub fn kill(pid: u32) -> bool {
     match procs.iter().find(|p| p.pid == pid) {
         Some(p) if end_of(p) == End::Running => {
             crate::sched::kill_user(p.slot);
+            // A WebAssembly app waits on its process: let `appd` see it is gone.
+            crate::wasm::wake_worker();
             true
         }
         _ => false,
@@ -370,6 +442,7 @@ pub extern "C" fn syscall_entry(rsp: u64) -> u64 {
             r.rax = sys_brk(slot, a);
             rsp
         }
+        remote::SYS_HOST_MODULE_LEN..=remote::SYS_HOST_JOB_DONE => host_call(r, rsp, slot),
         _ => {
             r.rax = ENOSYS as u64;
             rsp
@@ -388,7 +461,7 @@ fn sys_brk(slot: usize, want: u64) -> u64 {
     let Some(asp) = p.aspace.as_mut() else {
         return 0;
     };
-    if want <= p.heap_end || want > HEAP_BASE + MAX_HEAP {
+    if want <= p.heap_end || want > p.heap_max {
         return p.heap_end;
     }
     let target = want.div_ceil(PAGE_SIZE) * PAGE_SIZE;
@@ -425,4 +498,211 @@ fn sys_write(slot: usize, fd: u64, ptr: u64, len: u64) -> i64 {
         crate::klog!(Info, "[{}:{}] {}", p.name, p.pid, line);
     }
     len as i64
+}
+
+// ---- WebAssembly host processes ----
+
+/// Block the calling process until woken, then run the same `int 0x80` again (`rip` goes back over
+/// the two-byte instruction). Everything the call decides is re-evaluated on restart.
+fn block_restart(r: &mut Regs, rsp: u64, slot: usize, number: u64) -> u64 {
+    r.rax = number; // the restarted instruction needs the call number again
+    r.rip -= 2;
+    crate::sched::set_wake(slot, crate::sched::FOREVER);
+    crate::sched::yield_switch(rsp)
+}
+
+/// Calls 16–20 (see [`remote`]), for a process that has a [`HostLink`].
+fn host_call(r: &mut Regs, rsp: u64, slot: usize) -> u64 {
+    let (number, a, b) = (r.rax, r.rdi, r.rsi);
+    let mut procs = PROCS.lock();
+    let Some(p) = procs.iter_mut().find(|p| p.slot == slot) else {
+        r.rax = EINVAL as u64;
+        return rsp;
+    };
+    let (Some(asp), Some(link)) = (p.aspace.as_ref(), p.host.as_mut()) else {
+        r.rax = ENOSYS as u64;
+        return rsp;
+    };
+    let mut wake_appd = false;
+    let mut block = false;
+    r.rax = match r.rax {
+        remote::SYS_HOST_MODULE_LEN => link.module.len() as u64,
+        remote::SYS_HOST_MODULE_READ => {
+            let n = (b as usize).min(link.module.len() - link.module_pos);
+            match asp.poke(a, &link.module[link.module_pos..link.module_pos + n]) {
+                Ok(()) => {
+                    link.module_pos += n;
+                    n as u64
+                }
+                Err(_) => EFAULT as u64,
+            }
+        }
+        remote::SYS_HOST_JOB_WAIT => match link.job {
+            Some(job) => match asp.poke(a, &job.to_bytes()) {
+                Ok(()) => {
+                    link.job = None;
+                    0
+                }
+                Err(_) => EFAULT as u64,
+            },
+            None => {
+                block = true;
+                0
+            }
+        },
+        remote::SYS_HOST_CALL => match core::mem::replace(&mut link.call, CallState::Idle) {
+            CallState::Idle => {
+                let mut raw = [0u8; 72];
+                if asp.copy_in(a, &mut raw).is_err() {
+                    r.rax = EFAULT as u64;
+                    return rsp;
+                }
+                link.call = CallState::Pending(HostCall::from_bytes(&raw));
+                wake_appd = true;
+                block = true;
+                0
+            }
+            CallState::Served(v) => v as u64,
+            waiting => {
+                link.call = waiting;
+                block = true;
+                0
+            }
+        },
+        _ => {
+            // SYS_HOST_JOB_DONE
+            let mut raw = [0u8; 40];
+            if asp.copy_in(a, &mut raw).is_err() {
+                r.rax = EFAULT as u64;
+                return rsp;
+            }
+            let done = Done::from_bytes(&raw);
+            let mut msg = alloc::vec![0u8; (done.msg_len as usize).min(remote::MAX_MSG)];
+            if !msg.is_empty() && asp.copy_in(done.msg_ptr, &mut msg).is_err() {
+                msg.clear();
+            }
+            link.done = Some((done, msg));
+            wake_appd = true;
+            0
+        }
+    };
+    drop(procs);
+    if wake_appd {
+        crate::wasm::wake_worker();
+    }
+    if block {
+        return block_restart(r, rsp, slot, number);
+    }
+    rsp
+}
+
+fn host_of<T>(pid: u32, f: impl FnOnce(&mut Proc, &mut HostLink) -> T) -> Option<T> {
+    let mut procs = PROCS.lock();
+    let p = procs.iter_mut().find(|p| p.pid == pid)?;
+    let mut link = p.host.take()?;
+    let out = f(p, &mut link);
+    p.host = Some(link);
+    Some(out)
+}
+
+/// Is process `pid` still there and running?
+pub fn alive(pid: u32) -> bool {
+    PROCS
+        .lock()
+        .iter()
+        .any(|p| p.pid == pid && end_of(p) == End::Running)
+}
+
+/// Give the host process `pid` its next job. `false` if it is gone or the previous job is unread.
+pub fn host_post(pid: u32, job: Job) -> bool {
+    let slot = host_of(pid, |p, l| {
+        if l.job.is_some() || end_of(p) != End::Running {
+            return None;
+        }
+        l.job = Some(job);
+        Some(p.slot)
+    });
+    match slot.flatten() {
+        Some(s) => {
+            crate::sched::wake(s);
+            true
+        }
+        None => false,
+    }
+}
+
+/// What the host process did since the last look (takes a finished job, marks a call as taken).
+pub fn host_poll(pid: u32) -> HostEvent {
+    host_of(pid, |p, l| {
+        if let Some((d, m)) = l.done.take() {
+            return HostEvent::Done(d, m);
+        }
+        if let CallState::Pending(hc) = l.call {
+            l.call = CallState::Serving;
+            return HostEvent::Call(hc);
+        }
+        if end_of(p) != End::Running {
+            return HostEvent::Dead;
+        }
+        HostEvent::Nothing
+    })
+    .unwrap_or(HostEvent::Dead)
+}
+
+/// Is there something for `appd` to look at? (the condition `appd` blocks on)
+pub fn host_ready(pid: u32) -> bool {
+    host_of(pid, |p, l| {
+        l.done.is_some() || matches!(l.call, CallState::Pending(_)) || end_of(p) != End::Running
+    })
+    .unwrap_or(true)
+}
+
+/// Answer the call `appd` is serving and let the process go on.
+pub fn host_reply(pid: u32, value: i64) {
+    let slot = host_of(pid, |p, l| {
+        l.call = CallState::Served(value);
+        p.slot
+    });
+    if let Some(s) = slot {
+        crate::sched::wake(s);
+    }
+}
+
+/// Bytes copied per lock hold, so interrupts are never off for long.
+const CHUNK: usize = 4096;
+
+/// Copy `len` bytes at user address `va` of process `pid`. `None` if any page is not mapped.
+pub fn host_read(pid: u32, va: u64, len: usize) -> Option<Vec<u8>> {
+    let mut out = alloc::vec![0u8; len];
+    let mut done = 0;
+    while done < len {
+        let n = (len - done).min(CHUNK);
+        let at = va.checked_add(done as u64)?;
+        let procs = PROCS.lock();
+        let asp = procs.iter().find(|p| p.pid == pid)?.aspace.as_ref()?;
+        asp.copy_in(at, &mut out[done..done + n]).ok()?;
+        done += n;
+    }
+    Some(out)
+}
+
+/// Copy `bytes` to user address `va` of process `pid`. `false` if any page is not mapped.
+pub fn host_write(pid: u32, va: u64, bytes: &[u8]) -> bool {
+    for (k, chunk) in bytes.chunks(CHUNK).enumerate() {
+        let Some(at) = va.checked_add((k * CHUNK) as u64) else {
+            return false;
+        };
+        let procs = PROCS.lock();
+        let Some(asp) = procs
+            .iter()
+            .find(|p| p.pid == pid)
+            .and_then(|p| p.aspace.as_ref())
+        else {
+            return false;
+        };
+        if asp.poke(at, chunk).is_err() {
+            return false;
+        }
+    }
+    true
 }

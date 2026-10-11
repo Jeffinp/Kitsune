@@ -1188,7 +1188,7 @@ abre o `snake` empacotado. DOOM continua sem ser reproduzível do checkout puro 
 |---|---|---|
 | `host` (v1) | `log`, `fill_rect`, `draw_text`, `blit`, `time_ms` | como antes (snake, plasma, DOOM): desenham na superfície do app com translação e recorte; `blit` limita a 2^20 px e cobra combustível |
 | `wasi_snapshot_preview1` (25) | subconjunto para um guest C como o DOOM | `fd_*`/`path_*` servem só o WAD; `path_create_directory` etc. **fingem sucesso**; não é um WASI conforme |
-| `osj` (v2) | janela (`set_title`, `get_size`, `request_redraw`), desenho (`fill_rect`, `draw_text`, `blit_rgba`, `draw_image_png`), tempo (`now_ms`, `monotonic_ms`), `random`, `log`, `exit`, clipboard (`clip_get/set`), **arquivos** (`fs_open/read/write/seek/close/stat/readdir/mkdir/unlink/rename`), **rede** (`net_http_get`) | `kernel/src/wasm/abi2.rs`; erros são códigos negativos (`kitsune_core::appabi`); ponteiro fora da memória do guest = trap que mata **só** o app |
+| `osj` (v2) | janela (`set_title`, `get_size`, `request_redraw`), desenho (`fill_rect`, `draw_text`, `blit_rgba`, `draw_image_png`), tempo (`now_ms`, `monotonic_ms`), `random`, `log`, `exit`, clipboard (`clip_get/set`), **arquivos** (`fs_open/read/write/seek/close/stat/readdir/mkdir/unlink/rename`), **rede** (`net_http_get`) | `kernel/src/wasm/abi2.rs` (uma implementação, `abi2::call`, para o wasmi do kernel e para o processo de anel 3 — [`design/processos.md`](design/processos.md)); erros são códigos negativos (`kitsune_core::appabi`); ponteiro fora da memória do guest = trap que mata **só** o app |
 | `env` | `system` | devolve -1 |
 
 Entrada por exports do guest: `on_key(code, mods)`, `on_text`, `on_pointer(x, y, buttons)`,

@@ -49,6 +49,39 @@ Todo ponteiro é traduzido pelas tabelas do próprio processo, página por pági
 * 20 processos que falham em sequência: os quadros em uso voltam a **0** (nada vaza) e a vaga da thread
   é reaproveitada.
 
+## Apps WebAssembly em anel 3
+
+Os apps v2 (`osj.*`: Relógio, Notas, Pintura e os que o usuário instalar) rodam, por padrão, **cada um
+num processo de anel 3 próprio**. O interpretador (`wasmi`), a memória linear do app e o combustível
+ficam no processo (`user-apps/wasmhost`, ~0,8 MiB, embutido no kernel); um defeito no interpretador ou
+no módulo derruba esse processo e mais nada. O que precisa de autoridade fica no kernel: o estado do
+host (superfície onde o app desenha, arquivos, rede, área de transferência) e a implementação de cada
+função `osj.*`.
+
+| Peça | Onde | O quê |
+|---|---|---|
+| Contrato | `kitsune_core::appabi::remote` | tabela `HOST_FNS` (a posição é o id na chamada), números 16–20, registros `Job`, `HostCall`, `Done` (little endian, testados no host) |
+| Hospedeiro | `user-apps/wasmhost` | lê o módulo (`SYS_HOST_MODULE_*`), espera trabalho (`SYS_HOST_JOB_WAIT`); cada import do convidado vira um `SYS_HOST_CALL`; termina com `SYS_HOST_JOB_DONE` |
+| Lado do kernel | `kernel/src/wasm/remote.rs` | a thread `appd` posta um `Job` (`INIT`, ou `CALL` de um export com combustível) e atende as chamadas até o `Done`; lê e escreve a memória do convidado pelas tabelas de páginas do processo, uma página por vez |
+| Mesma implementação | `kernel/src/wasm/abi2.rs` | `abi2::call(&mut dyn Guest, id, args)` serve o app local (um `Caller` do wasmi) e o remoto (as tabelas do processo): validação de ponteiros, limites, permissões e cotas são **um código só** |
+| Bloqueio | `kernel/src/userproc.rs` | as chamadas 18 e 19 bloqueiam o processo e são **reiniciadas** ao acordar (`rip -= 2`, o número volta em `rax`): sem estado escondido na pilha de kernel |
+| Ciclo de vida | `RemoteRt` | fechar o app, reiniciá-lo, ou o processo morrer (`kill` no Terminal, falha de CPU) termina o outro lado; o `appd` percebe a morte de um processo ocioso a cada tick e a janela mostra o motivo |
+
+Detalhes que importam:
+
+* **Combustível.** Dentro do processo é o `wasmi` que conta, como antes. O trabalho que o kernel faz em
+  nome do convidado (preencher retângulos, decodificar PNG, E/S de arquivo) é cobrado do mesmo orçamento
+  do job; estourou, o job termina como "sem combustível".
+* **Memória.** O heap do hospedeiro é `mem_bytes` do app + 4× o módulo + 6 MiB (no máximo 96 MiB); a
+  pilha tem 1 MiB (o tradutor do `wasmi` recursa). Cada hospedeiro custa ~1,2 mil quadros (~5 MiB).
+* **Falhas.** Ponteiro inválido, trap, sem combustível e `exit` terminam só aquele app. Um processo que
+  para de responder por 20 s é morto.
+* **Reserva.** Se não há vaga de processo ou de thread (8 processos, 16 threads), o app roda no kernel
+  como antes; o log diz. Apps v1 (cobrinha, plasma, DOOM) e WASI continuam no kernel.
+* **Verificação.** Cenário `tools/perf/scen/w44-wasm-ring3.sh`: Notas, Pintura e Relógio em processos
+  (`ps` mostra `app:notes`, `app:paint`, `app:clock`), `kill` de um deles só derruba o app dele, fechar a
+  janela devolve os quadros do processo.
+
 ## Proteções de hardware
 
 SMEP e SMAP são ligados no boot quando a CPU os tem (verificado no QEMU com `-cpu max`: o log diz
@@ -59,10 +92,12 @@ janelas `stac`/`clac`. Também: NX nas pilhas e no heap do processo, W^X imposto
 
 ## O que ainda não está
 
-* Os apps WebAssembly, o Terminal, o Editor, o Navegador e o resto do desktop **continuam no anel 0**; só
-  os programas ELF rodam isolados. O próximo passo é rodar o runtime WebAssembly dentro de um processo
-  de anel 3 (um hospedeiro por app) falando com o compositor por chamadas de sistema.
-* Sem arquivos, rede, janelas nem entrada para processos de usuário; sem `mmap` nem memória
+* O Terminal, o Editor, o Navegador, o compositor e os apps v1/WASI **continuam no anel 0**; rodam
+  isolados os programas ELF e os apps WebAssembly v2. As funções `osj.*` (e o estado de arquivos, rede e
+  desktop) ainda executam no kernel, a serviço do processo, e o `wasmi` do kernel segue compilado para os
+  apps que não podem sair dele.
+* Sem arquivos, rede, janelas nem entrada para processos ELF genéricos (os hospedeiros recebem tudo isso
+  pelo kernel, pelo contrato acima); sem `mmap` nem memória
   compartilhada; sem limite de CPU além da preempção.
 * As permissões de arquivo ainda não valem para eles (não abrem arquivo algum), então o `Cred` do dono
   do processo ainda não é consultado.

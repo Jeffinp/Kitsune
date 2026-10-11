@@ -111,6 +111,7 @@ impl SysInfo for KSys {
             }
             SpawnError::OutOfMemory => SpawnFail::NoMemory,
             SpawnError::TooMany => SpawnFail::TooMany,
+            SpawnError::NoHost => SpawnFail::Unknown,
         })
     }
 

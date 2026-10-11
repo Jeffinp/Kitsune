@@ -71,3 +71,59 @@ fn open_flags_are_disjoint_bits() {
     assert_eq!(O_READ | O_WRITE | O_CREATE | O_TRUNC | O_APPEND, O_ALL);
     assert_eq!(O_ALL, 31);
 }
+
+mod remote {
+    use super::super::remote::*;
+
+    #[test]
+    fn the_table_has_unique_names_and_matches_the_abi() {
+        for (i, f) in HOST_FNS.iter().enumerate() {
+            assert_eq!(host_fn_id(f.name), Some(i as u32), "{}", f.name);
+            assert!(
+                f.params.len() <= 6,
+                "{}: at most six arguments cross the boundary",
+                f.name
+            );
+            assert!(f.results.len() <= 1);
+        }
+        assert_eq!(host_fn_id("nope"), None);
+        assert_eq!(
+            HOST_FNS[host_fn_id("fs_seek").unwrap() as usize]
+                .params
+                .len(),
+            3
+        );
+    }
+
+    #[test]
+    fn records_round_trip_through_their_bytes() {
+        let j = Job {
+            kind: JOB_CALL,
+            export: 3,
+            args: [-1, 2, 3, 4],
+            fuel: 1 << 40,
+            mem_bytes: 7,
+        };
+        assert_eq!(Job::from_bytes(&j.to_bytes()), j);
+        let h = HostCall {
+            id: 9,
+            nargs: 2,
+            args: [1, 2, u64::MAX, 4, 5, 6],
+            mem_base: 0x1000_0000,
+            mem_len: 65536,
+        };
+        assert_eq!(HostCall::from_bytes(&h.to_bytes()), h);
+        let d = Done {
+            status: DONE_EXIT,
+            code: -5,
+            fuel_spent: 99,
+            mem_pages: 3,
+            msg_ptr: 1,
+            msg_len: 2,
+        };
+        assert_eq!(Done::from_bytes(&d.to_bytes()), d);
+        assert_eq!(core::mem::size_of::<Job>(), 40);
+        assert_eq!(core::mem::size_of::<HostCall>(), 72);
+        assert_eq!(core::mem::size_of::<Done>(), 40);
+    }
+}

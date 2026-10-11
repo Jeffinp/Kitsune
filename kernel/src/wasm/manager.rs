@@ -29,9 +29,10 @@
 //! app only**: its runtime (and with it its memory and open files) is dropped on the
 //! spot and the slot keeps the reason, which the window shows.
 
+use super::remote::{self, RemoteRt};
 use super::{
-    AppFault, FRAME_FUEL, HostState, INIT_FUEL, Why, abi2, describe, guest_engine, guest_limits,
-    install_all,
+    AppFault, FRAME_FUEL, Halt, HostState, INIT_FUEL, Why, abi2, describe, guest_engine,
+    guest_limits, install_all,
 };
 use crate::sync::RacyCell;
 use crate::{io, serial_println};
@@ -145,10 +146,21 @@ fn slot_of(slots: &mut [Option<Slot>; MAX_APPS], id: AppId) -> Option<&mut Slot>
 
 // ---------------------------------------------------------------- runtimes (appd only)
 
+/// Where the guest executes. (Boxed once, inside `Runtime`; the size gap is not worth a second box.)
+#[allow(clippy::large_enum_variant)]
+enum Guest {
+    /// `wasmi` inside the kernel.
+    Local {
+        store: Store<HostState>,
+        instance: Instance,
+        memory: Option<Memory>,
+    },
+    /// `wasmi` in a ring 3 process (see `remote`).
+    Remote(RemoteRt),
+}
+
 struct Runtime {
-    store: Store<HostState>,
-    instance: Instance,
-    memory: Option<Memory>,
+    guest: Guest,
     first_render: bool,
     /// Fuel consumed and calls made since the last `account`.
     fuel_spent: u64,
@@ -196,7 +208,7 @@ fn surface_info(w: i32, h: i32) -> Option<FrameBufferInfo> {
     Some(oi)
 }
 
-fn wake_worker() {
+pub(crate) fn wake_worker() {
     let tid = TID.load(Ordering::Acquire);
     if tid != usize::MAX {
         crate::sched::wake(tid);

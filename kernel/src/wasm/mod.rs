@@ -30,6 +30,7 @@ use wasmi::{
 pub(crate) mod abi2;
 pub(crate) mod appfs_backend;
 pub(crate) mod manager;
+pub(crate) mod remote;
 mod wasi;
 
 pub(crate) use manager::*;
@@ -137,6 +138,11 @@ impl Why {
         )
     }
 
+    /// Is this the "no process could be started" reason (the app then runs in the kernel)?
+    pub(crate) fn is_no_process(&self) -> bool {
+        self.key == kitsune_core::tk!("apps.why.no_process")
+    }
+
     /// In the language in effect.
     pub(crate) fn text(&self) -> alloc::string::String {
         self.render(kitsune_core::i18n::lang())
@@ -145,6 +151,23 @@ impl Why {
     /// In English, for the log.
     pub(crate) fn log(&self) -> alloc::string::String {
         self.render(kitsune_core::i18n::Lang::En)
+    }
+}
+
+/// How a guest call ended badly: the reason for the window, and whether the guest left by itself
+/// (`exit`) rather than crashed.
+#[derive(Debug)]
+pub(crate) struct Halt {
+    pub(crate) why: Why,
+    pub(crate) exited: bool,
+}
+
+impl From<wasmi::Error> for Halt {
+    fn from(e: wasmi::Error) -> Halt {
+        Halt {
+            exited: e.i32_exit_status().is_some(),
+            why: describe(&e),
+        }
     }
 }
 

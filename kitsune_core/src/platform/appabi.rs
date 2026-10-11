@@ -10,6 +10,8 @@
 
 use core::ops::Range;
 
+pub mod remote;
+
 pub const ERR_PERM: i32 = -1;
 pub const ERR_NOENT: i32 = -2;
 pub const ERR_BADF: i32 = -3;

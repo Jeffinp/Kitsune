@@ -1,0 +1,22 @@
+# Ring 3 WebAssembly app host: runs a guest with `wasmi` in a user process and forwards every
+# imported `osj.*` function to the kernel (wire contract: kitsune_core::appabi::remote).
+[package]
+name = "wasmhost"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+kitsune-user = { path = "../sdk" }
+kitsune_core = { path = "../../kitsune_core" }
+wasmi = { version = "2", default-features = false, features = ["validate"] }
+linked_list_allocator = { version = "0.10", default-features = false }
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
+codegen-units = 1
+strip = true
+
+[workspace]

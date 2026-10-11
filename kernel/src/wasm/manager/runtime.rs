@@ -11,16 +11,8 @@ fn wall_ms() -> u64 {
     (t.h as u64 * 3600 + t.m as u64 * 60 + t.s as u64) * 1000
 }
 
-pub(super) fn build_runtime(i: usize) -> Result<Box<Runtime>, Why> {
-    let (wasm, manifest, v1, quotas) = with(|slots| {
-        slots[i]
-            .as_ref()
-            .map(|s| (s.wasm.clone(), s.manifest.clone(), s.v1, s.quotas))
-    })
-    .ok_or_else(|| Why::new(tk!("apps.why.no_instance")))?;
-    let engine = guest_engine();
-    let module = Module::new(&engine, &wasm[..])
-        .map_err(|e| Why::with(tk!("apps.why.bad_module"), alloc::format!("{e}")))?;
+/// The host state of app `i`: its sandbox, permissions and limits.
+fn host_state(manifest: &Manifest, quotas: &Quotas) -> Result<HostState, Why> {
     let mut state = HostState::with_limits(guest_limits(quotas.mem_bytes));
     let sandbox = Sandbox::with_home(
         manifest.fs,
@@ -40,13 +32,74 @@ pub(super) fn build_runtime(i: usize) -> Result<Box<Runtime>, Why> {
         mono,
         wall_ms(),
     )));
-    let mut store = Store::new(&engine, state);
-    store.limiter(|st| &mut st.limits);
+    Ok(state)
+}
+
+fn runtime(guest: Guest) -> Box<Runtime> {
+    Box::new(Runtime {
+        guest,
+        first_render: true,
+        fuel_spent: 0,
+        calls: 0,
+        last_buttons: 0,
+        redraw_again: false,
+    })
+}
+
+impl Runtime {
+    /// The state `osj.*` reads and writes (surface, v2 state).
+    fn host_mut(&mut self) -> &mut HostState {
+        match &mut self.guest {
+            Guest::Local { store, .. } => store.data_mut(),
+            Guest::Remote(r) => &mut r.state,
+        }
+    }
+
+    /// Did the process that runs the guest die behind our back (killed, or faulted while idle)?
+    pub(super) fn is_dead(&self) -> bool {
+        matches!(&self.guest, Guest::Remote(r) if !r.alive())
+    }
+
+    /// The guest's memory in 64 KiB pages.
+    fn mem_pages(&self) -> u64 {
+        match &self.guest {
+            Guest::Local { store, memory, .. } => memory.map_or(0, |m| m.size(store)),
+            Guest::Remote(r) => r.mem_pages,
+        }
+    }
+}
+
+pub(super) fn build_runtime(i: usize) -> Result<Box<Runtime>, Why> {
+    let (wasm, manifest, v1, quotas) = with(|slots| {
+        slots[i]
+            .as_ref()
+            .map(|s| (s.wasm.clone(), s.manifest.clone(), s.v1, s.quotas))
+    })
+    .ok_or_else(|| Why::new(tk!("apps.why.no_instance")))?;
     let init_fuel = if v1 {
         INIT_FUEL
     } else {
         quotas.fuel_frame.saturating_mul(8).min(64_000_000)
     };
+    // A packaged (v2) app runs in a process of its own when it can; otherwise in the kernel.
+    if !v1 && remote::enabled() {
+        let state = host_state(&manifest, &quotas)?;
+        match remote::start(&manifest.id, &wasm, state, quotas.mem_bytes, init_fuel) {
+            Ok(rr) => return Ok(runtime(Guest::Remote(rr))),
+            Err(remote::StartError(why)) => {
+                if !why.is_no_process() {
+                    return Err(why);
+                }
+                serial_println!("apps: `{}` runs in the kernel (no process)", manifest.id);
+            }
+        }
+    }
+    let engine = guest_engine();
+    let module = Module::new(&engine, &wasm[..])
+        .map_err(|e| Why::with(tk!("apps.why.bad_module"), alloc::format!("{e}")))?;
+    let state = host_state(&manifest, &quotas)?;
+    let mut store = Store::new(&engine, state);
+    store.limiter(|st| &mut st.limits);
     store
         .set_fuel(init_fuel)
         .map_err(|_| Why::new(tk!("apps.why.no_fuel_slot")))?;
@@ -65,15 +118,10 @@ pub(super) fn build_runtime(i: usize) -> Result<Box<Runtime>, Why> {
     let memory = instance
         .get_memory(&store, "memory")
         .or_else(|| instance.get_memory(&store, "mem"));
-    Ok(Box::new(Runtime {
+    Ok(runtime(Guest::Local {
         store,
         instance,
         memory,
-        first_render: true,
-        fuel_spent: 0,
-        calls: 0,
-        last_buttons: 0,
-        redraw_again: false,
     }))
 }
 
@@ -129,37 +177,52 @@ pub(super) fn resize_surfaces(i: usize, w: i32, h: i32) -> bool {
 
 /// Call guest export `name` with `args`, trimmed to the export's arity (so one name
 /// serves both v1 `on_key(code)` and v2 `on_key(code, mods)`). Missing exports are fine.
-fn call_export(rt: &mut Runtime, name: &str, args: &[i32], fuel: u64) -> Result<(), wasmi::Error> {
-    let Some(f) = rt.instance.get_func(&rt.store, name) else {
-        return Ok(());
+fn call_export(rt: &mut Runtime, name: &str, args: &[i32], fuel: u64) -> Result<(), Halt> {
+    let spent = match &mut rt.guest {
+        Guest::Local {
+            store, instance, ..
+        } => {
+            let Some(f) = instance.get_func(&*store, name) else {
+                return Ok(());
+            };
+            let n = f.ty(&*store).params().len();
+            if n > 4 {
+                return Ok(()); // incompatible signature: ignore the hook
+            }
+            let all = [
+                args.first().copied().unwrap_or(0),
+                args.get(1).copied().unwrap_or(0),
+                args.get(2).copied().unwrap_or(0),
+                0,
+            ];
+            let vals = [
+                Val::I32(all[0]),
+                Val::I32(all[1]),
+                Val::I32(all[2]),
+                Val::I32(all[3]),
+            ];
+            store.set_fuel(fuel).map_err(Halt::from)?;
+            let r = f.call(&mut *store, &vals[..n], &mut []);
+            let left = store.get_fuel().unwrap_or(0);
+            rt.fuel_spent += fuel.saturating_sub(left);
+            rt.calls += 1;
+            return r.map_err(Halt::from);
+        }
+        Guest::Remote(r) => r.call(name, args, fuel),
     };
-    let n = f.ty(&rt.store).params().len();
-    if n > 4 {
-        return Ok(()); // incompatible signature: ignore the hook
-    }
-    let all = [
-        args.first().copied().unwrap_or(0),
-        args.get(1).copied().unwrap_or(0),
-        args.get(2).copied().unwrap_or(0),
-        0,
-    ];
-    let vals = [
-        Val::I32(all[0]),
-        Val::I32(all[1]),
-        Val::I32(all[2]),
-        Val::I32(all[3]),
-    ];
-    rt.store.set_fuel(fuel)?;
-    let r = f.call(&mut rt.store, &vals[..n], &mut []);
-    let left = rt.store.get_fuel().unwrap_or(0);
-    rt.fuel_spent += fuel.saturating_sub(left);
     rt.calls += 1;
-    r
+    match spent {
+        Ok(n) => {
+            rt.fuel_spent += n;
+            Ok(())
+        }
+        Err(h) => Err(h),
+    }
 }
 
 /// Run one slice of the guest. `Ok(true)` when it rendered (publish the surface).
-pub(super) fn run_guest(i: usize, job: &Job) -> Result<bool, wasmi::Error> {
-    let fault = |what: &'static str| wasmi::Error::host(AppFault(what));
+pub(super) fn run_guest(i: usize, job: &Job) -> Result<bool, Halt> {
+    let fault = |what: &'static str| Halt::from(wasmi::Error::host(AppFault(what)));
     let rt = rts()[i]
         .as_mut()
         .ok_or_else(|| fault(tk!("apps.why.no_runtime")))?;
@@ -210,20 +273,14 @@ pub(super) fn run_guest(i: usize, job: &Job) -> Result<bool, wasmi::Error> {
             }
         });
     }
-    rt.store.data_mut().set_surface(ptr, len, info);
+    rt.host_mut().set_surface(ptr, len, info);
     let fuel = job.quotas.fuel_frame.min(FRAME_FUEL);
     let result = guest_slice(rt, job, fuel, w, h);
-    rt.store.data_mut().clear_surface();
+    rt.host_mut().clear_surface();
     result
 }
 
-fn guest_slice(
-    rt: &mut Runtime,
-    job: &Job,
-    fuel: u64,
-    w: i32,
-    h: i32,
-) -> Result<bool, wasmi::Error> {
+fn guest_slice(rt: &mut Runtime, job: &Job, fuel: u64, w: i32, h: i32) -> Result<bool, Halt> {
     let mut want_render = if job.v1 {
         job.frame || job.starting
     } else {
@@ -240,7 +297,7 @@ fn guest_slice(
         call_export(rt, "on_tick", &[dt], fuel)?;
         want_render = true;
     }
-    if let Some(v) = rt.store.data_mut().v2.as_deref_mut()
+    if let Some(v) = rt.host_mut().v2.as_deref_mut()
         && core::mem::take(&mut v.redraw)
     {
         want_render = true;
@@ -258,7 +315,7 @@ fn guest_slice(
     };
     call_export(rt, "render", &[], render_fuel)?;
     // A guest that asked for a redraw during `render` gets one more pass.
-    if let Some(v) = rt.store.data_mut().v2.as_deref_mut()
+    if let Some(v) = rt.host_mut().v2.as_deref_mut()
         && core::mem::take(&mut v.redraw)
     {
         rt.redraw_again = true;
@@ -267,7 +324,7 @@ fn guest_slice(
 }
 
 /// Deliver one input event. Returns whether the app should redraw afterwards.
-fn dispatch(rt: &mut Runtime, ev: Ev, v1: bool, fuel: u64) -> Result<bool, wasmi::Error> {
+fn dispatch(rt: &mut Runtime, ev: Ev, v1: bool, fuel: u64) -> Result<bool, Halt> {
     match ev {
         Ev::Key(code, mods) => {
             if v1 && !(0x20..0x7F).contains(&code) && code != 10 && code != 27 {
@@ -330,7 +387,7 @@ pub(super) fn publish(i: usize) {
 pub(super) fn account(i: usize, cycles: u64, now: u64) {
     let (fuel, calls, mem_kib) = match rts()[i].as_mut() {
         Some(rt) => {
-            let pages = rt.memory.map_or(0, |m| m.size(&rt.store));
+            let pages = rt.mem_pages();
             (
                 core::mem::take(&mut rt.fuel_spent),
                 core::mem::take(&mut rt.calls),
@@ -357,7 +414,7 @@ pub(super) fn account(i: usize, cycles: u64, now: u64) {
 /// Copy a guest-set window title into the slot.
 pub(super) fn sync_title(i: usize) {
     let Some(rt) = rts()[i].as_mut() else { return };
-    let Some(v) = rt.store.data_mut().v2.as_deref_mut() else {
+    let Some(v) = rt.host_mut().v2.as_deref_mut() else {
         return;
     };
     if core::mem::take(&mut v.title_dirty) {

@@ -4,6 +4,17 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — Apps WebAssembly em anel 3
+
+- Os apps **v2** (`osj.*`) rodam num **processo de anel 3 por app**: `user-apps/wasmhost` carrega o
+  `wasmi`, a memória do app e o combustível; cada import vira uma chamada de sistema (16–20) que o kernel
+  atende. O contrato (`kitsune_core::appabi::remote`) é testado no host. As funções `osj.*` passaram a ser
+  **uma só implementação** (`abi2::call` sobre um `Guest`), usada pelo wasmi do kernel e pelo processo.
+  Chamadas bloqueantes reiniciam ao acordar. Se não houver vaga de processo, o app roda no kernel como antes.
+  Verificado em QEMU (cenário W44): Notas, Pintura e Relógio, `kill` e fechamento de janela encerram só o
+  processo e devolvem os quadros. `linker.ld` agora põe `.got` na página de dados. Detalhes em
+  [`docs/design/processos.md`](docs/design/processos.md).
+
 ## 2026-10 — Processos em anel 3 (MVP)
 
 - Programas **ELF rodam em modo usuário**, cada um no seu espaço de endereçamento: GDT com segmentos de

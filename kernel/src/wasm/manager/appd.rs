@@ -55,6 +55,9 @@ fn next_deadline() -> u64 {
 }
 
 fn any_ready() -> bool {
+    if rts().iter().flatten().any(|rt| rt.is_dead()) {
+        return true;
+    }
     let now = crate::interrupts::ticks();
     with(|slots| {
         slots
@@ -86,6 +89,12 @@ pub extern "C" fn worker() -> ! {
 
 /// Drop the runtime of closing/restarting apps (frees their memory at once).
 fn housekeeping() {
+    // A process that died while its app was idle (killed from Tarefas, a fault): end the app.
+    for i in 0..MAX_APPS {
+        if rts()[i].as_ref().is_some_and(|rt| rt.is_dead()) {
+            finish(i, State::Crashed, Why::new(tk!("apps.why.proc_died")));
+        }
+    }
     for i in 0..MAX_APPS {
         let act = with(|slots| match slots[i].as_mut() {
             Some(s) if s.closing && !s.rt_dropped => 1,
@@ -245,15 +254,14 @@ fn run_slice(i: usize) -> bool {
             account(i, spent, now);
             sync_title(i);
         }
-        Err(e) => {
+        Err(halt) => {
             account(i, spent, now);
-            let why = describe(&e);
-            let state = if e.i32_exit_status().is_some() {
+            let state = if halt.exited {
                 State::Exited
             } else {
                 State::Crashed
             };
-            finish(i, state, why);
+            finish(i, state, halt.why);
         }
     }
     true

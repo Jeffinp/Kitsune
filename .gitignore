@@ -41,3 +41,6 @@ qlog.txt
 *.pcap
 kitsune-ovmf-vars.fd
 !wasm-apps/*/icon.png
+
+# user-app build output (detached workspaces)
+user-apps/*/target/
