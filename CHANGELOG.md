@@ -14,6 +14,10 @@ renomeio mantêm o nome da época.
   Verificado em QEMU (cenário W44): Notas, Pintura e Relógio, `kill` e fechamento de janela encerram só o
   processo e devolvem os quadros. `linker.ld` agora põe `.got` na página de dados. Detalhes em
   [`docs/design/processos.md`](docs/design/processos.md).
+- **Desempenho dos apps em anel 3**: de ~8,6× para ~1,14× o custo do app no kernel (passagem direta de CPU
+  entre processo e `appd`, lote de chamadas sem resultado, `get_size`/`lang` dentro do `Job`, thread de
+  kernel sem recarregar o CR3, hospedeiro em `opt-level 3`). Medição: `w45-wasm-cost.sh`. Corrigido um
+  #PF só do build `perf-trace` (a amostra do timer lia o código de um processo de usuário; SMAP).
 
 ## 2026-10 — Processos em anel 3 (MVP)
 

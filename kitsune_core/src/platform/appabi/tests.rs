@@ -103,6 +103,8 @@ mod remote {
             args: [-1, 2, 3, 4],
             fuel: 1 << 40,
             mem_bytes: 7,
+            win: 0x0000_0500_0000_0320,
+            lang: 1,
         };
         assert_eq!(Job::from_bytes(&j.to_bytes()), j);
         let h = HostCall {
@@ -122,8 +124,26 @@ mod remote {
             msg_len: 2,
         };
         assert_eq!(Done::from_bytes(&d.to_bytes()), d);
-        assert_eq!(core::mem::size_of::<Job>(), 40);
+        assert_eq!(core::mem::size_of::<Job>(), 56);
         assert_eq!(core::mem::size_of::<HostCall>(), 72);
         assert_eq!(core::mem::size_of::<Done>(), 40);
+    }
+
+    #[test]
+    fn only_calls_without_result_or_memory_are_batchable() {
+        let ids: alloc::vec::Vec<_> = (0..HOST_FNS.len() as u32)
+            .filter(|i| batchable(*i))
+            .collect();
+        assert!(!ids.is_empty());
+        for id in ids {
+            let f = &HOST_FNS[id as usize];
+            assert!(f.results.is_empty(), "{} returns a value", f.name);
+            assert!(f.params.len() <= 5);
+        }
+        assert!(batchable(host_fn_id("fill_rect").unwrap()));
+        assert!(!batchable(host_fn_id("draw_text").unwrap()));
+        assert!(!batchable(host_fn_id("exit").unwrap()));
+        assert!(!batchable(9999));
+        const { assert!(MAX_BATCH * 72 <= 4608) };
     }
 }

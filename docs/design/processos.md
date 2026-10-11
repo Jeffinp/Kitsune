@@ -78,6 +78,17 @@ Detalhes que importam:
   para de responder por 20 s é morto.
 * **Reserva.** Se não há vaga de processo ou de thread (8 processos, 16 threads), o app roda no kernel
   como antes; o log diz. Apps v1 (cobrinha, plasma, DOOM) e WASI continuam no kernel.
+* **Custo e como ficou barato.** Medido com `tools/perf/scen/w45-wasm-cost.sh` (build `perf-trace`, linha
+  `[trace] wasm:`; QEMU TCG, então vale como proporção). A primeira versão custava ~8,6× o app no kernel
+  por job, porque cada chamada era duas trocas de contexto atrás de qualquer outra thread. Hoje o custo
+  estável é ~1,14× (1,13 contra 0,99 Mciclos por job): (1) **passagem direta** (`sched::hand_off`): o
+  processo e o `appd` passam a CPU um ao outro sem esperar a vez na fila; (2) **lote**: `fill_rect` e
+  `request_redraw` (75 % das chamadas) não têm resultado nem ponteiro, então o hospedeiro os junta e
+  manda em uma troca (`SYS_HOST_BATCH`, até 64; ordem preservada, descarregados antes de qualquer
+  chamada que devolve valor e antes do fim do job); (3) `get_size` e `lang` valem o job inteiro e vão
+  dentro do `Job`; (4) thread de kernel **não recarrega o CR3** (`sched::activate` empresta a raiz do
+  processo, que tem a metade do kernel; `release_cr3` desfaz o empréstimo antes de liberar a raiz); (5)
+  o hospedeiro é compilado com `opt-level = 3`.
 * **Verificação.** Cenário `tools/perf/scen/w44-wasm-ring3.sh`: Notas, Pintura e Relógio em processos
   (`ps` mostra `app:notes`, `app:paint`, `app:clock`), `kill` de um deles só derruba o app dele, fechar a
   janela devolve os quadros do processo.

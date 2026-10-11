@@ -367,10 +367,13 @@ pub fn timer_sample(rsp: u64, cur_slot: usize) {
         // SAFETY: `rsp` is the block of 15 GPRs pushed by `timer_isr`, so `rsp + 15*8` is the RIP
         // slot of the CPU-pushed interrupt frame of the interrupted context: mapped, 8-aligned, read-only.
         let rip = unsafe { *((rsp + 15 * 8) as *const u64) };
-        // SAFETY: `rip` is the interrupted instruction pointer; the kernel is ring 0 only, so it is
-        // kernel text and the byte before it is mapped and readable.
+        // SAFETY: the CS slot follows the RIP slot in the same CPU-pushed frame.
+        let cs = unsafe { *((rsp + 16 * 8) as *const u64) };
+        // A ring 3 process was running: busy, and its code is not ours to read (SMAP would fault).
+        // SAFETY: in ring 0 `rip` is the interrupted instruction pointer, kernel text, so the byte
+        // before it is mapped and readable.
         // NOTE: not checked: assumes `rip` is not the very first byte of the mapped text.
-        let idle = unsafe { *((rip - 1) as *const u8) } == 0xF4;
+        let idle = cs & 3 == 0 && unsafe { *((rip - 1) as *const u8) } == 0xF4;
         if idle {
             TICK_IDLE.fetch_add(1, Relaxed);
         } else {
@@ -427,6 +430,7 @@ pub fn report(khz: u64, ticks: u64) {
         st.hlt_wakes
     );
     crate::netd::log_stats();
+    crate::wasm::remote::log_stats();
     for p in 0..PATHS {
         if st.path_n[p] > 0 {
             crate::serial_println!(

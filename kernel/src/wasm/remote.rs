@@ -20,18 +20,58 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::Cell;
 use core::ops::Range;
+use core::sync::atomic::{AtomicU64, Ordering};
 use kitsune_core::appabi::remote::{
     CALL_EXIT, CALL_FAULT, DONE_EXIT, DONE_FAULT, DONE_LOAD_FAILED, DONE_OK, DONE_OUT_OF_FUEL,
-    DONE_TRAP, Done, EXPORT_NAMES, HostCall, JOB_CALL, JOB_INIT, Job,
+    DONE_TRAP, Done, EXPORT_NAMES, HOST_FNS, HostCall, JOB_CALL, JOB_INIT, Job,
 };
 use kitsune_core::tk;
 
 /// Whether v2 apps run in a process (when the image has the host and a process can be started).
 /// When it is off, or starting one fails, they run in the kernel as before.
-const RING3_APPS: bool = true;
+/// (Building with `KITSUNE_APPS_LOCAL=1` in the environment forces the kernel runtime, for A/B timing.)
+const RING3_APPS: bool = option_env!("KITSUNE_APPS_LOCAL").is_none();
 
 pub(crate) fn enabled() -> bool {
     RING3_APPS && userproc::embedded("wasmhost").is_some()
+}
+
+/// Cost counters for the `perf-trace` report: jobs, cycles inside jobs, host calls, cycles serving them.
+pub(super) static STATS: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
+/// The same for guests that run in the kernel: calls and cycles.
+pub(super) static LOCAL_STATS: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
+/// Jobs longer than this are one-off work (a directory scan, an image) and are kept out of the steady average.
+pub(super) const STEADY_MAX: u64 = 20_000_000;
+
+/// Calls and cycles per host function id.
+pub(super) static BY_ID: [[AtomicU64; 2]; 32] =
+    [const { [AtomicU64::new(0), AtomicU64::new(0)] }; 32];
+
+/// One line for the `perf-trace` report.
+pub(crate) fn log_stats() {
+    let g = |a: &AtomicU64| a.load(Ordering::Relaxed);
+    let (lc, lcy) = (g(&LOCAL_STATS[0]), g(&LOCAL_STATS[1]));
+    let (j, jcy, h, hcy) = (g(&STATS[0]), g(&STATS[1]), g(&STATS[2]), g(&STATS[3]));
+    crate::serial_println!(
+        "[trace] wasm: in kernel {lc} calls, {} kcyc/call ({} steady); in process {j} jobs, {} kcyc/job \
+         ({} steady), {h} host calls ({} per job), {} kcyc/call served",
+        lcy / lc.max(1) / 1000,
+        g(&LOCAL_STATS[3]) / g(&LOCAL_STATS[2]).max(1) / 1000,
+        jcy / j.max(1) / 1000,
+        g(&STATS[5]) / g(&STATS[4]).max(1) / 1000,
+        h / j.max(1),
+        hcy / h.max(1) / 1000
+    );
+    for (id, f) in HOST_FNS.iter().enumerate() {
+        let (n, cy) = (g(&BY_ID[id][0]), g(&BY_ID[id][1]));
+        if let Some(avg) = cy.checked_div(n) {
+            crate::serial_println!(
+                "[trace]   osj.{}: {n} calls, {} kcyc/call",
+                f.name,
+                avg / 1000
+            );
+        }
+    }
 }
 
 /// Ticks without a word from the process before it is declared hung (20 s).
@@ -82,6 +122,8 @@ pub(super) fn start(
         pending: None,
     };
     let job = Job {
+        win: ((rt.state.cw as u64) << 32) | u64::from(rt.state.ch as u32),
+        lang: u64::from(kitsune_core::i18n::lang().index()),
         kind: JOB_INIT,
         fuel,
         mem_bytes: mem_bytes as u64,
@@ -135,6 +177,8 @@ impl RemoteRt {
             *slot = *v;
         }
         let job = Job {
+            win: ((self.state.cw as u64) << 32) | u64::from(self.state.ch as u32),
+            lang: u64::from(kitsune_core::i18n::lang().index()),
             kind: JOB_CALL,
             export: export as u32,
             args: a,
@@ -153,12 +197,22 @@ impl RemoteRt {
         if !userproc::host_post(pid, job) {
             return Err(RunError::Died);
         }
+        let t0 = crate::io::rdtsc();
         let mut last = crate::interrupts::ticks();
         loop {
             match userproc::host_poll(pid) {
-                HostEvent::Done(d, msg) => return self.finish(d, msg, charged),
-                HostEvent::Call(hc) => {
-                    self.serve(&hc, budget, &mut charged);
+                HostEvent::Done(d, msg) => {
+                    STATS[0].fetch_add(1, Ordering::Relaxed);
+                    let took = crate::io::rdtsc().wrapping_sub(t0);
+                    STATS[1].fetch_add(took, Ordering::Relaxed);
+                    if took < STEADY_MAX {
+                        STATS[4].fetch_add(1, Ordering::Relaxed);
+                        STATS[5].fetch_add(took, Ordering::Relaxed);
+                    }
+                    return self.finish(d, msg, charged);
+                }
+                HostEvent::Call(calls) => {
+                    self.serve(&calls, budget, &mut charged);
                     last = crate::interrupts::ticks();
                 }
                 HostEvent::Dead => return Err(RunError::Died),
@@ -197,8 +251,31 @@ impl RemoteRt {
         }
     }
 
-    /// Serve one host call and let the process go on.
-    fn serve(&mut self, hc: &HostCall, budget: u64, charged: &mut u64) {
+    /// Serve the call (or the batch of calls) the process is waiting on and let it go on.
+    fn serve(&mut self, calls: &[HostCall], budget: u64, charged: &mut u64) {
+        let mut reply = 0;
+        for hc in calls {
+            let t1 = crate::io::rdtsc();
+            reply = match self.serve_one(hc, budget, charged) {
+                Ok(v) => v,
+                Err(v) => {
+                    userproc::host_reply(self.pid, v);
+                    return;
+                }
+            };
+            let spent = crate::io::rdtsc().wrapping_sub(t1);
+            STATS[2].fetch_add(1, Ordering::Relaxed);
+            STATS[3].fetch_add(spent, Ordering::Relaxed);
+            if let Some(b) = BY_ID.get(hc.id as usize) {
+                b[0].fetch_add(1, Ordering::Relaxed);
+                b[1].fetch_add(spent, Ordering::Relaxed);
+            }
+        }
+        userproc::host_reply(self.pid, if calls.len() > 1 { 0 } else { reply });
+    }
+
+    /// One host call. `Err` carries the reply that makes the process stop (the error is kept).
+    fn serve_one(&mut self, hc: &HostCall, budget: u64, charged: &mut u64) -> Result<i64, i64> {
         let mut g = ProcGuest {
             pid: self.pid,
             state: &mut self.state,
@@ -213,19 +290,15 @@ impl RemoteRt {
         if g.bad.get() && r.is_ok() {
             r = Err(wasmi::Error::host(AppFault(tk!("apps.why.bad_pointer"))));
         }
-        let reply = match r {
-            Ok(v) => v,
-            Err(e) => {
-                let v = if e.i32_exit_status().is_some() {
-                    CALL_EXIT
-                } else {
-                    CALL_FAULT
-                };
-                self.pending = Some(e);
-                v
-            }
-        };
-        userproc::host_reply(self.pid, reply);
+        r.map_err(|e| {
+            let v = if e.i32_exit_status().is_some() {
+                CALL_EXIT
+            } else {
+                CALL_FAULT
+            };
+            self.pending = Some(e);
+            v
+        })
     }
 }
 

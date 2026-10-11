@@ -207,6 +207,24 @@ pub const SYS_HOST_CALL: u64 = 19;
 /// `(ptr)`: a [`Done`] at `ptr` ends the current job.
 pub const SYS_HOST_JOB_DONE: u64 = 20;
 
+/// `(ptr, n) -> 0`: `n` [`HostCall`] records, back to back, served in order in one exchange. Only
+/// calls for which [`batchable`] holds may be sent this way (no result, no pointer into the guest's
+/// memory), so the host can answer the guest before the kernel has run them. The result is `0`, or
+/// [`CALL_FAULT`] when one of them was refused (the job ends with [`DONE_FAULT`]).
+pub const SYS_HOST_BATCH: u64 = 21;
+/// Most records in one batch.
+pub const MAX_BATCH: usize = 64;
+
+/// Names of the host functions that may be batched.
+const BATCHABLE: &[&str] = &["fill_rect", "request_redraw"];
+
+/// May the call with id `id` be deferred and sent in a batch?
+pub fn batchable(id: u32) -> bool {
+    HOST_FNS
+        .get(id as usize)
+        .is_some_and(|f| BATCHABLE.contains(&f.name))
+}
+
 /// The kernel refused the call as a fault of the guest (a pointer outside its memory...): the host
 /// function must trap, the job then ends with [`DONE_FAULT`].
 pub const CALL_FAULT: i64 = i64::MIN;
@@ -221,7 +239,7 @@ pub const JOB_INIT: u32 = 1;
 pub const JOB_CALL: u32 = 2;
 pub const JOB_QUIT: u32 = 3;
 
-/// A unit of work the kernel gives the host. 40 bytes.
+/// A unit of work the kernel gives the host. 56 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Job {
@@ -234,6 +252,10 @@ pub struct Job {
     pub fuel: u64,
     /// Cap on the guest's linear memory in bytes (`JOB_INIT`).
     pub mem_bytes: u64,
+    /// What `get_size` answers (`width << 32 | height`) and `lang` answers, for the whole job: the
+    /// host replies to those two itself instead of asking the kernel.
+    pub win: u64,
+    pub lang: u64,
 }
 
 /// One imported function the guest called. 72 bytes.
@@ -329,7 +351,7 @@ impl Writer<'_> {
     }
 }
 
-bytes_of!(Job, 40, kind, export, args, fuel, mem_bytes);
+bytes_of!(Job, 56, kind, export, args, fuel, mem_bytes, win, lang);
 bytes_of!(HostCall, 72, id, nargs, args, mem_base, mem_len);
 bytes_of!(
     Done, 40, status, code, fuel_spent, mem_pages, msg_ptr, msg_len
@@ -359,7 +381,7 @@ impl Reader<'_> {
 }
 
 impl Job {
-    pub fn from_bytes(b: &[u8; 40]) -> Job {
+    pub fn from_bytes(b: &[u8; 56]) -> Job {
         let mut r = Reader { b, at: 0 };
         Job {
             kind: r.u32(),
@@ -372,6 +394,8 @@ impl Job {
             ],
             fuel: r.u64(),
             mem_bytes: r.u64(),
+            win: r.u64(),
+            lang: r.u64(),
         }
     }
 }

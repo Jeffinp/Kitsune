@@ -116,6 +116,27 @@ unsafe impl GlobalAlloc for Allocator {
 
 struct Data {
     limits: StoreLimits,
+    /// Calls without a result, held back and sent together (see `SYS_HOST_BATCH`).
+    batch: Vec<HostCall>,
+    /// What `get_size` and `lang` answer, as of the current job (the kernel sends them with it).
+    win: u64,
+    lang: u64,
+}
+
+/// Send the held-back calls to the kernel in one exchange. `false` when the kernel refused one.
+fn flush(data: &mut Data) -> bool {
+    if data.batch.is_empty() {
+        return true;
+    }
+    let mut bytes: Vec<u8> = Vec::with_capacity(data.batch.len() * 72);
+    for rec in &data.batch {
+        bytes.extend_from_slice(&rec.to_bytes());
+    }
+    let n = data.batch.len() as u64;
+    data.batch.clear();
+    // SAFETY: `bytes` holds `n` whole 72-byte records for the duration of the call.
+    let r = unsafe { syscall3(SYS_HOST_BATCH, bytes.as_ptr() as u64, n, 0) };
+    r != CALL_FAULT
 }
 
 /// The kernel refused a host call as a fault of the guest: trap.
@@ -174,6 +195,31 @@ fn host_call(
     if let Some(m) = mem {
         rec.mem_base = m.data_ptr(&*caller) as u64;
         rec.mem_len = m.data_size(&*caller) as u64;
+    }
+    if batchable(id) {
+        // No result and no pointer into the guest: the kernel can run it later, in order.
+        let data = caller.data_mut();
+        data.batch.push(rec);
+        if data.batch.len() >= MAX_BATCH && !flush(data) {
+            return Err(wasmi::Error::host(GuestFault));
+        }
+        return Ok(());
+    }
+    // These two are constant during a job: no need to ask.
+    let known = match f.name {
+        "get_size" => Some(caller.data().win as i64),
+        "lang" => Some(caller.data().lang as i64),
+        _ => None,
+    };
+    if let (Some(v), Some(slot), Some(t)) = (known, results.first_mut(), f.results.first()) {
+        *slot = match t {
+            Ty::I32 => Val::I32(v as i32),
+            Ty::I64 => Val::I64(v),
+        };
+        return Ok(());
+    }
+    if !flush(caller.data_mut()) {
+        return Err(wasmi::Error::host(GuestFault));
     }
     let bytes = rec.to_bytes();
     // SAFETY: `bytes` is a valid 72-byte record for the duration of the call.
@@ -249,6 +295,9 @@ fn init(module_bytes: &[u8], job: &Job) -> Result<Guest, String> {
                 .memories(1)
                 .tables(1)
                 .build(),
+            batch: Vec::new(),
+            win: job.win,
+            lang: job.lang,
         },
     );
     store.limiter(|d| &mut d.limits);
@@ -347,8 +396,11 @@ fn do_call(guest: &mut Option<Guest>, job: &Job) {
     }
     let r = Func::call(&f, &mut g.store, &vals[..params.len()], &mut []);
     let spent = job.fuel.saturating_sub(g.store.get_fuel().unwrap_or(0));
+    // What the guest drew before it returned (or trapped) still counts.
+    let flushed = flush(g.store.data_mut());
     let mp = pages(guest);
     match r {
+        Ok(()) if !flushed => send_done(DONE_FAULT, 0, spent, mp, ""),
         Ok(()) => send_done(DONE_OK, 0, spent, mp, ""),
         Err(e) => {
             if e.downcast_ref::<GuestFault>().is_some() {
@@ -371,8 +423,8 @@ fn main() -> i32 {
     let module = read_module();
     let mut guest: Option<Guest> = None;
     loop {
-        let mut raw = [0u8; 40];
-        // SAFETY: `raw` is a valid 40-byte buffer.
+        let mut raw = [0u8; 56];
+        // SAFETY: `raw` is a valid 56-byte buffer.
         let r = unsafe { syscall3(SYS_HOST_JOB_WAIT, raw.as_mut_ptr() as u64, 0, 0) };
         if r < 0 {
             return 3;
@@ -382,7 +434,8 @@ fn main() -> i32 {
             JOB_INIT => {
                 guest = None;
                 match init(&module, &job) {
-                    Ok(g) => {
+                    Ok(mut g) => {
+                        flush(g.store.data_mut());
                         let spent = job.fuel.saturating_sub(g.store.get_fuel().unwrap_or(0));
                         guest = Some(g);
                         send_done(DONE_OK, 0, spent, pages(&guest), "");
@@ -390,7 +443,13 @@ fn main() -> i32 {
                     Err(msg) => send_done(DONE_LOAD_FAILED, 0, 0, 0, &msg),
                 }
             }
-            JOB_CALL => do_call(&mut guest, &job),
+            JOB_CALL => {
+                if let Some(g) = guest.as_mut() {
+                    let d = g.store.data_mut();
+                    (d.win, d.lang) = (job.win, job.lang);
+                }
+                do_call(&mut guest, &job)
+            }
             JOB_QUIT => return 0,
             _ => send_done(DONE_LOAD_FAILED, 0, 0, 0, "unknown job"),
         }

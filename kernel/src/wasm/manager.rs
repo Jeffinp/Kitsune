@@ -215,6 +215,14 @@ pub(crate) fn wake_worker() {
     }
 }
 
+/// Make the next voluntary switch go to `appd` (a user process that just asked it for something).
+pub(crate) fn hand_off_to_worker() {
+    let tid = TID.load(Ordering::Acquire);
+    if tid != usize::MAX {
+        crate::sched::hand_off(tid);
+    }
+}
+
 // ---------------------------------------------------------------- launch / close (compositor)
 
 /// Why an app could not be started.

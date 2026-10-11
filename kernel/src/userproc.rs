@@ -113,7 +113,8 @@ pub struct HostLink {
 
 enum CallState {
     Idle,
-    Pending(HostCall),
+    /// One call, or a batch of calls without results.
+    Pending(Vec<HostCall>),
     /// `appd` took the call and is working on it.
     Serving,
     Served(i64),
@@ -122,7 +123,7 @@ enum CallState {
 /// What the process did since `appd` last looked.
 pub enum HostEvent {
     Nothing,
-    Call(HostCall),
+    Call(Vec<HostCall>),
     Done(Done, Vec<u8>),
     /// The process is gone (exited, faulted or was killed).
     Dead,
@@ -340,6 +341,8 @@ pub fn reap() {
             _ => String::from("was killed"),
         };
         if let Some(a) = p.aspace.take() {
+            // A kernel thread may be running on this root (`sched::activate` lends it): leave it first.
+            crate::sched::release_cr3(a.root());
             a.destroy();
         }
         let (used, total) = crate::uvm::frame_stats();
@@ -442,7 +445,7 @@ pub extern "C" fn syscall_entry(rsp: u64) -> u64 {
             r.rax = sys_brk(slot, a);
             rsp
         }
-        remote::SYS_HOST_MODULE_LEN..=remote::SYS_HOST_JOB_DONE => host_call(r, rsp, slot),
+        remote::SYS_HOST_MODULE_LEN..=remote::SYS_HOST_BATCH => host_call(r, rsp, slot),
         _ => {
             r.rax = ENOSYS as u64;
             rsp
@@ -537,6 +540,34 @@ fn host_call(r: &mut Regs, rsp: u64, slot: usize) -> u64 {
                 Err(_) => EFAULT as u64,
             }
         }
+        remote::SYS_HOST_BATCH => match link.call {
+            CallState::Idle => {
+                let n = b as usize;
+                let mut raw = alloc::vec![0u8; n.min(remote::MAX_BATCH) * 72];
+                if n == 0 || n > remote::MAX_BATCH || asp.copy_in(a, &mut raw).is_err() {
+                    r.rax = EINVAL as u64;
+                    return rsp;
+                }
+                let calls = raw
+                    .as_chunks::<72>()
+                    .0
+                    .iter()
+                    .map(HostCall::from_bytes)
+                    .collect();
+                link.call = CallState::Pending(calls);
+                wake_appd = true;
+                block = true;
+                0
+            }
+            CallState::Served(v) => {
+                link.call = CallState::Idle;
+                v as u64
+            }
+            _ => {
+                block = true;
+                0
+            }
+        },
         remote::SYS_HOST_JOB_WAIT => match link.job {
             Some(job) => match asp.poke(a, &job.to_bytes()) {
                 Ok(()) => {
@@ -557,7 +588,7 @@ fn host_call(r: &mut Regs, rsp: u64, slot: usize) -> u64 {
                     r.rax = EFAULT as u64;
                     return rsp;
                 }
-                link.call = CallState::Pending(HostCall::from_bytes(&raw));
+                link.call = CallState::Pending(alloc::vec![HostCall::from_bytes(&raw)]);
                 wake_appd = true;
                 block = true;
                 0
@@ -589,6 +620,7 @@ fn host_call(r: &mut Regs, rsp: u64, slot: usize) -> u64 {
     drop(procs);
     if wake_appd {
         crate::wasm::wake_worker();
+        crate::wasm::hand_off_to_worker();
     }
     if block {
         return block_restart(r, rsp, slot, number);
@@ -625,6 +657,7 @@ pub fn host_post(pid: u32, job: Job) -> bool {
     match slot.flatten() {
         Some(s) => {
             crate::sched::wake(s);
+            crate::sched::hand_off(s);
             true
         }
         None => false,
@@ -637,9 +670,10 @@ pub fn host_poll(pid: u32) -> HostEvent {
         if let Some((d, m)) = l.done.take() {
             return HostEvent::Done(d, m);
         }
-        if let CallState::Pending(hc) = l.call {
-            l.call = CallState::Serving;
-            return HostEvent::Call(hc);
+        if matches!(l.call, CallState::Pending(_))
+            && let CallState::Pending(calls) = core::mem::replace(&mut l.call, CallState::Serving)
+        {
+            return HostEvent::Call(calls);
         }
         if end_of(p) != End::Running {
             return HostEvent::Dead;
@@ -665,6 +699,7 @@ pub fn host_reply(pid: u32, value: i64) {
     });
     if let Some(s) = slot {
         crate::sched::wake(s);
+        crate::sched::hand_off(s);
     }
 }
 

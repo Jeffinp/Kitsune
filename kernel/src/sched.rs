@@ -91,13 +91,18 @@ static KERNEL_CR3: AtomicU64 = AtomicU64::new(0);
 
 /// Make `t`'s address space and ring 3 entry stack the live ones. Runs inside the context-switch
 /// ISR / `kill_current` (IF=0), right before the new thread's registers are restored.
+///
+/// A kernel thread (`cr3 == 0`) keeps whatever root is loaded: every user root carries the kernel's
+/// own mappings, and the kernel never touches the user half (SMAP), so reloading CR3 only to run
+/// kernel code would flush the TLB for nothing (the exchange between a process and `appd` happens
+/// at every host call). [`release_cr3`] undoes the borrow before a root is freed.
 fn activate(t: &Thread) {
+    let (cur, flags) = x86_64::registers::control::Cr3::read();
     let want = if t.cr3 == 0 {
-        KERNEL_CR3.load(Ordering::Relaxed)
+        cur.start_address().as_u64()
     } else {
         t.cr3
     };
-    let (cur, flags) = x86_64::registers::control::Cr3::read();
     if cur.start_address().as_u64() != want {
         let frame =
             x86_64::structures::paging::PhysFrame::containing_address(x86_64::PhysAddr::new(want));
@@ -108,6 +113,22 @@ fn activate(t: &Thread) {
     if t.rsp0 != 0 {
         crate::gdt::set_rsp0(t.rsp0);
     }
+}
+
+/// Make sure the root `root` is not the live one (a kernel thread may be borrowing it), so it can be
+/// freed. Interrupts must be off or the caller must be a kernel thread that does not mind the switch.
+pub fn release_cr3(root: u64) {
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let (cur, flags) = x86_64::registers::control::Cr3::read();
+        let kernel = KERNEL_CR3.load(Ordering::Relaxed);
+        if cur.start_address().as_u64() == root && kernel != 0 {
+            let frame = x86_64::structures::paging::PhysFrame::containing_address(
+                x86_64::PhysAddr::new(kernel),
+            );
+            // SAFETY: `kernel` is the root the kernel booted with; it maps everything the caller runs.
+            unsafe { x86_64::registers::control::Cr3::write(frame, flags) };
+        }
+    });
 }
 
 /// Index of the running thread (read by Tarefas).
@@ -323,6 +344,16 @@ pub extern "C" fn yield_switch(rsp: u64) -> u64 {
     reschedule(rsp, false)
 }
 
+/// The thread the next voluntary switch should go to (`usize::MAX` = none): a direct hand-off, so two
+/// threads that wait on each other (a user process and `appd`) do not queue behind unrelated work
+/// at every exchange.
+static HANDOFF: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+/// Ask that the next yield (not a timer preemption) go to `slot`, if it can run then.
+pub fn hand_off(slot: usize) {
+    HANDOFF.store(slot, Ordering::Relaxed);
+}
+
 /// May slot `i` be scheduled at tick `now`: not dead and not blocked.
 #[inline]
 fn runnable(i: usize, now: u64) -> bool {
@@ -369,7 +400,11 @@ fn reschedule(rsp: u64, timer_tick: bool) -> u64 {
     // candidate, so it keeps the CPU when nobody else can run (unless it died).
     let n = s.threads.len();
     let now = crate::interrupts::ticks();
-    let next = match kitsune_core::schedule::next_runnable(cur, n, |i| runnable(i, now)) {
+    let hint = HANDOFF.swap(usize::MAX, Ordering::Relaxed);
+    let hinted = (!timer_tick && hint < n && hint != cur && runnable(hint, now)).then_some(hint);
+    let next = match hinted
+        .or_else(|| kitsune_core::schedule::next_runnable(cur, n, |i| runnable(i, now)))
+    {
         Some(next) => next,
         // Only possible if the compositor were dead or missing, which `kill_current` forbids.
         None => crate::crash::halt(),

@@ -202,7 +202,18 @@ fn call_export(rt: &mut Runtime, name: &str, args: &[i32], fuel: u64) -> Result<
                 Val::I32(all[3]),
             ];
             store.set_fuel(fuel).map_err(Halt::from)?;
+            let t0 = crate::io::rdtsc();
             let r = f.call(&mut *store, &vals[..n], &mut []);
+            remote::LOCAL_STATS[0].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            let took = crate::io::rdtsc().wrapping_sub(t0);
+            let add = |i: usize, v: u64| {
+                remote::LOCAL_STATS[i].fetch_add(v, core::sync::atomic::Ordering::Relaxed)
+            };
+            add(1, took);
+            if took < remote::STEADY_MAX {
+                add(2, 1);
+                add(3, took);
+            }
             let left = store.get_fuel().unwrap_or(0);
             rt.fuel_spent += fuel.saturating_sub(left);
             rt.calls += 1;
