@@ -16,7 +16,7 @@ interface pequena de chamadas de sistema. É o primeiro passo da fase 3 de
 | Processos | `kernel/src/userproc.rs` | tabela de processos, `spawn_elf`, `kill`, `reap`, saída capturada (64 KiB) |
 | Escalonador | `kernel/src/sched.rs` | cada thread tem `cr3` e `rsp0`; a troca de contexto carrega os dois (`activate`); `spawn_user` reaproveita a vaga de uma thread de usuário já recolhida (16 vagas) |
 | Chamadas de sistema | `int 0x80` (gate DPL 3), `kernel/src/switch.s` | mesma máquina da troca de contexto: salva os registradores, o Rust devolve a pilha a retomar (a mesma, ou a de outra thread quando a chamada bloqueia ou encerra) |
-| SDK e programas | `user-apps/` | `kitsune-user` (chamadas, `print!`, `entry!`), `linker.ld` (uma página por tipo de memória) e os programas `hello`, `spin`, `crash`, `probe` |
+| SDK e programas | `user-apps/` | `kitsune-user` (chamadas, `print!`, `entry!`), `linker.ld` (uma página por tipo de memória) e os programas `hello`, `spin`, `crash`, `probe`, `kterm` e `jsrun` |
 | Terminal | `run PROGRAMA|ARQUIVO.elf` | inicia o programa, mostra o que ele escreve, devolve o status; Ctrl+C o encerra; `ps` e `kill` enxergam os processos (pids a partir de 5000) |
 
 ## Chamadas de sistema
@@ -31,9 +31,10 @@ interface pequena de chamadas de sistema. É o primeiro passo da fase 3 de
 | 3 | `getpid()` | |
 | 4 | `sleep_ms(ms)` | até um minuto, bloqueia a thread sem gastar tempo |
 | 5 | `uptime_ms()` | |
-| 6 | `brk(fim)` | cresce o heap (a partir de `0x1000_0000`, até 8 MiB) com páginas zeradas; devolve o fim do heap, inalterado se recusado |
+| 6 | `brk(fim)` | cresce o heap (a partir de `0x1000_0000`, até 8 MiB; 64 MiB para o `jsrun` embutido) com páginas zeradas; devolve o fim do heap, inalterado se recusado |
 | 7 | `time()` | segundos desde 1970 no relógio de parede, já no fuso escolhido |
 | 8 | `language()` | idioma da interface (0 português, 1 inglês) |
+| 9 | `unix_ms()` | milissegundos desde 1970 em **UTC** (corrigidos pelo SNTP quando há rede; o relógio local sem correção se não; 0 sem relógio). É o `Date.now()` do `jsrun`; `time()` menos ele dá o fuso |
 | 16–21 | `host_*` | só para o hospedeiro WebAssembly (seção abaixo) |
 | 32 | `open(caminho, len, flags)` | `O_WRITE` 1, `O_CREATE` 2, `O_TRUNC` 4, `O_APPEND` 8; devolve o descritor (3 em diante, até 16 abertos) |
 | 33 | `close(fd)` | |
@@ -128,6 +129,74 @@ recursam). Hoje ele é aberto pelo Terminal do desktop (`run kterm`); o desktop 
 Ainda sem: `ps`, `kill`, `free`, `df`, `whoami` e rede (`ping`, `curl`, `nslookup`), `edit`, `files` e `tasks`
 (precisam de chamadas que o processo ainda não tem), `chmod`/`chown`, tamanho de arquivo em `ls` custa uma
 chamada `stat` por entrada.
+
+## JavaScript em anel 3 (`jsrun`)
+
+`run jsrun arquivo.js` executa um script com o **QuickJS** (Fabrice Bellard, MIT, versão 2026-06-04, sem
+modificações em `user-apps/jsrun/vendor/quickjs`) e imprime o que ele manda para `console.log`. Também
+`run jsrun -e 'código'`, `echo 'código' | run jsrun` (entrada padrão) e `run jsrun --selftest` (teste embutido
+com um benchmark). O dono do projeto autorizou C para isto, desde que rápido: é um interpretador de bytecode
+nativo, compilado com `clang -O2` e doubles de hardware (SSE2), não um motor em WebAssembly.
+
+| Peça | Onde | O quê |
+|---|---|---|
+| Motor | `vendor/quickjs` | ES2023+ completo: classes, campos privados, generators, async/await, Proxy, BigInt, regex com `\p{...}` e lookbehind, Map/Set/WeakMap, typed arrays, JSON. Sem `Intl` |
+| Matemática | `vendor/musl-math` | o libm do musl (MIT), só double; `build.rs` compila só as ~50 funções que o `Math` alcança. `sqrt` é uma instrução (`sqrtsd`) |
+| libc mínima | `libc/include`, `libc/libc.c`, `libc/printf.c` | os cabeçalhos que o QuickJS inclui (alguns só com tipos), `str*`, `printf`/`snprintf` (inteiros, `%s`, `%p`, e `%f`/`%e`/`%g` pelo dtoa exato do próprio QuickJS), relógio e calendário (`gettimeofday`, `localtime_r` com `tm_gmtoff`, `mktime`), e *stubs* de `pthread` (um fio por processo; `Atomics.wait` não bloqueia). `memcpy`/`memset`/`memmove`/`memcmp` vêm do `compiler_builtins` do Rust |
+| Cola | `src/glue.c` | cria runtime e contexto, define `console.log/info/debug/error/warn`, `print` e `performance.now()`, avalia como código global **com `await` no topo**, roda a fila de jobs (promises) até esvaziar e relata o que não foi pego: `Uncaught <erro>` com a pilha (`at f (arquivo.js:1:27)`), promises rejeitadas sem tratador, status 1 |
+| Lado Rust | `src/bin/jsrun.rs`, `heap.rs`, `sys.rs` | lê o script (arquivo pelo `kitsune_user::fs`, até 16 MiB, ou a entrada padrão), dá ao C `malloc`/`calloc`/`realloc`/`free`/`malloc_usable_size` sobre o alocador do SDK (cabeçalho de 16 bytes com o tamanho) e as chamadas `kjs_write`, `kjs_utc_ms`, `kjs_tz_offset_secs`, `kjs_uptime_ms`, `kjs_exit` |
+| Build | `user-apps/jsrun/build.rs` | `clang --target=x86_64-unknown-none-elf -ffreestanding -nostdlibinc -O2 -msse2 -fno-pic -fwrapv -fno-math-errno ...` em paralelo; os objetos vão para o linker do Rust. `CLANG` escolhe o compilador. O kernel o embute como os outros (`USER_CRATES`) |
+
+Detalhes que importam:
+
+* **Fronteira Rust/C só com inteiros e ponteiros.** O alvo `x86_64-unknown-none` do Rust é *soft-float*; o C usa
+  SSE2. Um `f64` atravessando a fronteira chegaria no registrador errado, então nenhuma função entre os dois tem
+  `float`/`double` na assinatura (`performance.now()` converte o inteiro dentro do C).
+* **SSE no anel 3.** O kernel liga `CR4.OSFXSR`/`OSXMMEXCPT` e desliga `CR0.EM` no boot (`uvm::enable_sse`, antes do
+  primeiro `fxsave` do escalonador); sem isso o primeiro `movups` dava `#UD`. O kernel continua soft-float; o
+  estado SSE de cada fio já era salvo e restaurado (`sched::FxArea`).
+* **Pilha alinhada.** O `_start` do SDK (`entry!`) passou a ser uma função *naked* que alinha a pilha a 16 bytes e
+  *chama* o `main`: o kernel entra com a pilha alinhada (como o Linux), mas código compilado espera 8 bytes de
+  diferença na entrada de uma função; com o Rust *soft-float* isso nunca aparecia, com o C usando `movaps` na pilha
+  dava `#GP`.
+* **Limites.** Pilha de **4 MiB** (`BIG_STACK`; o QuickJS gasta ~1 KiB de pilha C por chamada JS, então cabem ~3700
+  chamadas aninhadas antes do `RangeError`), heap de até **64 MiB** (`BIG_HEAP`), memória do JS limitada a 48 MiB
+  (`JS_SetMemoryLimit`: estourar vira `InternalError: out of memory`, o processo termina com status 1 e o sistema
+  segue). Pilha e heap maiores valem só para a imagem embutida com aquele nome, não para um arquivo `jsrun.elf`
+  qualquer. A pilha é mapeada inteira na criação (1024 quadros).
+* **Recursão.** O QuickJS para a recursão sem fim com `InternalError("stack overflow")` (como o SpiderMonkey); a cola
+  faz `InternalError` herdar de `RangeError`, então `e instanceof RangeError` vale como no V8 e o código escrito
+  para ele funciona.
+* **Data e hora.** `Date.now()` vem da chamada 9 (UTC); o fuso é `time()` menos ela, arredondado ao quarto de hora
+  (sem horário de verão: o fuso do sistema é um deslocamento fixo).
+* **Saída.** Cada `console.log` é uma chamada `write` (aparece no Terminal e no `serial.log` como `[jsrun:PID] ...`).
+* **Uma corrida corrigida.** Um processo novo podia rodar antes de entrar na tabela de processos (ou achar na tabela
+  o dono anterior da mesma vaga de fio, quando o `reap` liberava a vaga antes de tirar a entrada): as chamadas acham o
+  processo pela vaga, então as primeiras falhavam em silêncio e o `exit` virava "foi interrompido". Agora o
+  `spawn` põe a entrada na tabela na mesma seção crítica que torna o fio executável, e o `reap` libera a vaga e
+  tira a entrada juntas. O W51 pegou isso (um `echo ... | run jsrun` saía morto sem saída).
+
+**Provado em QEMU** (`tools/perf/scen/w51-jsrun.sh`, com `QEMU_MEM=256M`; veredito em `$OUT/verdict.txt`): o
+`--selftest` passa **56/56** verificações (aritmética e conversões número↔texto, `Math` sobre o musl, maiúsculas com
+acento, *astral planes*, `normalize`, template literals, JSON, `Date.now()` plausível e `toISOString`, fuso em minutos
+inteiros, regex com grupos nomeados, `\p{L}`, lookbehind e `matchAll`, classes com campos privados e `super`,
+generators e `yield*`, Map/Set/WeakMap, BigInt, desestruturação, `?.`/`??`, typed arrays e `DataView`, Proxy/Reflect,
+`try/finally`, pilha de erro, promises, `async/await`, `Promise.allSettled`, `for await`, recursão de ~3700 chamadas que
+vira `RangeError` sem derrubar o processo); um arquivo escrito no Terminal (`echo '...' > t.js; run jsrun t.js`); um
+erro não pego (mensagem, pilha, status 1); script pela entrada padrão com `await` no topo; `-e` com BigInt; arquivo
+que não existe; um script que come memória até o limite (exceção, status 1) seguido de outra execução que funciona.
+
+**Velocidade.** Sob QEMU **TCG** (emulação, sem KVM neste ambiente), no `--selftest`: `fib(27)` recursivo
+**300–390 ms**, laço de 5 milhões de somas **2,5–2,9 s**, 100 mil objetos criados e ordenados **~2,9 s**. O mesmo
+QuickJS com o mesmo script, nativo no hospedeiro (Linux, clang -O2, a CPU deste ambiente), faz `fib(27)` em
+**~20 ms**, o laço em **~120 ms** e os objetos em **~85 ms**. O fator de ~15× (cálculo) a ~35× (objetos: muito acesso
+à memória, que é o mais caro de emular) é o custo da emulação TCG, não do motor: em hardware real ou com KVM o
+`jsrun` deve ficar perto dos números do hospedeiro, que são os normais de um interpretador sem JIT (um motor com
+JIT, como o V8, é bem mais rápido nesses laços). O alocador por baixo (`linked_list_allocator` do SDK, primeiro
+encaixe) não foi medido à parte; o QuickJS já agrupa os objetos pequenos em arenas de 4 KiB.
+
+**Ainda não.** `Intl` (datas e números localizados), módulos (`import`), `setTimeout` e qualquer API da web (DOM,
+`fetch`): isso é a etapa 2 do roadmap. O motor ainda não está ligado ao Navegador. Sem `test262`.
 
 ## O que foi provado em QEMU (cenário W43)
 
