@@ -78,6 +78,8 @@ Files split this way, with their children:
 | `windowing/winman` | `lifecycle`, `focus`, `workspaces`, `geometry` (+ `helpers`) |
 | `kernel/trace` | `stats`, `report`, `bench` |
 | `kernel/sched` | `spawn`, `death`, `blocking`, `introspect`, `user` |
+| `kernel/userproc` | `syscall` (entrada `int 0x80`), `host` (módulos WebAssembly), `files` (arquivos, janelas, filhos), `queue` (fila do sistema de arquivos e eventos de janela) |
+| `i18n/audit` (testes) | `scan` (leitor das fontes), `accents` (acentos, idiomas, fontes) |
 | `kernel/wasm/abi2` | `guest`, `hostio`, `pixels` |
 | `kernel/netd` | `mailbox`, `pinger` |
 | `kernel/fetch` | `client`, `thread`, `load` (+ `apps`, `jobs`) |

@@ -12,6 +12,8 @@ renomeio mantêm o nome da época.
   `fs3/mount`, `apps/shell/sys`, `system/settings`, `network/dns`, `windowing/winman`. Kernel: `trace`, `sched`,
   `wasm/abi2`, `netd`, `fetch`, `fb/shapes`. Os `impl` grandes (`Browser`, `FormState`, `Fs3`, `WindowManager`, `Netd`,
   `Canvas`) viraram vários `impl`, um por assunto. O pai de cada um ficou com no máximo ~410 linhas.
+- Depois do merge do `jsrun`: `kernel/userproc` (`syscall`, `host`, `files`, `queue`) e os testes `i18n/audit` (`scan`,
+  `accents`) também foram divididos. Sobraram acima de 600 linhas só arquivos de testes.
 ## 2026-10 — JavaScript em anel 3 (`jsrun`, QuickJS)
 
 - Novo programa **`jsrun`** (`run jsrun arquivo.js`, `-e 'código'`, entrada padrão, `--selftest`): o **QuickJS**
