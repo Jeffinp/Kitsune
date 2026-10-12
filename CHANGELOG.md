@@ -19,7 +19,8 @@ renomeio mantêm o nome da época.
   grandes (a Wikipédia vinha com 15 KB de 72 KB); agora 16 KiB + 256. Índice de regras por tag, classe e id.
 - **`::before`/`::after`** (texto gerado e clearfix), **combinadores de irmão** (`+`, `~`) e um **rasterizador de SVG** próprio
   (`format::svg`) para logos e ícones.
-- Planejado: bloqueador de anúncios nativo, escolhido pela pessoa (`docs/ROADMAP.md`, item 10).
+- **`grid-template-areas`**, `grid-area` e `grid-template: linhas / colunas` (a Wikipédia usa).
+- Planejado: JavaScript e YouTube em etapas (`docs/ROADMAP.md`, item 11); bloqueador de anúncios nativo, escolhido pela pessoa (`docs/ROADMAP.md`, item 10).
 - Ferramentas: `tools/render-page.py` + exemplo `render_page` (renderizam páginas reais no host),
   `tools/fetch-page-css.py`; cenários `w49-browser-css.sh` e `w50-real-site.sh`.
 

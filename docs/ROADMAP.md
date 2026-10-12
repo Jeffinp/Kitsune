@@ -97,6 +97,28 @@ ideia: nada do código nem da marca do Brave). Decisões já tomadas:
   de URLs, e uma cena no QEMU.
 - Ver `docs/design/tls-browser.md` §11.
 
-### 11. Mais adiante: SMP, USB e som
+### 11. JavaScript e YouTube com vídeo e áudio (pedido do dono do projeto; trabalho de meses, em etapas)
+
+Meta: abrir o YouTube, tocar um vídeo com áudio. É a página mais difícil da web de hoje; ela exige, **todas**, as peças
+abaixo, e nenhuma existe ainda. Ordem proposta, cada etapa com aceite próprio:
+
+1. **Motor de JavaScript.** Sem C no kernel, então: QuickJS compilado para WebAssembly rodando no `wasmi` dentro de um
+   processo de anel 3 (o `wasmhost` já existe), isolado e com limites de memória e de tempo. Aceite: o motor roda um
+   conjunto de testes ES2020 (test262 parcial) e um `console.log` na barra de tarefas.
+2. **DOM e APIs da web** sobre o `Doc`: `document`, `querySelector`, eventos, `setTimeout`, `fetch`/`XMLHttpRequest`
+   sobre o `fetcher`, `localStorage`, `history`, cookies (hoje não há). Aceite: uma página com JavaScript que monta a si
+   mesma (um app pequeno de React/Preact) aparece certa.
+3. **Rede para o que o YouTube pede:** cookies, HTTP keep-alive/HTTP/2 se o servidor exigir, CORS, WebSocket.
+4. **Mídia:** Media Source Extensions, decodificadores de vídeo (H.264 e VP9 em Rust puro, em software: a CPU em
+   software de 1080p não dá; 360p/480p é a meta realista) e de áudio (AAC e Opus), `<video>`/`<audio>`, sincronia.
+5. **Som:** driver de áudio (Intel HDA ou AC'97/virtio-snd no QEMU) e mixagem; hoje o sistema não tem som.
+6. **O próprio YouTube:** o player pede dezenas de APIs (Web Workers, `requestAnimationFrame`, `MutationObserver`,
+   `IntersectionObserver`, Canvas, WebAudio, DRM não, mas vários recursos de segurança). Aceite: abrir um vídeo e vê-lo
+   e ouvi-lo por um minuto.
+
+Sem a etapa 1 nada do resto roda; a ordem acima é a mínima. Enquanto isso o navegador continua ganhando o que páginas
+sem JavaScript pedem (itens do §10 do `tls-browser.md`).
+
+### 12. Mais adiante: SMP, USB e som
 Vários núcleos (APIC), prioridades no scheduler, USB (teclado, mouse e armazenamento) e áudio.
 *Aceite:* cada um com sua prova (o desktop usa mais de um núcleo; um teclado USB funciona).

@@ -616,7 +616,36 @@ pub(super) fn apply_decls(c: &mut Computed, decls: &[&Decl], parent_px: i32) {
                     c.flex.order = (n / 1000).clamp(-1000, 1000) as i32;
                 }
             }
-            "grid-template-columns" => c.flex.tracks = Rc::new(parse_tracks(v, em)),
+            "grid-template-columns" => {
+                let t = parse_tracks(v, em);
+                let g = Rc::make_mut(&mut c.flex.tracks);
+                g.cols = t.cols;
+                g.auto_min = t.auto_min;
+            }
+            // `grid-template: <rows> / <columns>` (the rows are not used).
+            "grid-template" => {
+                if let Some((_, cols)) = v.rsplit_once('/') {
+                    let t = parse_tracks(cols, em);
+                    let g = Rc::make_mut(&mut c.flex.tracks);
+                    g.cols = t.cols;
+                    g.auto_min = t.auto_min;
+                }
+            }
+            "grid-template-areas" => {
+                let g = Rc::make_mut(&mut c.flex.tracks);
+                g.areas = parse_areas(v);
+            }
+            "grid-area" => {
+                let n = v.trim();
+                // A single name; the four-line form is not supported.
+                if !n.is_empty()
+                    && !n.contains('/')
+                    && n.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                {
+                    c.flex.area = Some(Rc::from(n));
+                }
+            }
             "grid-column" | "grid-column-start" | "grid-column-end" => {
                 let l = v.to_ascii_lowercase();
                 if let Some(rest) = l.split_whitespace().skip_while(|t| *t != "span").nth(1)

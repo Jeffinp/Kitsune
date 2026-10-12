@@ -492,3 +492,24 @@ fn tracks_into(spec: &mut GridSpec, v: &str, em: i32, depth: u8) {
         }
     }
 }
+
+/// `grid-template-areas`: each quoted string is a row of cell names.
+pub(super) fn parse_areas(v: &str) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+    let mut rest = v;
+    while let Some(open) = rest.find(['"', '\'']) {
+        let q = rest.as_bytes()[open] as char;
+        let Some(close) = rest[open + 1..].find(q) else {
+            break;
+        };
+        let row: Vec<String> = rest[open + 1..open + 1 + close]
+            .split_whitespace()
+            .map(String::from)
+            .collect();
+        if !row.is_empty() && rows.len() < 12 {
+            rows.push(row);
+        }
+        rest = &rest[open + close + 2..];
+    }
+    rows
+}

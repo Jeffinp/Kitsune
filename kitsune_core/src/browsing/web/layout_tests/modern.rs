@@ -376,3 +376,45 @@ fn content_none_and_unsupported_pseudo_elements_add_nothing() {
     );
     assert_eq!(texts(&p), ["a"]);
 }
+
+#[test]
+fn grid_areas_place_boxes_by_name_and_span() {
+    let p = lay(
+        &body0(
+            "<div style=\"display:grid;grid-template-columns:100px 1fr;\
+             grid-template-areas:'head head' 'side main' 'foot foot'\">\
+             <div style='grid-area:foot;background:#040404'>foot</div>\
+             <div style='grid-area:main;background:#030303'>main</div>\
+             <div style='grid-area:head;background:#010101'>head</div>\
+             <div style='grid-area:side;background:#020202'>side</div></div>",
+        ),
+        500,
+    );
+    let r = |n: u8| rect_of(&p, Rgb(n, n, n)).unwrap();
+    // The header spans both columns on the first row, whatever the source order.
+    assert_eq!((r(1).0, r(1).2), (0, 500));
+    assert_eq!((r(2).0, r(2).2), (0, 100));
+    assert_eq!((r(3).0, r(3).2), (100, 400));
+    assert!(r(1).1 < r(2).1 && r(2).1 < r(4).1, "rows in order");
+    assert_eq!(r(2).1, r(3).1, "side and main share a row");
+    assert_eq!((r(4).0, r(4).2), (0, 500));
+}
+
+#[test]
+fn grid_template_shorthand_and_unnamed_items() {
+    let p = lay(
+        &body0(
+            "<div style='display:grid;grid-template:auto / 150px 1fr'>\
+             <div style='background:#010101'>a</div><div style='background:#020202'>b</div>\
+             <div style='background:#030303'>c</div></div>",
+        ),
+        450,
+    );
+    assert_eq!(rect_of(&p, Rgb(1, 1, 1)).unwrap().2, 150);
+    assert_eq!(rect_of(&p, Rgb(2, 2, 2)).unwrap().2, 300);
+    assert_eq!(
+        rect_of(&p, Rgb(3, 3, 3)).unwrap().0,
+        0,
+        "wraps to the next row"
+    );
+}

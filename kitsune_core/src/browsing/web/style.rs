@@ -154,6 +154,8 @@ pub(crate) struct FlexStyle {
     /// Grid: `grid-template-columns`, and how many columns an item spans.
     pub(crate) tracks: Rc<GridSpec>,
     pub(crate) span: u8,
+    /// Grid item: `grid-area: name`.
+    pub(crate) area: Option<Rc<str>>,
 }
 
 impl Default for FlexStyle {
@@ -173,6 +175,7 @@ impl Default for FlexStyle {
             order: 0,
             tracks: Rc::new(GridSpec::default()),
             span: 1,
+            area: None,
         }
     }
 }
@@ -193,6 +196,8 @@ pub(crate) enum Track {
 pub(crate) struct GridSpec {
     pub(crate) cols: Vec<Track>,
     pub(crate) auto_min: Option<i32>,
+    /// `grid-template-areas`: a name per cell (`.` for an empty one), row by row.
+    pub(crate) areas: Vec<Vec<String>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
