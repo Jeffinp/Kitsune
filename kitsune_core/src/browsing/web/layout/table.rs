@@ -64,7 +64,7 @@ impl Table<'_> {
 
 /// The unbreakable and the unwrapped width of some inline content.
 #[derive(Default)]
-struct Intr {
+pub(super) struct Intr {
     /// Width of the current run (since the last forced break), q8.
     cur: i32,
     max: i32,
@@ -78,12 +78,12 @@ impl Intr {
     }
 }
 
-fn sat(a: i32, b: i32) -> i32 {
+pub(super) fn sat(a: i32, b: i32) -> i32 {
     a.saturating_add(b).clamp(0, 1 << 26)
 }
 
 /// Measure `nodes` (the content of a cell or block): into `acc`, q8 pixels.
-fn intrinsic<'a>(
+pub(super) fn intrinsic<'a>(
     p: &mut Painter<'a>,
     nodes: &'a [Node],
     parent: &Computed,
@@ -162,34 +162,9 @@ fn intrinsic<'a>(
                     },
                     _ => {
                         acc.end_run();
-                        let mut sub = Intr::default();
-                        if c.display == Disp::Table {
-                            let t = collect(p, el, &c);
-                            let (lo, hi) = t.totals();
-                            sub.min = lo.saturating_mul(Q);
-                            sub.max = hi.saturating_mul(Q);
-                        } else {
-                            p.anc.push(el);
-                            intrinsic(p, &el.children, &c, &mut sub, depth + 1);
-                            p.anc.pop();
-                            sub.end_run();
-                        }
-                        let zoom = p.zoom;
-                        let ex = (side(c.padding[1], 0, zoom)
-                            + side(c.padding[3], 0, zoom)
-                            + side(c.margin[1], 0, zoom).max(0)
-                            + side(c.margin[3], 0, zoom).max(0)
-                            + c.border_w[1]
-                            + c.border_w[3])
-                            .max(0)
-                            .saturating_mul(Q);
-                        if let Len::Px(w) = c.width {
-                            let w = p.z(w).saturating_mul(Q);
-                            sub.max = w;
-                            sub.min = sub.min.min(w);
-                        }
-                        acc.min = acc.min.max(sat(sub.min, ex));
-                        acc.max = acc.max.max(sat(sub.max, ex));
+                        let (mn, mx) = outer_intr(p, el, &c, depth + 1);
+                        acc.min = acc.min.max(mn);
+                        acc.max = acc.max.max(mx);
                     }
                 }
             }
@@ -197,8 +172,117 @@ fn intrinsic<'a>(
     }
 }
 
+/// The narrowest and widest the content of `el` (style `c`) can be, q8 pixels, padding and border
+/// not included. A flex row is the sum of its boxes, a grid the widest of its rows, a table its
+/// columns; any other block the widest of its lines. `p.anc` must end with the parents of `el`.
+pub(super) fn content_intr<'a>(
+    p: &mut Painter<'a>,
+    el: &'a Element,
+    c: &Computed,
+    depth: u32,
+) -> (i32, i32) {
+    if depth > MAX_MEASURE_DEPTH {
+        return (0, 0);
+    }
+    match el.tag.as_str() {
+        "img" => {
+            let (w, _) = img_extent(p, el, c);
+            let q = w.saturating_mul(Q);
+            return (q, q);
+        }
+        "input" | "button" => {
+            let q = control_width(p, el).saturating_mul(Q);
+            return (q, q);
+        }
+        _ => {}
+    }
+    if c.display == Disp::Table {
+        let t = collect(p, el, c);
+        let (lo, hi) = t.totals();
+        return (lo.saturating_mul(Q), hi.saturating_mul(Q));
+    }
+    p.anc.push(el);
+    let out = if matches!(c.display, Disp::Flex | Disp::Grid)
+        && (c.display == Disp::Grid || c.flex.row)
+    {
+        // The boxes of the container, each with its margins.
+        let mut kids: Vec<(i32, i32)> = Vec::new();
+        for node in &el.children {
+            match node {
+                Node::Text(t) if t.chars().all(|ch| ch.is_whitespace()) => {}
+                Node::Text(_) => {
+                    let mut a = Intr::default();
+                    intrinsic(p, core::slice::from_ref(node), c, &mut a, depth + 1);
+                    a.end_run();
+                    kids.push((a.min, a.max));
+                }
+                Node::Element(e) => {
+                    let ec = compute(e, p.sheet, c, &p.anc, &mut p.budget);
+                    if ec.display != Disp::None && kids.len() < 400 {
+                        kids.push(outer_intr(p, e, &ec, depth + 1));
+                    }
+                }
+            }
+        }
+        let gap = p.z(c.flex.gap_col).saturating_mul(Q);
+        if c.display == Disp::Grid {
+            let n = c.flex.tracks.cols.len().max(1);
+            let (mut max, mut min) = (0, 0);
+            for row in kids.chunks(n) {
+                let sum = row.iter().fold(0i32, |s, k| sat(s, k.1));
+                max = max.max(sat(sum, gap.saturating_mul(row.len() as i32 - 1)));
+                min = row.iter().fold(min, |m, k| m.max(k.0));
+            }
+            (min, max)
+        } else {
+            let n = kids.len() as i32;
+            let gaps = gap.saturating_mul((n - 1).max(0));
+            let max = kids.iter().fold(0i32, |s, k| sat(s, k.1));
+            let min = if c.flex.wrap {
+                kids.iter().fold(0, |m, k| m.max(k.0))
+            } else {
+                kids.iter().fold(0i32, |s, k| sat(s, k.0))
+            };
+            (sat(min, gaps), sat(max, gaps))
+        }
+    } else {
+        let mut sub = Intr::default();
+        intrinsic(p, &el.children, c, &mut sub, depth + 1);
+        sub.end_run();
+        (sub.min, sub.max)
+    };
+    p.anc.pop();
+    out
+}
+
+/// [`content_intr`] plus the box around it: padding, border and margins, and a `width` in pixels
+/// when given (q8 pixels).
+pub(super) fn outer_intr<'a>(
+    p: &mut Painter<'a>,
+    el: &'a Element,
+    c: &Computed,
+    depth: u32,
+) -> (i32, i32) {
+    let (mut mn, mut mx) = content_intr(p, el, c, depth);
+    let zoom = p.zoom;
+    let ex = (side(c.padding[1], 0, zoom)
+        + side(c.padding[3], 0, zoom)
+        + side(c.margin[1], 0, zoom).max(0)
+        + side(c.margin[3], 0, zoom).max(0)
+        + c.border_w[1]
+        + c.border_w[3])
+        .max(0)
+        .saturating_mul(Q);
+    if let Len::Px(w) = c.width {
+        let w = p.z(w).saturating_mul(Q);
+        mx = w;
+        mn = mn.min(w);
+    }
+    (sat(mn, ex), sat(mx, ex))
+}
+
 /// Width of an `<img>` (box and all) for measuring: the declared or natural width.
-fn img_extent(p: &Painter, el: &Element, c: &Computed) -> (i32, i32) {
+pub(super) fn img_extent(p: &Painter, el: &Element, c: &Computed) -> (i32, i32) {
     let src = decode_attr(el.attrs.get("src").map(String::as_str).unwrap_or(""));
     let state = if src.trim().is_empty() {
         ImgState::Failed
@@ -214,7 +298,7 @@ fn img_extent(p: &Painter, el: &Element, c: &Computed) -> (i32, i32) {
 }
 
 /// Width of a form control for measuring (kind from its attributes).
-fn control_width(p: &Painter, el: &Element) -> i32 {
+pub(super) fn control_width(p: &Painter, el: &Element) -> i32 {
     let ty = el
         .attrs
         .get("type")
@@ -382,7 +466,8 @@ fn measure_columns<'a>(p: &mut Painter<'a>, t: &mut Table<'a>) {
                     min = min.min(w);
                 }
                 Len::Pct(v) => pct = Some(v.clamp(1, 100)),
-                Len::Auto => {}
+                // `calc()` widths: sized by content, like `auto`.
+                Len::Calc { .. } | Len::Auto => {}
             }
             let cell = &mut t.rows[ri].cells[ci];
             cell.min = min;
@@ -660,7 +745,7 @@ pub(super) fn layout<'a>(
     y
 }
 
-fn shift_cmd(cmd: &mut Cmd, dy: i32) {
+pub(super) fn shift_cmd(cmd: &mut Cmd, dy: i32) {
     match cmd {
         Cmd::Rect { y, .. }
         | Cmd::Border { y, .. }

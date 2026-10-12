@@ -6,8 +6,11 @@
 //! or a pseudo-element never matches, so it cannot restyle the wrong elements.
 
 use super::dom::Element;
+
+mod media;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+pub use media::{DEFAULT_H, DEFAULT_W, Media, set_viewport, viewport_h, viewport_w};
 
 // ---- CSS ----
 
@@ -17,11 +20,11 @@ use alloc::vec::Vec;
 /// the cost. With `MAX_NODES` elements this bounds the whole cascade to a few
 /// million selector tests. Later rules are dropped (document order is cascade
 /// order, so the page keeps its earliest, usually most structural, rules).
-pub const MAX_RULES: usize = 1_000;
+pub const MAX_RULES: usize = 6_000;
 
 /// Maximum selectors summed over all rules of one stylesheet: a single rule
 /// with a huge comma list would otherwise dodge [`MAX_RULES`].
-pub const MAX_SELECTORS: usize = 2_000;
+pub const MAX_SELECTORS: usize = 12_000;
 
 /// Longest compound chain of a selector (`a b > c d` is 4).
 pub const MAX_COMPOUNDS: usize = 5;
@@ -36,6 +39,10 @@ const MAX_CSS_BYTES: usize = 512 * 1024;
 #[derive(Debug, Default)]
 pub struct Stylesheet {
     pub rules: Vec<Rule>,
+    /// The conditions of the `@media` blocks, referred to by [`Rule::media`].
+    pub medias: Vec<Media>,
+    /// Addresses of the `@import`ed sheets, in order.
+    pub imports: Vec<String>,
     /// Per element name, the indices (in rule order) of the rules that can match it: those
     /// whose selectors name it plus those that name nothing. Empty until [`build_index`].
     by_tag: alloc::collections::BTreeMap<String, Vec<u32>>,
@@ -76,6 +83,15 @@ impl Stylesheet {
         self.indexed = true;
     }
 
+    /// Does `rule` apply on a screen as wide as the current viewport?
+    pub fn rule_applies(&self, rule: &Rule) -> bool {
+        rule.media == 0
+            || self
+                .medias
+                .get(usize::from(rule.media) - 1)
+                .is_some_and(|m| m.matches(viewport_w(), viewport_h()))
+    }
+
     /// Indices of the rules worth testing for an element called `tag`, in rule order; `None`
     /// when the sheet was not indexed (test them all).
     pub fn candidates(&self, tag: &str) -> Option<&[u32]> {
@@ -93,6 +109,8 @@ pub struct Rule {
     /// From the page (true) or from the user-agent sheet (false). Presentational attributes
     /// beat the second kind and lose to the first.
     pub author: bool,
+    /// `1 + index` into [`Stylesheet::medias`] when the rule sits in an `@media` block (0 = always).
+    pub media: u16,
 }
 
 /// How an attribute selector compares.
@@ -145,13 +163,96 @@ impl AttrSel {
     }
 }
 
-/// One compound selector: `tag#id.class[attr]`.
+/// A pseudo-class the engine can answer from the element and its place among its siblings.
+#[derive(Debug, Clone)]
+pub enum Pseudo {
+    /// `:nth-child(an+b)` (`first-child` is `0n+1`, `last-child` is `nth-last-child(1)`).
+    Nth {
+        a: i32,
+        b: i32,
+        last: bool,
+        of_type: bool,
+    },
+    OnlyChild,
+    Empty,
+    /// `:link`: an anchor with an address.
+    Link,
+    /// `:checked`, `:disabled`, `:enabled`: from the attributes.
+    Checked,
+    Disabled,
+    Enabled,
+    /// `:not(...)`: none of the compounds match.
+    Not(Vec<Compound>),
+    /// `:is(...)` / `:where(...)`: one of the compounds matches.
+    Any(Vec<Compound>),
+}
+
+impl Pseudo {
+    fn matches(&self, el: &Element) -> bool {
+        match self {
+            Pseudo::Nth {
+                a,
+                b,
+                last,
+                of_type,
+            } => {
+                let (idx, cnt) = if *of_type {
+                    (el.sib.tindex, el.sib.tcount)
+                } else {
+                    (el.sib.index, el.sib.count)
+                };
+                if idx == 0 {
+                    return false;
+                }
+                let pos = if *last { cnt - idx + 1 } else { idx };
+                nth_matches(*a, *b, i32::from(pos))
+            }
+            Pseudo::OnlyChild => el.sib.count == 1,
+            Pseudo::Empty => el.children.is_empty(),
+            Pseudo::Link => {
+                matches!(el.tag.as_str(), "a" | "area") && el.attrs.contains_key("href")
+            }
+            Pseudo::Checked => {
+                el.attrs.contains_key("checked") || el.attrs.contains_key("selected")
+            }
+            Pseudo::Disabled => el.attrs.contains_key("disabled"),
+            Pseudo::Enabled => {
+                matches!(el.tag.as_str(), "input" | "button" | "select" | "textarea")
+                    && !el.attrs.contains_key("disabled")
+            }
+            Pseudo::Not(list) => !list.iter().any(|c| c.matches(el)),
+            Pseudo::Any(list) => list.iter().any(|c| c.matches(el)),
+        }
+    }
+
+    fn specificity(&self) -> (usize, usize, usize) {
+        match self {
+            Pseudo::Not(l) => l.iter().map(|c| c.specificity()).max().unwrap_or((0, 0, 0)),
+            // `:where()` should count for nothing and `:is()` for its strongest argument; both are
+            // rare enough that the second reading serves.
+            Pseudo::Any(l) => l.iter().map(|c| c.specificity()).max().unwrap_or((0, 0, 0)),
+            _ => (0, 1, 0),
+        }
+    }
+}
+
+/// Does position `pos` (1-based) satisfy `an + b` for some `n >= 0`?
+fn nth_matches(a: i32, b: i32, pos: i32) -> bool {
+    if a == 0 {
+        return pos == b;
+    }
+    let d = pos - b;
+    d % a == 0 && d / a >= 0
+}
+
+/// One compound selector: `tag#id.class[attr]:pseudo`.
 #[derive(Debug, Default, Clone)]
 pub struct Compound {
     pub tag: Option<String>,
     pub id: Option<String>,
     pub classes: Vec<String>,
     pub attrs: Vec<AttrSel>,
+    pub pseudos: Vec<Pseudo>,
 }
 
 impl Compound {
@@ -172,15 +273,20 @@ impl Compound {
                 return false;
             }
         }
-        self.attrs.iter().all(|a| a.matches(el))
+        self.attrs.iter().all(|a| a.matches(el)) && self.pseudos.iter().all(|p| p.matches(el))
     }
 
     fn specificity(&self) -> Specificity {
-        (
+        let mut s = (
             usize::from(self.id.is_some()),
             self.classes.len() + self.attrs.len(),
             usize::from(self.tag.as_deref().is_some_and(|t| t != "*")),
-        )
+        );
+        for p in &self.pseudos {
+            let q = p.specificity();
+            s = (s.0 + q.0, s.1 + q.1, s.2 + q.2);
+        }
+        s
     }
 }
 
@@ -201,6 +307,7 @@ pub struct Selector {
     pub id: Option<String>,
     pub classes: Vec<String>,
     pub attrs: Vec<AttrSel>,
+    pub pseudos: Vec<Pseudo>,
     /// Compounds to the left, nearest first, with how each relates to the one to its right.
     pub ancestors: Vec<(Comb, Compound)>,
 }
@@ -222,6 +329,10 @@ impl Selector {
             self.classes.len() + self.attrs.len(),
             usize::from(self.tag.as_deref().is_some_and(|t| t != "*")),
         );
+        for p in &self.pseudos {
+            let q = p.specificity();
+            s = (s.0 + q.0, s.1 + q.1, s.2 + q.2);
+        }
         for (_, c) in &self.ancestors {
             let a = c.specificity();
             s = (s.0 + a.0, s.1 + a.1, s.2 + a.2);
@@ -247,7 +358,7 @@ impl Selector {
                 return false;
             }
         }
-        self.attrs.iter().all(|a| a.matches(el))
+        self.attrs.iter().all(|a| a.matches(el)) && self.pseudos.iter().all(|p| p.matches(el))
     }
 
     /// Does this selector match `el`, whose ancestors are `anc` (outermost first,
@@ -305,19 +416,41 @@ fn strip_comments(input: &str) -> String {
 }
 
 /// Parse a stylesheet. Tolerant: malformed rules and unsupported `@` rules are
-/// skipped without aborting the parse.
+/// skipped without aborting the parse. `@media` blocks keep their rules with the condition
+/// ([`Media`]), checked against the viewport at layout time; `@supports` and `@layer` blocks are
+/// read as if their content stood alone.
 pub fn parse_css(input: &str) -> Stylesheet {
     let mut end = input.len().min(MAX_CSS_BYTES);
     while !input.is_char_boundary(end) {
         end -= 1;
     }
     let text = strip_comments(&input[..end]);
-    let b = text.as_bytes();
+    let mut st = ParseState::default();
+    parse_into(text.as_bytes(), 0, 0, &mut st);
+    Stylesheet {
+        rules: st.rules,
+        medias: st.medias,
+        imports: st.imports,
+        ..Default::default()
+    }
+}
+
+#[derive(Default)]
+struct ParseState {
+    rules: Vec<Rule>,
+    selector_total: usize,
+    medias: Vec<Media>,
+    imports: Vec<String>,
+}
+
+/// Deepest nesting of `@media` / `@supports` / `@layer` honoured.
+const MAX_AT_DEPTH: u8 = 3;
+
+/// Rules of `b` (the text of a sheet or of an `@media` block), tagged with `media`.
+fn parse_into(b: &[u8], media: u16, depth: u8, st: &mut ParseState) {
     let mut i = 0;
-    let mut rules = Vec::new();
-    let mut selector_total = 0usize;
     while i < b.len() {
-        if rules.len() >= MAX_RULES || selector_total >= MAX_SELECTORS {
+        if st.rules.len() >= MAX_RULES || st.selector_total >= MAX_SELECTORS {
             break;
         }
         i = skip_css_ws(b, i);
@@ -325,8 +458,61 @@ pub fn parse_css(input: &str) -> Stylesheet {
             break;
         }
         if b[i] == b'@' {
-            // Skip @import; (to ';') or @media {...} (to matching '}').
-            i = skip_at_rule(b, i);
+            let start = i;
+            let end = skip_at_rule(b, i);
+            let at = &b[start..end];
+            let name_end = at[1..]
+                .iter()
+                .position(|c| !c.is_ascii_alphabetic() && *c != b'-')
+                .map_or(at.len(), |p| p + 1);
+            let name = core::str::from_utf8(&at[1..name_end])
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let open = at.iter().position(|&c| c == b'{');
+            match (name.as_str(), open) {
+                ("import", None) => {
+                    let prelude = core::str::from_utf8(&at[name_end..]).unwrap_or("");
+                    if let Some(url) = import_url(prelude)
+                        && st.imports.len() < 16
+                    {
+                        st.imports.push(url);
+                    }
+                }
+                ("supports", Some(o))
+                    if core::str::from_utf8(&at[name_end..o])
+                        .unwrap_or("")
+                        .trim_start()
+                        .starts_with("not") => {}
+                ("media" | "supports" | "layer", Some(o)) if depth < MAX_AT_DEPTH => {
+                    let prelude = core::str::from_utf8(&at[name_end..o]).unwrap_or("");
+                    let inner_end = at.iter().rposition(|&c| c == b'}').unwrap_or(at.len());
+                    let inner = &at[(o + 1).min(inner_end)..inner_end];
+                    let m = match name.as_str() {
+                        "media" => match Media::parse(prelude) {
+                            Some(m) if st.medias.len() < usize::from(u16::MAX) - 1 => {
+                                st.medias.push(m);
+                                Some(st.medias.len() as u16)
+                            }
+                            _ => None,
+                        },
+                        // `@supports (...)`: every property we know is supported often enough.
+                        // `@layer name { ... }`: the order of layers is not modelled.
+                        _ => Some(media),
+                    };
+                    if let Some(m) = m {
+                        // A nested `@media` inside another one needs both: keep the inner
+                        // condition only when the outer is none (the common case).
+                        let tag = if media != 0 && name == "media" {
+                            media
+                        } else {
+                            m
+                        };
+                        parse_into(inner, tag, depth + 1, st);
+                    }
+                }
+                _ => {}
+            }
+            i = end;
             continue;
         }
         // Selector list up to '{'.
@@ -345,30 +531,65 @@ pub fn parse_css(input: &str) -> Stylesheet {
         let sel_text = core::str::from_utf8(&b[sel_start..i]).unwrap_or("");
         i += 1; // '{'
         let decl_start = i;
-        while i < b.len() && b[i] != b'}' {
+        // The block ends at the '}' outside quotes and parentheses (`url(data:...;base64,...)`).
+        let (mut depth_p, mut quote) = (0i32, 0u8);
+        while i < b.len() {
+            let c = b[i];
+            if quote != 0 {
+                if c == b'\\' {
+                    i += 1;
+                } else if c == quote {
+                    quote = 0;
+                }
+            } else {
+                match c {
+                    b'"' | b'\'' => quote = c,
+                    b'(' => depth_p += 1,
+                    b')' => depth_p = (depth_p - 1).max(0),
+                    b'}' if depth_p == 0 => break,
+                    _ => {}
+                }
+            }
             i += 1;
         }
-        let decl_text = core::str::from_utf8(&b[decl_start..i]).unwrap_or("");
+        let decl_text = core::str::from_utf8(&b[decl_start..i.min(b.len())]).unwrap_or("");
         if i < b.len() {
             i += 1; // '}'
         }
         let mut selectors = parse_selectors(sel_text);
         // Keep only as many selectors as the sheet-wide budget has left.
-        selectors.truncate(MAX_SELECTORS - selector_total);
+        selectors.truncate(MAX_SELECTORS - st.selector_total);
         let decls = parse_decls(decl_text);
         if !selectors.is_empty() && !decls.is_empty() {
-            selector_total += selectors.len();
-            rules.push(Rule {
+            st.selector_total += selectors.len();
+            st.rules.push(Rule {
                 selectors,
                 decls,
                 author: true,
+                media,
             });
         }
     }
-    Stylesheet {
-        rules,
-        ..Default::default()
+}
+
+/// The address in `@import url(x.css) screen;` or `@import "x.css";` (screen-compatible imports only).
+fn import_url(prelude: &str) -> Option<String> {
+    let p = prelude.trim().trim_end_matches(';').trim();
+    let (url, rest) = if let Some(r) = p.strip_prefix("url(") {
+        let close = r.find(')')?;
+        (r[..close].trim(), r[close + 1..].trim())
+    } else {
+        let q = p.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+        let r = &p[1..];
+        let close = r.find(q)?;
+        (&r[..close], r[close + 1..].trim())
+    };
+    let url = url.trim_matches(|c| c == '"' || c == '\'');
+    // A condition after the address (`print`, `(min-width: ...)`): only when it can hold on a screen.
+    if !rest.is_empty() && Media::parse(rest).is_none_or(|m| !m.matches(DEFAULT_W, DEFAULT_H)) {
+        return None;
     }
+    (!url.is_empty()).then(|| url.to_string())
 }
 
 fn skip_css_ws(b: &[u8], mut i: usize) -> usize {
@@ -403,9 +624,28 @@ fn skip_at_rule(b: &[u8], mut i: usize) -> usize {
     i
 }
 
+/// Split a selector list at the commas outside parentheses (`a:not(.b, .c), d`).
+fn split_commas(s: &str) -> Vec<&str> {
+    let (mut depth, mut start) = (0i32, 0usize);
+    let mut out = Vec::new();
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = (depth - 1).max(0),
+            ',' if depth == 0 => {
+                out.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&s[start..]);
+    out
+}
+
 fn parse_selectors(text: &str) -> Vec<Selector> {
     let mut out = Vec::new();
-    for part in text.split(',') {
+    for part in split_commas(text) {
         let part = part.trim();
         if part.is_empty() || part.len() > MAX_SELECTOR_LEN {
             continue;
@@ -461,6 +701,7 @@ fn parse_complex_selector(s: &str) -> Option<Selector> {
         id: last.id,
         classes: last.classes,
         attrs: last.attrs,
+        pseudos: last.pseudos,
         ancestors,
     })
 }
@@ -503,23 +744,134 @@ fn parse_compound(s: &str) -> Option<(Compound, usize)> {
                 i = close + 1;
             }
             b':' => {
-                // `:root` is the one pseudo-class we can answer.
-                if s[i..].starts_with(":root") && c.tag.is_none() {
-                    c.tag = Some("html".to_string());
-                    i += 5;
-                } else {
-                    return None;
-                }
+                i += parse_pseudo(&s[i..], &mut c)?;
             }
             c if c.is_ascii_whitespace() || c == b'>' => break,
             b'+' | b'~' | b',' => return None,
             _ => return None,
         }
     }
-    if c.tag.is_none() && c.id.is_none() && c.classes.is_empty() && c.attrs.is_empty() {
+    if c.tag.is_none()
+        && c.id.is_none()
+        && c.classes.is_empty()
+        && c.attrs.is_empty()
+        && c.pseudos.is_empty()
+    {
         return None;
     }
     Some((c, i))
+}
+
+/// A pseudo-class at the start of `s` (which begins with `:`), added to `c`; returns the bytes
+/// used. `None` for pseudo-elements and for what a static page can never match (`:hover`...), so
+/// the whole selector is dropped.
+fn parse_pseudo(s: &str, c: &mut Compound) -> Option<usize> {
+    let b = s.as_bytes();
+    if b.get(1) == Some(&b':') {
+        return None; // a pseudo-element
+    }
+    let mut n = 1;
+    while n < b.len() && (b[n].is_ascii_alphanumeric() || b[n] == b'-') {
+        n += 1;
+    }
+    let name = s[1..n].to_ascii_lowercase();
+    // Arguments in parentheses.
+    let mut arg: Option<&str> = None;
+    if b.get(n) == Some(&b'(') {
+        let mut depth = 0;
+        let mut end = None;
+        for (k, ch) in s[n..].char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(n + k);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let end = end?;
+        arg = Some(&s[n + 1..end]);
+        n = end + 1;
+    }
+    let nth = |a: i32, b: i32, last: bool, of_type: bool| Pseudo::Nth {
+        a,
+        b,
+        last,
+        of_type,
+    };
+    let p = match (name.as_str(), arg) {
+        ("root", None) if c.tag.is_none() => {
+            c.tag = Some("html".to_string());
+            return Some(n);
+        }
+        ("first-child", None) => nth(0, 1, false, false),
+        ("last-child", None) => nth(0, 1, true, false),
+        ("first-of-type", None) => nth(0, 1, false, true),
+        ("last-of-type", None) => nth(0, 1, true, true),
+        ("only-child", None) => Pseudo::OnlyChild,
+        ("empty", None) => Pseudo::Empty,
+        ("link" | "any-link", None) => Pseudo::Link,
+        ("checked", None) => Pseudo::Checked,
+        ("disabled", None) => Pseudo::Disabled,
+        ("enabled", None) => Pseudo::Enabled,
+        ("nth-child" | "nth-last-child" | "nth-of-type" | "nth-last-of-type", Some(a)) => {
+            let (a, b) = parse_nth(a)?;
+            nth(a, b, name.contains("last"), name.ends_with("of-type"))
+        }
+        ("not" | "is" | "where" | "matches", Some(list)) => {
+            let mut comps = Vec::new();
+            for part in split_commas(list) {
+                let part = part.trim();
+                let (comp, used) = parse_compound(part)?;
+                if used != part.len() || comps.len() >= 8 {
+                    return None;
+                }
+                comps.push(comp);
+            }
+            if name == "not" {
+                Pseudo::Not(comps)
+            } else {
+                Pseudo::Any(comps)
+            }
+        }
+        _ => return None,
+    };
+    c.pseudos.push(p);
+    Some(n)
+}
+
+/// `an+b`, `odd`, `even`, `3`, `-n+2`.
+fn parse_nth(s: &str) -> Option<(i32, i32)> {
+    let t: String = s
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    match t.as_str() {
+        "odd" => return Some((2, 1)),
+        "even" => return Some((2, 0)),
+        _ => {}
+    }
+    if let Some(npos) = t.find('n') {
+        let a = match &t[..npos] {
+            "" | "+" => 1,
+            "-" => -1,
+            v => v.parse().ok()?,
+        };
+        let rest = &t[npos + 1..];
+        let b = if rest.is_empty() {
+            0
+        } else {
+            rest.parse().ok()?
+        };
+        Some((a, b))
+    } else {
+        Some((0, t.parse().ok()?))
+    }
 }
 
 fn parse_attr(inner: &str) -> Option<AttrSel> {
@@ -563,6 +915,40 @@ fn parse_attr(inner: &str) -> Option<AttrSel> {
     })
 }
 
+/// The declarations of a block: split at the `;` that sit outside parentheses and quotes.
+fn split_decls(text: &str) -> Vec<&str> {
+    let b = text.as_bytes();
+    let (mut start, mut depth, mut quote) = (0usize, 0i32, 0u8);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if quote != 0 {
+            if c == b'\\' {
+                i += 1;
+            } else if c == quote {
+                quote = 0;
+            }
+        } else {
+            match c {
+                b'"' | b'\'' => quote = c,
+                b'(' => depth += 1,
+                b')' => depth = (depth - 1).max(0),
+                b';' if depth == 0 => {
+                    out.push(&text[start..i]);
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    if start < text.len() {
+        out.push(&text[start..]);
+    }
+    out
+}
+
 pub(crate) fn parse_decls(text: &str) -> Vec<Decl> {
     let text = if text.contains("/*") {
         strip_comments(text)
@@ -570,7 +956,7 @@ pub(crate) fn parse_decls(text: &str) -> Vec<Decl> {
         String::from(text)
     };
     let mut out = Vec::new();
-    for chunk in text.split(';') {
+    for chunk in split_decls(&text) {
         let chunk = chunk.trim();
         if chunk.is_empty() {
             continue;

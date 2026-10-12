@@ -126,6 +126,62 @@ impl Desktop {
         result
     }
 
+    /// The next style sheet of the page that has to be downloaded, if the fetcher is free: copies its
+    /// URL into `out` and returns the length. Sheets go before pictures: they change the layout.
+    pub fn browser_next_sheet(&mut self, out: &mut [u8]) -> Option<usize> {
+        let id = self.browser_id()?;
+        let b = self.browser_state_mut(id)?;
+        if b.sheet_inflight.is_some() {
+            return None;
+        }
+        let BrowserState {
+            tabs,
+            sheet_inflight,
+            ..
+        } = &mut *b;
+        let t = tabs.active_mut();
+        t.page.as_ref()?;
+        let key = t.sheets.next_pending()?;
+        let n = key.len().min(out.len());
+        out[..n].copy_from_slice(&key.as_bytes()[..n]);
+        *sheet_inflight = Some((t.id, key));
+        Some(n)
+    }
+
+    /// A style sheet request finished (`None`: it failed): add its rules to the page and lay the
+    /// page out again.
+    pub fn browser_sheet_done(&mut self, css: Option<alloc::vec::Vec<u8>>) {
+        let Some(id) = self.browser_id() else {
+            return;
+        };
+        let Some(rect) = self.browser_win_rect(id) else {
+            return;
+        };
+        let Some(b) = self.browser_state_mut(id) else {
+            return;
+        };
+        let content = b.chrome(rect).content;
+        let Some((tid, key)) = b.sheet_inflight.take() else {
+            return;
+        };
+        let active_id = b.tabs.active().id;
+        let BrowserState { tabs, images, .. } = &mut *b;
+        let Some(t) = tabs.iter_mut().find(|t| t.id == tid) else {
+            return;
+        };
+        let text = css.map(|c| alloc::string::String::from_utf8_lossy(&c).into_owned());
+        let Some(doc) = t.doc.as_mut() else {
+            return;
+        };
+        if t.sheets.finish(doc, &key, text.as_deref()) && tid == active_id {
+            // The styles changed what is shown (and which pictures): lay out as for a new page.
+            layout_browser(t, images, content.w, true);
+            let max = t.page.as_ref().map_or(0, |p| (p.height - content.h).max(0));
+            clamp_scroll(t, max);
+        }
+        b.touch();
+    }
+
     /// A picture request finished: store it and lay the page out again (images change sizes).
     pub fn browser_image_done(
         &mut self,

@@ -105,10 +105,16 @@ static RESULT: RacyCell<Option<FetchResult>> = RacyCell::new(None);
 static REQ_KIND: AtomicU8 = AtomicU8::new(KIND_PAGE);
 const KIND_PAGE: u8 = 0;
 const KIND_IMAGE: u8 = 1;
+/// One style sheet of a page (the body comes back as bytes).
+const KIND_SHEET: u8 = 2;
 /// Column width the downloaded picture is scaled to (image requests).
 static REQ_FIT_W: AtomicUsize = AtomicUsize::new(0);
 /// Outcome of the last image request (decoded on the fetcher thread, so the UI never waits).
 static IMG_RESULT: RacyCell<Option<Result<ImgLoaded, ImgFail>>> = RacyCell::new(None);
+/// Outcome of the last style sheet request: its body, or `None` when it failed.
+static SHEET_RESULT: RacyCell<Option<Option<Vec<u8>>>> = RacyCell::new(None);
+/// Largest style sheet taken (bytes, headers included).
+const SHEET_CAP: usize = 320 * 1024;
 
 /// A fetched page plus what the browser needs to describe it honestly.
 pub struct Loaded {
@@ -175,6 +181,12 @@ pub fn try_post_image(url: &[u8], insecure_host: &[u8], fit_w: usize) -> bool {
     post(url, insecure_host, KIND_IMAGE, fit_w, None)
 }
 
+/// Queue the download of one style sheet of the page being shown; collect it with
+/// [`take_sheet_result`].
+pub fn try_post_sheet(url: &[u8], insecure_host: &[u8]) -> bool {
+    post(url, insecure_host, KIND_SHEET, 0, None)
+}
+
 fn post(url: &[u8], insecure_host: &[u8], kind: u8, fit_w: usize, body: Option<&[u8]>) -> bool {
     if worker_dead() {
         return false;
@@ -188,6 +200,16 @@ fn post(url: &[u8], insecure_host: &[u8], kind: u8, fit_w: usize, body: Option<&
     }
     WHO.store(WHO_BROWSER, Ordering::Release);
     if OFFLINE.load(Ordering::Acquire) {
+        if kind == KIND_SHEET {
+            // SAFETY: this client holds the slot (CLAIMED, won above) and no worker exists (OFFLINE);
+            // published by the Release store of DONE.
+            unsafe {
+                *SHEET_RESULT.get() = Some(None);
+            }
+            REQ_KIND.store(KIND_SHEET, Ordering::Relaxed);
+            STATE.store(DONE, Ordering::Release);
+            return true;
+        }
         if kind == KIND_IMAGE {
             // SAFETY: this client holds the slot (CLAIMED, won above) and no worker exists (OFFLINE);
             // published by the Release store of DONE.
@@ -279,6 +301,29 @@ pub fn take_image_result() -> Option<Result<ImgLoaded, ImgFail>> {
     Some(r.unwrap_or(Err(ImgFail::Failed)))
 }
 
+/// If a style sheet request has finished, return its body (`None` = it failed) and reset to idle.
+pub fn take_sheet_result() -> Option<Option<Vec<u8>>> {
+    if WHO.load(Ordering::Acquire) != WHO_BROWSER {
+        return None;
+    }
+    let state = STATE.load(Ordering::Acquire);
+    if REQ_KIND.load(Ordering::Relaxed) != KIND_SHEET {
+        return None;
+    }
+    if matches!(state, REQUESTED | RUNNING) && worker_dead() {
+        STATE.store(WORKER_DEAD, Ordering::Release);
+        return Some(None);
+    }
+    if state != DONE {
+        return None;
+    }
+    // SAFETY: STATE == DONE (Acquire): the worker finished writing SHEET_RESULT and will not touch it
+    // until the compositor sets IDLE below (the compositor is the only caller).
+    let r = unsafe { (*SHEET_RESULT.get()).take() };
+    STATE.store(IDLE, Ordering::Release);
+    Some(r.flatten())
+}
+
 /// Worker thread entry. Processes one queued request at a time and, while idle,
 /// is *blocked* in the scheduler (it costs no time slice at all) until
 /// [`try_post`] wakes it.
@@ -323,7 +368,18 @@ pub extern "C" fn worker() -> ! {
             // SAFETY: NET is set once, before this thread exists (`fetch::init`), and used only by this
             // worker, one request at a time, so the `&mut` is unique.
             let netd = unsafe { (*NET.get()).as_mut() };
-            if kind == KIND_IMAGE {
+            if kind == KIND_SHEET {
+                let result = match netd {
+                    Some(netd) => fetch_sheet(netd.net_mut(), &url, &insecure),
+                    None => None,
+                };
+                // SAFETY: STATE is RUNNING; the compositor reads SHEET_RESULT only after seeing DONE
+                // (Release store right after this write).
+                unsafe {
+                    *SHEET_RESULT.get() = Some(result);
+                }
+                STATE.store(DONE, Ordering::Release);
+            } else if kind == KIND_IMAGE {
                 let result = match netd {
                     Some(netd) => fetch_image(netd.net_mut(), &url, &insecure, fit_w),
                     None => Err(ImgFail::Failed),
@@ -520,6 +576,20 @@ fn fetch_url(
 
 /// Download one picture (same stack, same redirect rules; at most `MAX_IMAGE_BYTES`) and turn it
 /// into column-sized pixels here, on the worker, so the compositor never decodes.
+/// Download one style sheet: its decoded body when the answer is a 200, else `None`.
+fn fetch_sheet(net: &mut netstack::Net, url: &[u8], insecure_host: &[u8]) -> Option<Vec<u8>> {
+    let r = fetch_url(net, url, insecure_host, SHEET_CAP, None, None).ok()?;
+    let name = core::str::from_utf8(url).unwrap_or("?");
+    let code = kitsune_core::browser::status_code(&r.data).unwrap_or(0);
+    if code != 200 {
+        serial_println!("css: status {} for {}", code, name);
+        return None;
+    }
+    let body = kitsune_core::browser::page_body_partial(&r.data, r.truncated).body;
+    serial_println!("css: {} -> {} bytes", name, body.len());
+    Some(body)
+}
+
 fn fetch_image(
     net: &mut netstack::Net,
     url: &[u8],

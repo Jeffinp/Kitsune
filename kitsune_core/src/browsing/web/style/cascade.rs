@@ -13,6 +13,9 @@ pub(super) fn matched_decls<'a>(
 ) -> (Vec<&'a Decl>, Vec<&'a Decl>) {
     let mut hit: Vec<(Specificity, &'a super::super::css::Rule)> = Vec::new();
     let mut test = |r: &'a super::super::css::Rule| {
+        if !sheet.rule_applies(r) {
+            return;
+        }
         let mut best: Option<Specificity> = None;
         for s in &r.selectors {
             // The cheap test first: most selectors fail on the element itself.
@@ -78,6 +81,21 @@ pub(crate) fn compute(
     c.collapse = false;
     c.valign = VAlign::Middle;
     c.vshift = 0;
+    c.float = Float::None;
+    c.clear = Clear::None;
+    c.bfc = false;
+    c.clearfix = false;
+    c.position = Pos::Static;
+    c.min_width = Len::Auto;
+    c.flex = FlexStyle {
+        // `align-items`, the gaps and the track list belong to the container; the item
+        // properties start over, and the grid spec is not inherited either.
+        ..FlexStyle::default()
+    };
+    c.hidden = false;
+    c.clipped = false;
+    c.offscreen = false;
+    // `text-indent` is inherited; the rest above are not.
 
     let (ua, mut au) = matched_decls(el, anc, sheet, budget);
     let parent_px = parent.font_px;
@@ -92,15 +110,147 @@ pub(crate) fn compute(
         .unwrap_or_default();
     au.extend(inline.iter().filter(|d| !d.important));
     au.extend(inline.iter().filter(|d| d.important));
+    gather_vars(&mut c, &au);
     apply_decls(&mut c, &au, parent_px);
+    // What this element's children are drawn over.
+    if let Some(bg) = c.bg {
+        c.backdrop = bg;
+    }
+    if matches!(el.tag.as_str(), "html" | "body") {
+        c.hidden = false;
+    }
+    if el.attrs.contains_key("hidden") && !matches!(c.display, Disp::None) {
+        c.hidden = true;
+    }
+    if hidden_by_position(&c) {
+        c.hidden = true;
+    }
+    if c.hidden {
+        c.display = Disp::None;
+    }
+    // `<center>` and `align=center` on a table do not reach the cells in quirks mode; the
+    // page-level choice is made in `Doc::layout` (see `Painter::quirks`).
     c
+}
+
+/// `position: absolute | fixed` boxes that are not meant to be seen: tiny and clipped (a "skip to
+/// content" label), shifted far off the page, or without width or height.
+fn hidden_by_position(c: &Computed) -> bool {
+    if c.position != Pos::Abs {
+        return false;
+    }
+    let tiny_w = matches!(c.width, Len::Px(w) if w <= 2);
+    c.offscreen || (c.clipped && (tiny_w || c.bfc)) || (tiny_w && c.bfc)
+}
+
+/// Custom properties declared by `decls` join the inherited ones.
+fn gather_vars(c: &mut Computed, decls: &[&Decl]) {
+    if !decls.iter().any(|d| d.name.starts_with("--")) {
+        return;
+    }
+    let mut m: Vars = (*c.vars).clone();
+    for d in decls.iter().filter(|d| d.name.starts_with("--")) {
+        if m.len() < MAX_VARS || m.contains_key(&d.name) {
+            m.insert(d.name.clone(), String::from(d.value.trim()));
+        }
+    }
+    c.vars = Rc::new(m);
+}
+
+/// Most custom properties one element sees.
+const MAX_VARS: usize = 400;
+
+/// `value` with every `var(--name, fallback)` replaced; `None` when one has neither a value nor a
+/// fallback (the declaration is then invalid and ignored).
+pub(super) fn subst_vars(value: &str, vars: &Vars) -> Option<String> {
+    fn go(v: &str, vars: &Vars, depth: u8, out: &mut String) -> Option<()> {
+        let mut rest = v;
+        while let Some(p) = rest.find("var(") {
+            out.push_str(&rest[..p]);
+            let args = &rest[p + 4..];
+            let mut depth_p = 1i32;
+            let mut end = None;
+            let mut comma = None;
+            for (i, ch) in args.char_indices() {
+                match ch {
+                    '(' => depth_p += 1,
+                    ')' => {
+                        depth_p -= 1;
+                        if depth_p == 0 {
+                            end = Some(i);
+                            break;
+                        }
+                    }
+                    ',' if depth_p == 1 && comma.is_none() => comma = Some(i),
+                    _ => {}
+                }
+            }
+            let end = end?;
+            let (name, fallback) = match comma {
+                Some(c) => (args[..c].trim(), Some(args[c + 1..end].trim())),
+                None => (args[..end].trim(), None),
+            };
+            if depth >= 6 || out.len() > 4096 {
+                return None;
+            }
+            match vars.get(&name.to_ascii_lowercase()) {
+                Some(val) => go(val, vars, depth + 1, out)?,
+                None => go(fallback?, vars, depth + 1, out)?,
+            }
+            rest = &args[end + 1..];
+        }
+        out.push_str(rest);
+        Some(())
+    }
+    let mut out = String::new();
+    go(value, vars, 0, &mut out)?;
+    Some(out)
 }
 
 /// Apply declarations in order to `c`. The font size goes first: `em` lengths below refer to it.
 pub(super) fn apply_decls(c: &mut Computed, decls: &[&Decl], parent_px: i32) {
+    // Values that use `var()` are resolved first; one that cannot be is dropped.
+    let vars = c.vars.clone();
+    let resolved: Vec<Option<String>> = decls
+        .iter()
+        .map(|d| {
+            if d.value.contains("var(") {
+                subst_vars(&d.value, &vars)
+            } else {
+                None
+            }
+        })
+        .collect();
+    // Functions that pick one of their arguments here: `light-dark(light, dark)`, `color-mix()`, `env()`.
+    let resolved: Vec<Option<String>> = resolved
+        .into_iter()
+        .zip(decls.iter())
+        .map(|(r, d)| {
+            let text = if d.value.contains("var(") {
+                r?
+            } else if needs_pick(&d.value) {
+                d.value.clone()
+            } else {
+                return None;
+            };
+            Some(if needs_pick(&text) {
+                pick_args(&text)
+            } else {
+                text
+            })
+        })
+        .collect();
+    let value_of = |i: usize| -> Option<&str> {
+        match &resolved[i] {
+            Some(v) => Some(v.trim()),
+            // A value with `var()` that could not be resolved is dropped; the others stand as written.
+            None if decls[i].value.contains("var(") => None,
+            None => Some(decls[i].value.trim()),
+        }
+    };
     // The font size first: `em` lengths below refer to it.
-    for d in decls {
-        let v = d.value.trim();
+    for (i, d) in decls.iter().enumerate() {
+        let Some(v) = value_of(i) else { continue };
         match d.name.as_str() {
             "font-size" => {
                 if let Some(px) = font_size_value(v, parent_px) {
@@ -112,15 +262,21 @@ pub(super) fn apply_decls(c: &mut Computed, decls: &[&Decl], parent_px: i32) {
         }
     }
     let em = c.font_px;
-    for d in decls {
-        let v = d.value.trim();
+    let back = c.backdrop;
+    for (i, d) in decls.iter().enumerate() {
+        let Some(v) = value_of(i) else { continue };
         match d.name.as_str() {
             "display" => {
                 c.display = match v.to_ascii_lowercase().as_str() {
-                    "block" | "flex" | "grid" | "flow-root" | "inline-flex" | "inline-grid" => {
+                    "block" => Disp::Block,
+                    "flow-root" => {
+                        c.bfc = true;
                         Disp::Block
                     }
-                    "inline" | "inline-block" | "contents" => Disp::Inline,
+                    "flex" | "inline-flex" => Disp::Flex,
+                    "grid" | "inline-grid" => Disp::Grid,
+                    "inline-block" => Disp::InlineBlock,
+                    "inline" | "contents" => Disp::Inline,
                     "list-item" => Disp::ListItem,
                     "none" => Disp::None,
                     "table" | "inline-table" => Disp::Table,
@@ -133,7 +289,7 @@ pub(super) fn apply_decls(c: &mut Computed, decls: &[&Decl], parent_px: i32) {
                 }
             }
             "color" => {
-                if let Some(rgb) = parse_color(v) {
+                if let Some(rgb) = parse_color_over(v, back) {
                     c.color = rgb;
                 }
             }
@@ -142,7 +298,7 @@ pub(super) fn apply_decls(c: &mut Computed, decls: &[&Decl], parent_px: i32) {
                 let l = v.to_ascii_lowercase();
                 if l == "none" || l == "transparent" {
                     c.bg = None;
-                } else if let Some(col) = first_color(v) {
+                } else if let Some(col) = first_color(v, back) {
                     c.bg = Some(col);
                 }
             }
@@ -150,13 +306,13 @@ pub(super) fn apply_decls(c: &mut Computed, decls: &[&Decl], parent_px: i32) {
                 let l = v.to_ascii_lowercase();
                 if l == "transparent" || l == "none" {
                     c.bg = None;
-                } else if let Some(col) = parse_color(v) {
+                } else if let Some(col) = parse_color_over(v, back) {
                     c.bg = Some(col);
                 }
             }
             "background-image" => {
                 if c.bg.is_none() && v.to_ascii_lowercase().contains("gradient(") {
-                    c.bg = first_color(v);
+                    c.bg = first_color(v, back);
                 }
             }
             "font-weight" => {
@@ -253,7 +409,7 @@ pub(super) fn apply_decls(c: &mut Computed, decls: &[&Decl], parent_px: i32) {
                 }
             }
             "border-color" => {
-                if let Some(col) = first_color(v) {
+                if let Some(col) = first_color(v, back) {
                     c.border_color = col;
                 }
             }
@@ -285,6 +441,143 @@ pub(super) fn apply_decls(c: &mut Computed, decls: &[&Decl], parent_px: i32) {
             "height" | "min-height" => {
                 if let Some(p) = parse_px(v, em) {
                     c.min_height = p.max(c.min_height.min(0)).max(0);
+                }
+            }
+            "position" => {
+                c.position = match v.to_ascii_lowercase().as_str() {
+                    "absolute" | "fixed" => Pos::Abs,
+                    _ => Pos::Static,
+                };
+            }
+            "float" => {
+                c.float = match v.to_ascii_lowercase().as_str() {
+                    "left" | "inline-start" => Float::Left,
+                    "right" | "inline-end" => Float::Right,
+                    _ => Float::None,
+                };
+            }
+            "clear" => {
+                c.clear = match v.to_ascii_lowercase().as_str() {
+                    "left" | "inline-start" => Clear::Left,
+                    "right" | "inline-end" => Clear::Right,
+                    "both" => Clear::Both,
+                    _ => Clear::None,
+                };
+            }
+            "overflow" | "overflow-x" | "overflow-y" => {
+                let l = v.to_ascii_lowercase();
+                c.bfc = !matches!(l.split_whitespace().next(), Some("visible" | "clip") | None);
+            }
+            "visibility" => {
+                c.hidden = matches!(v.to_ascii_lowercase().as_str(), "hidden" | "collapse");
+            }
+            "opacity" => {
+                if let Some((n, _)) = parse_milli(v)
+                    && n <= 0
+                {
+                    c.hidden = true;
+                }
+            }
+            "left" | "top" => {
+                if let Some(Len::Px(p)) = parse_len(v, em)
+                    && p <= -500
+                {
+                    c.offscreen = true;
+                }
+            }
+            "clip" | "clip-path" => {
+                let l = v.to_ascii_lowercase();
+                c.clipped = !matches!(l.as_str(), "auto" | "none");
+            }
+            "text-indent" => {
+                if let Some(Len::Px(p)) = parse_len(v, em) {
+                    c.indent = p;
+                    if p <= -500 {
+                        c.hidden = true;
+                    }
+                }
+            }
+            "min-width" => {
+                if let Some(l) = parse_len(v, em) {
+                    c.min_width = non_neg_or_auto(l);
+                }
+            }
+            "flex-direction" => {
+                let l = v.to_ascii_lowercase();
+                c.flex.row = l.starts_with("row");
+                c.flex.reverse = l.ends_with("reverse");
+            }
+            "flex-wrap" => c.flex.wrap = v.to_ascii_lowercase().starts_with("wrap"),
+            "flex-flow" => {
+                for t in tokens(&v.to_ascii_lowercase()) {
+                    match t {
+                        "row" | "row-reverse" | "column" | "column-reverse" => {
+                            c.flex.row = t.starts_with("row");
+                            c.flex.reverse = t.ends_with("reverse");
+                        }
+                        "wrap" | "wrap-reverse" => c.flex.wrap = true,
+                        "nowrap" => c.flex.wrap = false,
+                        _ => {}
+                    }
+                }
+            }
+            "justify-content" => c.flex.justify = parse_justify(v),
+            "align-items" => c.flex.align = parse_cross(v).unwrap_or(CrossAlign::Stretch),
+            "place-items" => {
+                c.flex.align = tokens(v)
+                    .first()
+                    .and_then(|t| parse_cross(t))
+                    .unwrap_or(CrossAlign::Stretch);
+            }
+            "align-self" => c.flex.align_self = parse_cross(v),
+            "gap" | "grid-gap" => {
+                let t = tokens(v);
+                let one = |s: &str| parse_px(s, em).map(|p| p.clamp(0, 400));
+                if let Some(r) = t.first().and_then(|s| one(s)) {
+                    c.flex.gap_row = r;
+                    c.flex.gap_col = t.get(1).and_then(|s| one(s)).unwrap_or(r);
+                }
+            }
+            "row-gap" | "grid-row-gap" => {
+                if let Some(p) = parse_px(v, em) {
+                    c.flex.gap_row = p.clamp(0, 400);
+                }
+            }
+            "column-gap" | "grid-column-gap" => {
+                if let Some(p) = parse_px(v, em) {
+                    c.flex.gap_col = p.clamp(0, 400);
+                }
+            }
+            "flex-grow" => {
+                if let Some((n, _)) = parse_milli(v) {
+                    c.flex.grow = n.clamp(0, 100_000) as i32;
+                }
+            }
+            "flex-shrink" => {
+                if let Some((n, _)) = parse_milli(v) {
+                    c.flex.shrink = n.clamp(0, 100_000) as i32;
+                }
+            }
+            "flex-basis" => {
+                if let Some(l) = parse_len(v, em) {
+                    c.flex.basis = non_neg_or_auto(l);
+                }
+            }
+            "flex" => apply_flex_shorthand(c, v, em),
+            "order" => {
+                if let Some((n, _)) = parse_milli(v) {
+                    c.flex.order = (n / 1000).clamp(-1000, 1000) as i32;
+                }
+            }
+            "grid-template-columns" => c.flex.tracks = Rc::new(parse_tracks(v, em)),
+            "grid-column" | "grid-column-start" | "grid-column-end" => {
+                let l = v.to_ascii_lowercase();
+                if let Some(rest) = l.split_whitespace().skip_while(|t| *t != "span").nth(1)
+                    && let Ok(n) = rest.parse::<u8>()
+                {
+                    c.flex.span = n.clamp(1, 12);
+                } else if l.contains("/ -1") || l.contains("/-1") {
+                    c.flex.span = 12;
                 }
             }
             "box-sizing" => c.border_box = v.eq_ignore_ascii_case("border-box"),
@@ -418,7 +711,7 @@ pub(super) fn non_neg_or_auto(l: Len) -> Len {
     match l {
         Len::Px(p) => Len::Px(p.max(0)),
         Len::Pct(p) => Len::Pct(p.max(0)),
-        Len::Auto => Len::Auto,
+        l @ (Len::Calc { .. } | Len::Auto) => l,
     }
 }
 
@@ -455,4 +748,79 @@ pub(crate) fn transform_text(text: &str, t: Transform) -> String {
             out
         }
     }
+}
+
+/// Does `v` use a function [`pick_args`] rewrites?
+fn needs_pick(v: &str) -> bool {
+    v.contains("light-dark(") || v.contains("color-mix(") || v.contains("env(")
+}
+
+/// Rewrite `light-dark(a, b)` as `a` (the page is always shown light), `color-mix(in srgb, a ..., b ...)` as
+/// its first colour and `env(name, fallback)` as the fallback (or 0), at any depth.
+#[cfg(test)]
+pub(super) fn pick_args_for_test(v: &str) -> String {
+    pick_args(v)
+}
+
+fn pick_args(v: &str) -> String {
+    let mut out = String::with_capacity(v.len());
+    let mut rest = v;
+    'outer: while !rest.is_empty() {
+        for name in ["light-dark(", "color-mix(", "env("] {
+            if let Some(p) = rest.find(name) {
+                // Only the earliest function is rewritten in this round.
+                let earliest = ["light-dark(", "color-mix(", "env("]
+                    .iter()
+                    .filter_map(|n| rest.find(n))
+                    .min()
+                    .unwrap_or(p);
+                if p != earliest {
+                    continue;
+                }
+                out.push_str(&rest[..p]);
+                let args = &rest[p + name.len()..];
+                let mut depth = 1i32;
+                let mut end = args.len();
+                let mut commas: Vec<usize> = Vec::new();
+                for (i, ch) in args.char_indices() {
+                    match ch {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end = i;
+                                break;
+                            }
+                        }
+                        ',' if depth == 1 => commas.push(i),
+                        _ => {}
+                    }
+                }
+                let parts: Vec<&str> = {
+                    let mut v = Vec::new();
+                    let mut start = 0;
+                    for &c in &commas {
+                        v.push(&args[start..c]);
+                        start = c + 1;
+                    }
+                    v.push(&args[start..end]);
+                    v
+                };
+                let chosen = match name {
+                    "light-dark(" => parts.first().copied().unwrap_or(""),
+                    "color-mix(" => parts
+                        .get(1)
+                        .map(|c| c.split_whitespace().next().unwrap_or(""))
+                        .unwrap_or(""),
+                    _ => parts.get(1).copied().unwrap_or("0"),
+                };
+                out.push_str(&pick_args(chosen.trim()));
+                rest = args.get(end + 1..).unwrap_or("");
+                continue 'outer;
+            }
+        }
+        out.push_str(rest);
+        break;
+    }
+    out
 }

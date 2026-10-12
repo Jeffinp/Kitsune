@@ -202,6 +202,23 @@ a:hover{color:red}
 <div class="dark"><p>Bloco escuro com <a href="/styled">link claro</a>.</p></div>
 <p style="margin:0 auto;width:50%;background:#e0e7ff;text-align:center">Largura 50% centralizada</p></div>""",
         )
+    if path == "/modern":
+        # The styles live in a separate sheet (/modern.css): the browser has to fetch it.
+        return (
+            "<!doctype html><html><head><meta charset=utf-8><title>Moderna</title>"
+            "<link rel=stylesheet href=/modern.css></head><body>"
+            "<header class=bar><span class=brand>Kitsune</span><nav><a href=/>Início</a><a href=/type>Tipos</a>"
+            "<a href=/lists>Listas</a></nav></header>"
+            "<main><img class=pic src=/c.png width=160 height=96 alt=''>"
+            f"<h1>Página com CSS externo</h1><p>{LOREM}</p><p>{LOREM}</p>"
+            "<section class=cards><article class=card><h2>Um</h2><p>Primeiro cartão da grade.</p></article>"
+            "<article class=card><h2>Dois</h2><p>Segundo cartão.</p></article>"
+            "<article class=card><h2>Três</h2><p>Terceiro cartão.</p></article>"
+            "<article class=card><h2>Quatro</h2><p>Quarto cartão.</p></article></section>"
+            "<div class=cols><div class=col>Coluna A</div><div class=col>Coluna B</div><div class=col>Coluna C</div></div>"
+            "<p class=after>Depois das colunas flutuantes.</p></main>"
+            "<footer class=foot><span>Rodapé</span><span class=push>fim</span></footer></body></html>"
+        ).encode()
     if path == "/quote":
         return page("Citações", f"<h1>Citações</h1><blockquote>{LOREM}<blockquote>Aninhada: {LOREM}</blockquote></blockquote>")
     if path == "/big":
@@ -240,6 +257,30 @@ class H(BaseHTTPRequestHandler):
             return self.reply(200, "image/png", png(160, 96, checker))
         if u.path == "/wide.png":
             return self.reply(200, "image/png", png(1400, 200, gradient))
+        if u.path == "/modern.css":
+            css = """
+:root{--brand:#5b3df5;--gap:12px;--radius:10px}
+*{box-sizing:border-box}
+body{margin:0;font-family:sans-serif;color:#222;background:#fafafa}
+.bar{display:flex;align-items:center;justify-content:space-between;padding:0 20px;height:56px;background:var(--brand);color:#fff}
+.brand{font-weight:bold;font-size:20px}
+.bar nav{display:flex;gap:var(--gap)}
+.bar a{color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px;background:rgba(255,255,255,.18)}
+main{max-width:min(100%, 760px);margin:0 auto;padding:20px}
+.pic{float:right;margin:0 0 10px 16px;border-radius:8px}
+.cards{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--gap);clear:both;margin:24px 0}
+.card{background:#fff;border:1px solid #ddd;border-radius:var(--radius);padding:calc(var(--gap) + 4px)}
+.card h2{margin:0 0 6px;color:var(--brand)}
+.cols::after{content:"";display:table;clear:both}
+.col{float:left;width:33.333%;padding:10px;background:#e8e4ff;border:2px solid #fafafa}
+.after{margin-top:20px}
+.foot{display:flex;padding:14px 20px;background:#222;color:#ccc}
+.push{margin-left:auto}
+@media (min-width: 1000px){ .cards{grid-template-columns:repeat(4,1fr)} }
+@media (max-width: 500px){ .cards{grid-template-columns:1fr} }
+@media print{ body{display:none} }
+"""
+            return self.reply(200, "text/css; charset=utf-8", css.encode())
         if u.path == "/redirect":
             return self.reply(302, "text/plain", b"", [("Location", "/type")])
         if u.path == "/hang":

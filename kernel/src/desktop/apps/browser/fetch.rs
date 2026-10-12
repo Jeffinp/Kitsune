@@ -190,7 +190,9 @@ impl Desktop {
             return;
         }
         let t0 = crate::trace::t();
-        t.doc = Some(kitsune_core::web::Doc::parse(&body));
+        let doc = kitsune_core::web::Doc::parse(&body);
+        t.sheets.begin(&doc, t.browser.nav_url());
+        t.doc = Some(doc);
         crate::trace::note("parse", t0, body.len() as u64);
         t.trace_t0.set(t0);
         t.page = None;
@@ -235,6 +237,7 @@ impl Desktop {
                 continue;
             };
             t.doc = Some(kitsune_core::web::Doc::parse(&html));
+            t.sheets = kitsune_core::web::sheets::SheetSet::default();
             t.page = None;
             t.cert = None;
             t.sel = None;

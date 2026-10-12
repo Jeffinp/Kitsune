@@ -1,6 +1,7 @@
 //! values (split out of `style.rs`).
 
 use super::*;
+use crate::browsing::web::css::{viewport_h, viewport_w};
 
 /// Parse a CSS number with up to three decimals into thousandths: `1.5` is 1500.
 /// Returns the value and the rest of the string. Page-controlled, so every step
@@ -51,6 +52,9 @@ pub(crate) fn parse_len(v: &str, em: i32) -> Option<Len> {
     if v.eq_ignore_ascii_case("auto") {
         return Some(Len::Auto);
     }
+    if super::calc::is_math(v) {
+        return super::calc::parse_math(v, em);
+    }
     let (n, unit) = parse_milli(v)?;
     let unit = unit.trim().to_ascii_lowercase();
     // Rounded to the nearest pixel (0.67em of 16 px is 11, not 10).
@@ -84,6 +88,11 @@ pub(crate) fn parse_len(v: &str, em: i32) -> Option<Len> {
         "rem" => px(n * 16),
         "ex" => px(n * i64::from(em) / 2),
         "%" => Some(Len::Pct((n / 1000).clamp(-10_000, 10_000) as i32)),
+        "ch" => px(n * i64::from(em) / 2),
+        "vw" | "svw" | "lvw" | "dvw" => px(n * i64::from(viewport_w()) / 100),
+        "vh" | "svh" | "lvh" | "dvh" => px(n * i64::from(viewport_h()) / 100),
+        "vmin" => px(n * i64::from(viewport_w().min(viewport_h())) / 100),
+        "vmax" => px(n * i64::from(viewport_w().max(viewport_h())) / 100),
         _ => None,
     }
 }
@@ -153,19 +162,20 @@ pub(super) fn non_neg(l: Len) -> Len {
     match l {
         Len::Px(p) => Len::Px(p.max(0)),
         Len::Pct(p) => Len::Pct(p.max(0)),
+        l @ Len::Calc { .. } => l,
         Len::Auto => Len::Px(0),
     }
 }
 
 /// The first colour in `v`, looking inside gradients (their first stop stands in
 /// for the whole gradient).
-pub(super) fn first_color(v: &str) -> Option<Rgb> {
+pub(super) fn first_color(v: &str, back: Rgb) -> Option<Rgb> {
     for t in tokens(v) {
         let lower = t.to_ascii_lowercase();
         if lower.starts_with("url(") {
             continue;
         }
-        if let Some(c) = parse_color(t) {
+        if let Some(c) = parse_color_over(t, back) {
             return Some(c);
         }
         if lower.contains("gradient(")
@@ -182,7 +192,7 @@ pub(super) fn first_color(v: &str) -> Option<Rgb> {
                     b')' => depth -= 1,
                     b',' if depth == 0 => {
                         for part in tokens(&inner[start..i]) {
-                            if let Some(c) = parse_color(part) {
+                            if let Some(c) = parse_color_over(part, back) {
                                 return Some(c);
                             }
                         }
@@ -236,7 +246,7 @@ pub(super) fn font_size_value(v: &str, parent_px: i32) -> Option<i32> {
         _ => match parse_len(&l, parent_px)? {
             Len::Px(p) => p,
             Len::Pct(p) => (i64::from(parent_px) * i64::from(p) / 100) as i32,
-            Len::Auto => return None,
+            Len::Calc { .. } | Len::Auto => return None,
         },
     };
     Some(px.clamp(MIN_FONT, MAX_FONT))
@@ -256,7 +266,7 @@ pub(super) fn line_height_value(v: &str, font_px: i32) -> Option<LineH> {
     match parse_len(&l, font_px)? {
         Len::Px(p) => Some(LineH::Px(p.clamp(1, 1000))),
         Len::Pct(p) => Some(LineH::Mult(p.clamp(50, 1000))),
-        Len::Auto => None,
+        Len::Calc { .. } | Len::Auto => None,
     }
 }
 
@@ -334,7 +344,7 @@ pub(super) fn apply_border_side(c: &mut Computed, sides: &[usize], v: &str) {
             _ => {
                 if let Some(Len::Px(p)) = parse_len(&l, c.font_px) {
                     w = p.clamp(0, 64);
-                } else if let Some(col) = parse_color(t) {
+                } else if let Some(col) = parse_color_over(t, c.backdrop) {
                     c.border_color = col;
                 }
             }
@@ -345,5 +355,140 @@ pub(super) fn apply_border_side(c: &mut Computed, sides: &[usize], v: &str) {
     let w = if style_none { 0 } else { w };
     for &s in sides {
         c.border_w[s] = w;
+    }
+}
+
+pub(super) fn parse_justify(v: &str) -> Justify {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "center" => Justify::Center,
+        "flex-end" | "end" | "right" => Justify::End,
+        "space-between" => Justify::Between,
+        "space-around" => Justify::Around,
+        "space-evenly" => Justify::Evenly,
+        _ => Justify::Start,
+    }
+}
+
+/// `align-items` / `align-self` values; `None` for `auto` and `normal`.
+pub(super) fn parse_cross(v: &str) -> Option<CrossAlign> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "stretch" => Some(CrossAlign::Stretch),
+        "flex-start" | "start" | "self-start" | "baseline" | "first baseline" => {
+            Some(CrossAlign::Start)
+        }
+        "center" => Some(CrossAlign::Center),
+        "flex-end" | "end" | "self-end" => Some(CrossAlign::End),
+        _ => None,
+    }
+}
+
+/// `flex: none | auto | <grow> [<shrink>] [<basis>]`.
+pub(super) fn apply_flex_shorthand(c: &mut Computed, v: &str, em: i32) {
+    let l = v.trim().to_ascii_lowercase();
+    match l.as_str() {
+        "none" => {
+            c.flex.grow = 0;
+            c.flex.shrink = 0;
+            c.flex.basis = Len::Auto;
+            return;
+        }
+        "auto" => {
+            c.flex.grow = 1000;
+            c.flex.shrink = 1000;
+            c.flex.basis = Len::Auto;
+            return;
+        }
+        "initial" => {
+            c.flex.grow = 0;
+            c.flex.shrink = 1000;
+            c.flex.basis = Len::Auto;
+            return;
+        }
+        _ => {}
+    }
+    let t = tokens(&l);
+    let (mut grow, mut shrink, mut basis) = (None, None, None);
+    for tok in t.iter().take(3) {
+        // A bare number is a grow factor first, a shrink factor second.
+        if let Some((n, rest)) = parse_milli(tok)
+            && rest.is_empty()
+        {
+            if grow.is_none() {
+                grow = Some(n);
+            } else {
+                shrink = Some(n);
+            }
+        } else if let Some(b) = parse_len(tok, em) {
+            basis = Some(b);
+        }
+    }
+    c.flex.grow = grow.unwrap_or(1000).clamp(0, 100_000) as i32;
+    c.flex.shrink = shrink.unwrap_or(1000).clamp(0, 100_000) as i32;
+    // `flex: 1` means a basis of 0%: the items share all the room.
+    c.flex.basis = basis.unwrap_or(Len::Pct(0));
+}
+
+/// `grid-template-columns`: lengths, `fr`, `auto`, `minmax()` and `repeat()`.
+pub(super) fn parse_tracks(v: &str, em: i32) -> GridSpec {
+    let mut spec = GridSpec::default();
+    tracks_into(&mut spec, v, em, 0);
+    spec
+}
+
+fn track_of(t: &str, em: i32) -> Option<Track> {
+    let l = t.trim().to_ascii_lowercase();
+    if l.starts_with('[') {
+        return None;
+    }
+    if let Some(inner) = l.strip_prefix("minmax(").and_then(|r| r.strip_suffix(')')) {
+        let max = inner.rsplit(',').next()?.trim();
+        return track_of(max, em);
+    }
+    if let Some(fr) = l.strip_suffix("fr")
+        && let Some((n, rest)) = parse_milli(fr)
+        && rest.is_empty()
+    {
+        return Some(Track::Fr(n.clamp(0, 100_000) as i32));
+    }
+    match parse_len(&l, em) {
+        Some(Len::Px(p)) => Some(Track::Px(p)),
+        Some(Len::Pct(p)) => Some(Track::Pct(p)),
+        _ => Some(Track::Auto),
+    }
+}
+
+fn tracks_into(spec: &mut GridSpec, v: &str, em: i32, depth: u8) {
+    if depth > 2 {
+        return;
+    }
+    for t in tokens(v) {
+        let l = t.to_ascii_lowercase();
+        if let Some(inner) = l.strip_prefix("repeat(").and_then(|r| r.strip_suffix(')')) {
+            let (count, list) = inner.split_once(',').unwrap_or(("1", inner));
+            let count = count.trim();
+            if count == "auto-fill" || count == "auto-fit" {
+                // `minmax(<min>, 1fr)` or a plain length: as many as fit, each at least that wide.
+                let first = tokens(list).first().copied().unwrap_or("");
+                let min = if let Some(m) = first.strip_prefix("minmax(") {
+                    m.split(',').next().and_then(|a| parse_px(a, em))
+                } else {
+                    parse_px(first, em)
+                };
+                spec.auto_min = Some(min.unwrap_or(200).clamp(40, 2000));
+            } else if let Ok(n) = count.parse::<usize>() {
+                let mut one = GridSpec::default();
+                tracks_into(&mut one, list, em, depth + 1);
+                for _ in 0..n.min(12) {
+                    if spec.cols.len() + one.cols.len() > 12 {
+                        break;
+                    }
+                    spec.cols.extend_from_slice(&one.cols);
+                }
+            }
+        } else if let Some(tr) = track_of(t, em)
+            && spec.cols.len() < 12
+        {
+            spec.cols.push(tr);
+        }
     }
 }

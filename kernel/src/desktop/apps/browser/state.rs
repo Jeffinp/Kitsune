@@ -50,6 +50,8 @@ pub(crate) struct TabData {
     pub layout_w: i32,
     /// Cache key of each `page.images` entry (`None`: not fetchable).
     pub img_keys: Vec<Option<String>>,
+    /// The external style sheets of the page (which are asked for, which arrived).
+    pub sheets: kitsune_core::web::sheets::SheetSet,
     /// Page zoom in percent.
     pub zoom: u16,
     /// What the user typed into the page's form controls.
@@ -93,6 +95,8 @@ pub(crate) struct BrowserState {
     pub images: kitsune_core::web::imgcache::ImageCache,
     /// The picture the fetcher is working on, and the tab that asked for it.
     pub img_inflight: Option<(u32, String)>,
+    /// The style sheet the fetcher is working on, and the tab that asked for it.
+    pub sheet_inflight: Option<(u32, String)>,
     /// The tab whose page request the fetcher has.
     pub req_tab: Option<u32>,
     pub next_id: u32,
@@ -165,6 +169,7 @@ impl TabData {
             scroll_bar: kitsune_core::widgets::ScrollbarFade::new(),
             layout_w: 0,
             img_keys: Vec::new(),
+            sheets: kitsune_core::web::sheets::SheetSet::default(),
             zoom: 100,
             forms: kitsune_core::web::form::FormState::default(),
             find: kitsune_core::web::find::FindBar::new(),
@@ -187,6 +192,7 @@ impl BrowserState {
             tabs: kitsune_core::browser::tabs::TabList::new(first),
             images: kitsune_core::web::imgcache::ImageCache::new(),
             img_inflight: None,
+            sheet_inflight: None,
             req_tab: None,
             next_id: 2,
             strip: alloc::vec![StripEntry {

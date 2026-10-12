@@ -79,6 +79,9 @@ impl Desktop {
         if b.img_inflight.as_ref().is_some_and(|(x, _)| *x == tid) {
             b.img_inflight = None;
         }
+        if b.sheet_inflight.as_ref().is_some_and(|(x, _)| *x == tid) {
+            b.sheet_inflight = None;
+        }
         let Some(_closed) = b.tabs.close(i) else {
             return;
         };

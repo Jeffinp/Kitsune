@@ -31,6 +31,33 @@ pub(super) fn text_extents(p: &Painter, st: &Style) -> (i32, i32) {
     ((top + st.shift).max(0), (st.lh - top - st.shift).max(0))
 }
 
+/// Where the next line goes: `area` narrowed by the floats beside it, and its width in q8. A line
+/// that would have almost no room beside a float starts below it.
+fn lane(p: &Painter, area: Area, mut y: i32, strut: (i32, i32)) -> (i32, Area, i32) {
+    let mut cur = area;
+    if !p.floats.is_empty() {
+        let h = (strut.0 + strut.1).max(1);
+        for _ in 0..64 {
+            cur = band(p, area, y, h);
+            if cur.w >= area.w.min(p.z(80)).max(1) {
+                break;
+            }
+            // Too narrow: below the lowest float that is in the way.
+            let next = p
+                .floats
+                .iter()
+                .filter(|f| f.top < y + h && f.bottom > y)
+                .map(|f| f.bottom)
+                .min();
+            match next {
+                Some(n) if n > y => y = n,
+                _ => break,
+            }
+        }
+    }
+    (y, cur, cur.w.max(1).saturating_mul(Q))
+}
+
 /// Emit the buffered inline words as wrapped, aligned line boxes starting at `y`;
 /// returns the y below the last line. `align_override` replaces the container's
 /// `text-align` (block-level images centred by auto margins).
@@ -51,7 +78,7 @@ pub(super) fn flush_inline(
     let mut items = core::mem::replace(&mut p.items, spare);
     let align = align_override.unwrap_or(container.align);
     let strut = strut_of(p, container);
-    let avail = area.w.max(1).saturating_mul(Q);
+    let (mut y, mut cur, mut avail) = lane(p, area, y, strut);
     let mut line = Line::new(strut);
 
     for item in items.drain(..) {
@@ -61,8 +88,10 @@ pub(super) fn flush_inline(
                     // An empty line still has the height of its strut and of the break.
                     let (t, b) = text_extents(p, &st);
                     y = adv(y, (t.max(strut.0) + b.max(strut.1)).max(1));
+                    (y, cur, avail) = lane(p, area, y, strut);
                 } else {
-                    y = emit_line(p, &mut line, area, align, y, strut);
+                    y = emit_line(p, &mut line, cur, align, y, strut);
+                    (y, cur, avail) = lane(p, area, y, strut);
                 }
             }
             Item::Obj { obj, st, sp } => {
@@ -76,7 +105,8 @@ pub(super) fn flush_inline(
                 if !line.pieces.is_empty()
                     && line.w.saturating_add(space).saturating_add(wq_) > avail
                 {
-                    y = emit_line(p, &mut line, area, align, y, strut);
+                    y = emit_line(p, &mut line, cur, align, y, strut);
+                    (y, cur, avail) = lane(p, area, y, strut);
                 }
                 let space = if line.pieces.is_empty() { 0 } else { space };
                 let x = line.w.saturating_add(space);
@@ -135,14 +165,16 @@ pub(super) fn flush_inline(
                                     let tail = text.split_off(k);
                                     let hw = wq(p, &text, st.font);
                                     place_text(p, &mut line, text, st, space, hw);
-                                    y = emit_line(p, &mut line, area, align, y, strut);
+                                    y = emit_line(p, &mut line, cur, align, y, strut);
+                                    (y, cur, avail) = lane(p, area, y, strut);
                                     text = tail;
                                     sp = None;
                                     continue;
                                 }
                             }
                         }
-                        y = emit_line(p, &mut line, area, align, y, strut);
+                        y = emit_line(p, &mut line, cur, align, y, strut);
+                        (y, cur, avail) = lane(p, area, y, strut);
                         sp = None;
                         continue;
                     }
@@ -155,7 +187,8 @@ pub(super) fn flush_inline(
                     let tail = text.split_off(k);
                     let hw = wq(p, &text, st.font);
                     place_text(p, &mut line, text, st, 0, hw);
-                    y = emit_line(p, &mut line, area, align, y, strut);
+                    y = emit_line(p, &mut line, cur, align, y, strut);
+                    (y, cur, avail) = lane(p, area, y, strut);
                     text = tail;
                     sp = None;
                 }
@@ -163,7 +196,7 @@ pub(super) fn flush_inline(
         }
     }
     if !line.pieces.is_empty() {
-        y = emit_line(p, &mut line, area, align, y, strut);
+        y = emit_line(p, &mut line, cur, align, y, strut);
     }
     // Keep the list's room for the next flush (nothing was queued while this one ran).
     if p.items.is_empty() {

@@ -16,7 +16,10 @@ pub(super) fn flow<'a>(
     area: Area,
     mut y: i32,
 ) -> i32 {
-    for node in nodes {
+    let mut i = 0;
+    while i < nodes.len() {
+        let node = &nodes[i];
+        i += 1;
         match node {
             Node::Text(t) => push_text(p, t, parent),
             Node::Element(el) => {
@@ -24,10 +27,29 @@ pub(super) fn flow<'a>(
                     p.space = Some(p.font(parent));
                 }
                 let c = compute(el, p.sheet, parent, &p.anc, &mut p.budget);
+                if c.float != Float::None && c.display != Disp::None && c.position != Pos::Abs {
+                    // A float leaves the flow: the line being built ends, the box goes to the side.
+                    y = flush_inline(p, container, area, y, None);
+                    // The margin waiting above it moves the float down too, and stays for what follows.
+                    let top = adv(y, p.pending);
+                    place_float(p, el, &c, area, top);
+                    continue;
+                }
                 match c.display {
                     Disp::None => {}
                     Disp::Inline => {
                         y = inline_element(p, el, &c, area, y);
+                    }
+                    // A row of inline-blocks is laid out as boxes; one among text is just inline.
+                    Disp::InlineBlock if only_boxes(p, nodes, parent) => {
+                        let (ny, used) = inline_run(p, nodes, i - 1, parent, container, area, y);
+                        y = ny;
+                        i = i - 1 + used;
+                    }
+                    Disp::InlineBlock => {
+                        let mut ci = c.clone();
+                        ci.display = Disp::Inline;
+                        y = inline_element(p, el, &ci, area, y);
                     }
                     _ if el.tag == "img" => {
                         // A block-level picture sits on a line of its own; auto side margins
@@ -48,6 +70,22 @@ pub(super) fn flow<'a>(
         }
     }
     y
+}
+
+/// Is every child in `nodes` either blank text or an `inline-block` (or hidden) element? Then they
+/// are a row of boxes (a menu, a button bar); with any other text or inline content among them they
+/// stay in the line.
+fn only_boxes<'a>(p: &mut Painter<'a>, nodes: &'a [Node], parent: &Computed) -> bool {
+    if nodes.len() > 200 {
+        return false;
+    }
+    nodes.iter().all(|n| match n {
+        Node::Text(t) => t.chars().all(|c| c.is_whitespace() && c != '\u{a0}'),
+        Node::Element(e) => {
+            let c = compute(e, p.sheet, parent, &p.anc, &mut p.budget);
+            matches!(c.display, Disp::InlineBlock | Disp::None)
+        }
+    })
 }
 
 /// An inline element: special ones (`br`, `img`, controls), otherwise its
@@ -328,6 +366,25 @@ pub(super) fn layout_block_in<'a>(
     fixed: Option<(i32, i32)>,
 ) -> i32 {
     let zoom = p.zoom;
+    // Past the floats `clear` asks to get below.
+    if c.clear != Clear::None {
+        let below = cleared(p, c.clear, adv(y, p.pending));
+        if below > adv(y, p.pending) {
+            y = below;
+            p.pending = 0;
+        }
+    }
+    // Boxes that make their own formatting context do not run under a float: they sit beside it.
+    let beside = fixed.is_none()
+        && (c.bfc
+            || matches!(c.display, Disp::Table | Disp::Flex | Disp::Grid)
+            || c.float != Float::None);
+    let area = if beside && !p.floats.is_empty() {
+        band(p, area, y, 1)
+    } else {
+        area
+    };
+    let floats_before = p.floats.len();
     let aw = area.w;
     let [mt_l, mr_l, mb_l, ml_l] = c.margin;
     let (mt, mb) = if fixed.is_some() {
@@ -343,8 +400,18 @@ pub(super) fn layout_block_in<'a>(
     let extra = pad_l + pad_r + bl + br;
 
     // A table is as wide as its columns want to be (or its `width`); read it first.
+    // Without a doctype a table does not inherit `text-align` (`<center><table>` keeps its cells left).
+    let table_style;
     let mut table = if c.display == Disp::Table && fixed.is_none() {
-        Some(table::collect(p, el, c))
+        let tc = if p.quirks && c.align != Align::Left {
+            let mut t = c.clone();
+            t.align = Align::Left;
+            table_style = t;
+            &table_style
+        } else {
+            c
+        };
+        Some(table::collect(p, el, tc))
     } else {
         None
     };
@@ -480,13 +547,35 @@ pub(super) fn layout_block_in<'a>(
     // ---- content ----
     p.anc.push(el);
     let inner = Area { x: cx, w: cw };
+    let content_top = y;
     if let Some(t) = &mut table {
         y = table::layout(p, t, c, inner, y, c.width != Len::Auto);
+    } else if c.display == Disp::Flex {
+        y = flex_layout(p, el, c, inner, y);
+    } else if c.display == Disp::Grid {
+        y = grid_layout(p, el, c, inner, y);
     } else {
         y = flow(p, &el.children, c, c, inner, y);
         y = flush_inline(p, c, inner, y, None);
     }
     p.anc.pop();
+    // The box holds its floats when it makes its own context, is cleared by a `::after` rule, is a
+    // float or a cell itself, or has nothing in the flow but floats (a row of columns).
+    if p.floats.len() > floats_before {
+        let holds = c.bfc
+            || c.clearfix
+            || c.float != Float::None
+            || fixed.is_some()
+            || matches!(
+                c.display,
+                Disp::Table | Disp::Flex | Disp::Grid | Disp::TableCell | Disp::InlineBlock
+            )
+            || y <= content_top;
+        if holds {
+            y = y.max(floats_bottom(p, floats_before));
+            p.floats.truncate(floats_before);
+        }
+    }
     if is_list && !p.lists.is_empty() {
         p.lists.pop();
     }

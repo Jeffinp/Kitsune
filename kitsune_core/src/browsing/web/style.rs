@@ -5,10 +5,13 @@
 
 use super::css::{Decl, Specificity, Stylesheet, parse_decls};
 use super::dom::Element;
-use super::{Rgb, parse_color};
+use super::{Rgb, parse_color, parse_color_over};
+use alloc::collections::BTreeMap;
+use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+mod calc;
 mod cascade;
 mod values;
 pub(crate) use cascade::*;
@@ -80,12 +83,124 @@ summary{font-weight:bold}
 pub(crate) enum Disp {
     Block,
     Inline,
+    /// `display: flex` / `inline-flex`: a block whose children are laid out by `layout/flex.rs`.
+    Flex,
+    /// `display: grid` / `inline-grid`.
+    Grid,
+    /// `display: inline-block`: shrink-to-fit box that sits in a line (a run of them is laid out as a row).
+    InlineBlock,
     ListItem,
     None,
     Table,
     TableRowGroup,
     TableRow,
     TableCell,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Float {
+    None,
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Clear {
+    None,
+    Left,
+    Right,
+    Both,
+}
+
+/// `justify-content`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Justify {
+    Start,
+    Center,
+    End,
+    Between,
+    Around,
+    Evenly,
+}
+
+/// `align-items` / `align-self` (`None` for `auto`/`normal`: stretch, or the container's value).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum CrossAlign {
+    Stretch,
+    Start,
+    Center,
+    End,
+}
+
+/// The flexbox and grid properties of an element (as container and as item).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FlexStyle {
+    /// `flex-direction: row` (false: column).
+    pub(crate) row: bool,
+    pub(crate) reverse: bool,
+    pub(crate) wrap: bool,
+    pub(crate) justify: Justify,
+    pub(crate) align: CrossAlign,
+    /// `align-self`, when not `auto`.
+    pub(crate) align_self: Option<CrossAlign>,
+    /// Row gap and column gap, in CSS px.
+    pub(crate) gap_row: i32,
+    pub(crate) gap_col: i32,
+    /// `flex-grow`, `flex-shrink` in thousandths.
+    pub(crate) grow: i32,
+    pub(crate) shrink: i32,
+    pub(crate) basis: Len,
+    pub(crate) order: i32,
+    /// Grid: `grid-template-columns`, and how many columns an item spans.
+    pub(crate) tracks: Rc<GridSpec>,
+    pub(crate) span: u8,
+}
+
+impl Default for FlexStyle {
+    fn default() -> Self {
+        FlexStyle {
+            row: true,
+            reverse: false,
+            wrap: false,
+            justify: Justify::Start,
+            align: CrossAlign::Stretch,
+            align_self: None,
+            gap_row: 0,
+            gap_col: 0,
+            grow: 0,
+            shrink: 1000,
+            basis: Len::Auto,
+            order: 0,
+            tracks: Rc::new(GridSpec::default()),
+            span: 1,
+        }
+    }
+}
+
+/// One column of a grid.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Track {
+    Px(i32),
+    Pct(i32),
+    /// `fr` in thousandths.
+    Fr(i32),
+    Auto,
+}
+
+/// `grid-template-columns`: explicit columns, plus an `auto-fill`/`auto-fit` repeat
+/// (`repeat(auto-fill, minmax(min, 1fr))`: as many as fit, at least `min` px wide each).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GridSpec {
+    pub(crate) cols: Vec<Track>,
+    pub(crate) auto_min: Option<i32>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Pos {
+    Static,
+    /// `absolute` and `fixed`: taken out of the flow by browsers; here shown in the flow unless
+    /// they are clearly meant to be invisible (see `cascade::hidden_by_position`).
+    Abs,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -102,6 +217,13 @@ pub(crate) enum Len {
     Px(i32),
     /// Percent of the container's width.
     Pct(i32),
+    /// `calc()` and friends: `pct` thousandths of a percent of the container plus `px`; `mode` 0 is the
+    /// sum, 1 the smaller and 2 the larger of the two parts (`min(100%, 600px)`).
+    Calc {
+        pct: i32,
+        px: i32,
+        mode: u8,
+    },
     Auto,
 }
 
@@ -112,6 +234,16 @@ impl Len {
             Len::Px(v) => Some(zoom_px(v, zoom)),
             Len::Pct(p) => {
                 Some((i64::from(base) * i64::from(p) / 100).clamp(-100_000, 100_000) as i32)
+            }
+            Len::Calc { pct, px, mode } => {
+                let a =
+                    (i64::from(base) * i64::from(pct) / 100_000).clamp(-100_000, 100_000) as i32;
+                let b = zoom_px(px, zoom);
+                Some(match mode {
+                    1 => a.min(b),
+                    2 => a.max(b),
+                    _ => a.saturating_add(b),
+                })
             }
             Len::Auto => None,
         }
@@ -205,7 +337,35 @@ pub(crate) struct Computed {
     pub(crate) valign: VAlign,
     /// Inline: raised (1, `sup`) or lowered (-1, `sub`) text.
     pub(crate) vshift: i8,
+    /// Custom properties (`--name`), inherited; shared until an element sets one.
+    pub(crate) vars: Rc<Vars>,
+    /// What is behind this element's content: the nearest ancestor's background (white at the top).
+    /// Translucent colours are blended over it.
+    pub(crate) backdrop: Rgb,
+    pub(crate) float: Float,
+    pub(crate) clear: Clear,
+    /// The element makes its own block formatting context (`overflow` other than visible, ...): it
+    /// holds its floats.
+    pub(crate) bfc: bool,
+    /// A `::after { clear: both }` rule matched: the element holds its floats.
+    pub(crate) clearfix: bool,
+    pub(crate) position: Pos,
+    /// `min-width` (px or %).
+    pub(crate) min_width: Len,
+    pub(crate) flex: FlexStyle,
+    /// Hidden on purpose (`visibility: hidden`, `opacity: 0`, clipped to nothing, shifted off the
+    /// page): laid out as `display: none`.
+    pub(crate) hidden: bool,
+    /// `text-indent` in px (a large negative one hides the text of an image-replacement box).
+    pub(crate) indent: i32,
+    /// `clip` / `clip-path` given (with `position: absolute` and a tiny box: a visually-hidden label).
+    pub(crate) clipped: bool,
+    /// Offsets `left`, `top` far off the page.
+    pub(crate) offscreen: bool,
 }
+
+/// The custom properties in effect: name (lower case, with the `--`) to its text.
+pub(crate) type Vars = BTreeMap<String, String>;
 
 impl Computed {
     /// The inherited root style (before any element).
@@ -238,6 +398,19 @@ impl Computed {
             collapse: false,
             valign: VAlign::Middle,
             vshift: 0,
+            vars: Rc::new(Vars::new()),
+            backdrop: Rgb(255, 255, 255),
+            float: Float::None,
+            clear: Clear::None,
+            bfc: false,
+            clearfix: false,
+            position: Pos::Static,
+            min_width: Len::Auto,
+            flex: FlexStyle::default(),
+            hidden: false,
+            indent: 0,
+            clipped: false,
+            offscreen: false,
         }
     }
 }

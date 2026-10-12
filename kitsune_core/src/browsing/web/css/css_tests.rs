@@ -68,10 +68,60 @@ fn rule_and_selector_counts_are_capped() {
 
 #[test]
 fn skips_at_rules_and_comments() {
-    let ss = parse_css("@media x { p{color:red} } /* c */ a { color: blue; }");
-    // The @media block is skipped; only the `a` rule remains.
+    let ss = parse_css(
+        "@font-face { font-family: x } /* c */ a { color: blue; } @keyframes k { from {top:0} }",
+    );
+    // Font and animation blocks are skipped; only the `a` rule remains.
     assert_eq!(ss.rules.len(), 1);
     assert_eq!(ss.rules[0].selectors[0].tag.as_deref(), Some("a"));
+}
+
+#[test]
+fn media_blocks_keep_their_rules_with_the_condition() {
+    let ss = parse_css(
+        "p{color:red} @media (min-width: 700px) { p{color:blue} } @media print { p{color:green} }\
+         @media screen and (max-width: 600px), (orientation: portrait) { a{color:pink} }",
+    );
+    assert_eq!(ss.rules.len(), 4);
+    let on = |i: usize, w: i32, h: i32| {
+        let r = &ss.rules[i];
+        r.media == 0 || ss.medias[usize::from(r.media) - 1].matches(w, h)
+    };
+    assert!(on(0, 300, 500));
+    assert!(!on(1, 699, 500) && on(1, 700, 500));
+    assert!(!on(2, 2000, 500), "print never applies");
+    assert!(on(3, 500, 900) && on(3, 900, 1200) && !on(3, 900, 500));
+}
+
+#[test]
+fn media_features_and_range_syntax() {
+    let m = |s: &str| Media::parse(s).unwrap();
+    assert!(m("(width >= 600px)").matches(600, 400));
+    assert!(!m("(width > 600px)").matches(600, 400));
+    assert!(m("(400px <= width <= 800px)").matches(800, 400));
+    assert!(!m("(400px <= width < 800px)").matches(800, 400));
+    assert!(m("(prefers-color-scheme: light)").matches(500, 500));
+    assert!(!m("(prefers-color-scheme: dark)").matches(500, 500));
+    assert!(m("not (min-width: 1000px)").matches(500, 500));
+    assert!(m("(min-width: 40em)").matches(640, 500));
+    assert!(!m("(some-new-feature: 3)").matches(500, 500));
+    assert!(m("all").matches(1, 1));
+}
+
+#[test]
+fn imports_are_collected() {
+    let ss = parse_css(
+        "@import url(\"a.css\"); @import 'b.css' screen; @import url(c.css) print; p{color:red}",
+    );
+    assert_eq!(ss.imports, ["a.css", "b.css"]);
+    assert_eq!(ss.rules.len(), 1);
+}
+
+#[test]
+fn semicolons_inside_urls_and_strings_do_not_split() {
+    let d = parse_decls("background:url(data:image/png;base64,AAAA); content:\"a;b\"; color:red");
+    assert_eq!(d.len(), 3);
+    assert_eq!(d[2].value, "red");
 }
 
 #[test]
@@ -110,11 +160,13 @@ fn unsupported_selectors_never_match() {
     for s in [
         "a:hover",
         "p::before",
-        "li:first-child",
+        "a:focus",
+        "a:visited",
         "h1 + p",
         "h1 ~ p",
         "a >",
-        "p:not(.x)",
+        "p:unknown-thing",
+        "p:not(.a .b)",
     ] {
         assert!(parse_complex_selector(s).is_none(), "{s}");
     }
@@ -189,4 +241,41 @@ fn the_tag_index_offers_every_rule_that_can_match_in_rule_order() {
         let v = names(t);
         assert!(v.windows(2).all(|w| w[0] < w[1]), "{t}: {v:?}");
     }
+}
+
+#[test]
+fn structural_and_logical_pseudo_classes() {
+    let nodes =
+        el_of("<ul><li class=a>1</li><li>2</li><li class=a>3</li><li>4</li><li hidden>5</li></ul>");
+    let Node::Element(ul) = &nodes[0] else {
+        panic!()
+    };
+    let li = |i: usize| match &ul.children[i] {
+        Node::Element(e) => e,
+        _ => panic!(),
+    };
+    let anc = [ul];
+    assert!(m("li:first-child", li(0), &anc) && !m("li:first-child", li(1), &anc));
+    assert!(m("li:last-child", li(4), &anc) && !m("li:last-child", li(3), &anc));
+    assert!(m("li:nth-child(2)", li(1), &anc));
+    assert!(m("li:nth-child(odd)", li(2), &anc) && !m("li:nth-child(odd)", li(3), &anc));
+    assert!(m("li:nth-child(2n)", li(3), &anc));
+    assert!(m("li:nth-child(n+4)", li(3), &anc) && !m("li:nth-child(n+4)", li(2), &anc));
+    assert!(m("li:nth-child(-n+2)", li(1), &anc) && !m("li:nth-child(-n+2)", li(2), &anc));
+    assert!(m("li:nth-last-child(1)", li(4), &anc));
+    assert!(m("li:first-of-type", li(0), &anc) && m("li:last-of-type", li(4), &anc));
+    assert!(m("li:not(.a)", li(1), &anc) && !m("li:not(.a)", li(0), &anc));
+    assert!(m("li:not(.a, [hidden])", li(3), &anc) && !m("li:not(.a, [hidden])", li(4), &anc));
+    assert!(m(":is(ul, ol) > li", li(0), &anc));
+    assert!(m(":where(.a, .b)", li(0), &anc) && !m(":where(.a, .b)", li(1), &anc));
+    // Pseudo-classes weigh like classes.
+    let s = parse_complex_selector("li:first-child").unwrap();
+    assert_eq!(s.specificity(), (0, 1, 1));
+    // A selector list is split outside the parentheses.
+    assert_eq!(
+        parse_css("a:not(.x, .y), b{color:red}").rules[0]
+            .selectors
+            .len(),
+        2
+    );
 }

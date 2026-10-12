@@ -18,6 +18,7 @@ mod layout;
 #[cfg(test)]
 mod layout_tests;
 pub mod metrics;
+pub mod sheets;
 mod style;
 #[cfg(test)]
 mod tests_img_form;
@@ -51,11 +52,13 @@ impl Rgb {
     }
 }
 
-/// Blend `fg` over white at `alpha` (0..=255): translucent colours are resolved against the
-/// page's usual white because the display list has no alpha.
-fn over_white(r: u8, g: u8, b: u8, alpha: u32) -> Rgb {
-    let mix = |c: u8| ((u32::from(c) * alpha + 255 * (255 - alpha) + 127) / 255) as u8;
-    Rgb(mix(r), mix(g), mix(b))
+/// Blend `fg` over `back` at `alpha` (0..=255): translucent colours are resolved against what is
+/// behind them (the nearest ancestor's background, white by default) because the display list has no
+/// alpha.
+fn over(r: u8, g: u8, b: u8, alpha: u32, back: Rgb) -> Rgb {
+    let mix =
+        |c: u8, k: u8| ((u32::from(c) * alpha + u32::from(k) * (255 - alpha) + 127) / 255) as u8;
+    Rgb(mix(r, back.0), mix(g, back.1), mix(b, back.2))
 }
 
 /// One argument of `rgb()` / `hsl()`: thousandths, and whether it was written as a percent.
@@ -161,6 +164,11 @@ fn hsl_to_rgb(h: i64, s: i32, l: i32) -> (u8, u8, u8) {
 /// `hsl()`/`hsla()` and the named colors. Translucent values are blended over white.
 /// Returns `None` on anything unrecognized (and on `transparent`).
 pub fn parse_color(s: &str) -> Option<Rgb> {
+    parse_color_over(s, Rgb(255, 255, 255))
+}
+
+/// [`parse_color`] with translucent values blended over `back` instead of white.
+pub fn parse_color_over(s: &str, back: Rgb) -> Option<Rgb> {
     let s = s.trim();
     if let Some(hex) = s.strip_prefix('#') {
         // ASCII hex digits only: the fixed byte-offset slicing below would
@@ -173,11 +181,11 @@ pub fn parse_color(s: &str) -> Option<Rgb> {
             3 | 4 => {
                 let (r, g, b) = (h(0, 1)? * 17, h(1, 1)? * 17, h(2, 1)? * 17);
                 let a = if hex.len() == 4 { h(3, 1)? * 17 } else { 255 };
-                Some(over_white(r, g, b, u32::from(a)))
+                Some(over(r, g, b, u32::from(a), back))
             }
             6 | 8 => {
                 let a = if hex.len() == 8 { h(6, 2)? } else { 255 };
-                Some(over_white(h(0, 2)?, h(2, 2)?, h(4, 2)?, u32::from(a)))
+                Some(over(h(0, 2)?, h(2, 2)?, h(4, 2)?, u32::from(a), back))
             }
             _ => None,
         };
@@ -191,17 +199,18 @@ pub fn parse_color(s: &str) -> Option<Rgb> {
     };
     if let Some(inner) = func("rgba").or_else(|| func("rgb")) {
         let (a, alpha) = color_args(inner)?;
-        return Some(over_white(
+        return Some(over(
             a[0].channel(),
             a[1].channel(),
             a[2].channel(),
             alpha,
+            back,
         ));
     }
     if let Some(inner) = func("hsla").or_else(|| func("hsl")) {
         let (a, alpha) = color_args(inner)?;
         let (r, g, b) = hsl_to_rgb(a[0].milli / 1000, a[1].percent(), a[2].percent());
-        return Some(over_white(r, g, b, alpha));
+        return Some(over(r, g, b, alpha, back));
     }
     named_color(&lower)
 }
