@@ -97,7 +97,6 @@ tools/run.sh uefi            # same, UEFI
 tools/run.sh bios -- -accel kvm          # with KVM, when the host offers it
 ```
 
-> The repository is still named `OSjeff` on GitHub; the clone URL may change when it is renamed to `Kitsune` (GitHub redirects the old one).
 
 **Windows, native or WSL.** With Rust and QEMU installed on Windows, `.\run.ps1` builds right there; without `cargo`
 on Windows it builds in WSL and runs QEMU on Windows. Flags:
