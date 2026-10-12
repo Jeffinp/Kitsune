@@ -13,8 +13,16 @@ use alloc::vec::Vec;
 
 mod calc;
 mod cascade;
+mod functions;
+mod props_box;
+mod props_layout;
+mod props_text;
 mod values;
 pub(crate) use cascade::*;
+use functions::*;
+use props_box::apply_box;
+use props_layout::apply_layout;
+use props_text::apply_text;
 pub(crate) use values::*;
 
 // ---- the user-agent sheet ----

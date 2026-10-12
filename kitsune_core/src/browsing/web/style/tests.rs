@@ -225,24 +225,18 @@ fn custom_properties_substitute() {
 
 #[test]
 fn functions_that_pick_an_argument() {
+    assert_eq!(pick_args_for_test("light-dark(#fff, #000)"), "#fff");
     assert_eq!(
-        cascade::pick_args_for_test("light-dark(#fff, #000)"),
-        "#fff"
-    );
-    assert_eq!(
-        cascade::pick_args_for_test("1px solid light-dark(red, blue)"),
+        pick_args_for_test("1px solid light-dark(red, blue)"),
         "1px solid red"
     );
     assert_eq!(
-        cascade::pick_args_for_test("color-mix(in srgb, #ff0000 50%, white)"),
+        pick_args_for_test("color-mix(in srgb, #ff0000 50%, white)"),
         "#ff0000"
     );
+    assert_eq!(pick_args_for_test("env(safe-area-inset-top, 12px)"), "12px");
     assert_eq!(
-        cascade::pick_args_for_test("env(safe-area-inset-top, 12px)"),
-        "12px"
-    );
-    assert_eq!(
-        cascade::pick_args_for_test("light-dark(rgb(1,2,3), rgb(4,5,6)) x env(a, 3px)"),
+        pick_args_for_test("light-dark(rgb(1,2,3), rgb(4,5,6)) x env(a, 3px)"),
         "rgb(1,2,3) x 3px"
     );
 }

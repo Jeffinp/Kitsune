@@ -10,22 +10,27 @@
 use super::table::{content_intr, shift_cmd};
 use super::*;
 
+mod float;
+mod grid;
+mod line;
+pub(crate) use float::*;
+pub(crate) use grid::*;
+pub(crate) use line::*;
+
 /// Most boxes a flex or grid container lays out (the rest are dropped).
 const MAX_ITEMS: usize = 400;
 /// Most floats alive at once.
 const MAX_FLOATS: usize = 64;
-
 /// A float that is still beside the lines being laid out: its outer box (margins included).
 #[derive(Clone, Copy)]
-pub(super) struct FloatBox {
-    pub(super) x0: i32,
-    pub(super) x1: i32,
-    pub(super) top: i32,
-    pub(super) bottom: i32,
-    pub(super) left: bool,
+pub(crate) struct FloatBox {
+    pub(crate) x0: i32,
+    pub(crate) x1: i32,
+    pub(crate) top: i32,
+    pub(crate) bottom: i32,
+    pub(crate) left: bool,
 }
-
-struct FItem<'a> {
+pub(crate) struct FItem<'a> {
     el: &'a Element,
     c: Computed,
     /// Margins in pixels (`auto` counts as 0 and is flagged).
@@ -52,9 +57,8 @@ struct FItem<'a> {
     /// The box and its content, once laid out.
     placed: Placed,
 }
-
 #[derive(Default, Clone, Copy)]
-struct Placed {
+pub(crate) struct Placed {
     cmds: (usize, usize),
     hits: (usize, usize),
     fields: (usize, usize),
@@ -63,11 +67,9 @@ struct Placed {
     /// Border-box height.
     h: i32,
 }
-
 fn is_blank(t: &str) -> bool {
     t.chars().all(|c| c.is_whitespace() && c != '\u{a0}')
 }
-
 /// The boxes of a flex or grid container: its element children that are shown. `None` when a direct
 /// child is text (the container is then laid out as a block).
 fn gather<'a>(p: &mut Painter<'a>, el: &'a Element, c: &Computed) -> Option<Vec<FItem<'a>>> {
@@ -90,7 +92,6 @@ fn gather<'a>(p: &mut Painter<'a>, el: &'a Element, c: &Computed) -> Option<Vec<
     }
     Some(out)
 }
-
 fn new_item<'a>(el: &'a Element, c: Computed) -> FItem<'a> {
     FItem {
         el,
@@ -115,7 +116,6 @@ fn new_item<'a>(el: &'a Element, c: Computed) -> FItem<'a> {
         placed: Placed::default(),
     }
 }
-
 /// Resolve margins, padding and the width bounds of every item against a container `aw` wide.
 fn measure<'a>(p: &mut Painter<'a>, items: &mut [FItem<'a>], aw: i32) {
     let zoom = p.zoom;
@@ -169,7 +169,6 @@ fn measure<'a>(p: &mut Painter<'a>, items: &mut [FItem<'a>], aw: i32) {
         it.w = base.clamp(min, max);
     }
 }
-
 /// Lay out one box at `(x, y)` with border-box width `w`; returns its border-box height.
 fn place<'a>(
     p: &mut Painter<'a>,
@@ -208,7 +207,6 @@ fn place<'a>(
     };
     h
 }
-
 /// Stretch the box of `it` to `h` (its background and border), or move its content down by `dy`.
 fn align_item(p: &mut Painter, it: &FItem, line_h: i32, align: CrossAlign) {
     let outer = it.placed.h + it.mt + it.mb;
@@ -260,443 +258,6 @@ fn align_item(p: &mut Painter, it: &FItem, line_h: i32, align: CrossAlign) {
         }
     }
 }
-
-/// Distribute the room of one flex line to the boxes `a..b` (`grow` when there is free room,
-/// `shrink` when there is not, never beyond the bounds) and return what is left over.
-fn resolve_line(items: &mut [FItem], width: i32, gap: i32) -> i32 {
-    let n = items.len() as i32;
-    let gaps = gap * (n - 1).max(0);
-    let outer = |it: &FItem, w: i32| w + it.ml + it.mr;
-    for it in items.iter_mut() {
-        it.w = it.base;
-    }
-    let used: i32 = items.iter().map(|it| outer(it, it.w)).sum::<i32>() + gaps;
-    let mut free = width - used;
-    if free > 0 {
-        let mut open: Vec<usize> = (0..items.len()).filter(|&i| items[i].grow > 0).collect();
-        for _ in 0..4 {
-            let total: i64 = open.iter().map(|&i| i64::from(items[i].grow)).sum();
-            if total == 0 || free <= 0 {
-                break;
-            }
-            let mut spent = 0;
-            let mut still = Vec::new();
-            for &i in &open {
-                let add = (i64::from(free) * i64::from(items[i].grow) / total) as i32;
-                let w = items[i].w + add;
-                let cl = w.min(items[i].max);
-                spent += cl - items[i].w;
-                items[i].w = cl;
-                if w <= items[i].max {
-                    still.push(i);
-                }
-            }
-            free -= spent;
-            open = still;
-        }
-    } else if free < 0 {
-        let mut open: Vec<usize> = (0..items.len()).filter(|&i| items[i].shrink > 0).collect();
-        for _ in 0..4 {
-            let total: i64 = open
-                .iter()
-                .map(|&i| i64::from(items[i].shrink) * i64::from(items[i].w.max(1)))
-                .sum();
-            if total == 0 || free >= 0 {
-                break;
-            }
-            let mut spent = 0;
-            let mut still = Vec::new();
-            for &i in &open {
-                let share = i64::from(items[i].shrink) * i64::from(items[i].w.max(1));
-                let cut = (i64::from(-free) * share / total) as i32;
-                let w = items[i].w - cut;
-                let cl = w.max(items[i].min);
-                spent += items[i].w - cl;
-                items[i].w = cl;
-                if w >= items[i].min {
-                    still.push(i);
-                }
-            }
-            free += spent;
-            open = still;
-        }
-    }
-    for it in items.iter_mut() {
-        it.w = it.w.clamp(it.min, it.max.max(it.min));
-    }
-    let used: i32 = items.iter().map(|it| outer(it, it.w)).sum::<i32>() + gaps;
-    width - used
-}
-
-/// Place the boxes of a line left to right in `[x, x + width)`, spreading the leftover room by
-/// `justify` (auto margins take it first).
-fn position_line(items: &mut [FItem], x: i32, leftover: i32, justify: Justify, gap: i32) {
-    let n = items.len() as i32;
-    let mut left = leftover;
-    if left > 0 {
-        let autos: i32 = items
-            .iter()
-            .map(|it| i32::from(it.ml_auto) + i32::from(it.mr_auto))
-            .sum();
-        if autos > 0 {
-            let each = left / autos;
-            let mut rem = left - each * autos;
-            for it in items.iter_mut() {
-                for is_left in [true, false] {
-                    let flag = if is_left { it.ml_auto } else { it.mr_auto };
-                    if flag {
-                        let mut v = each;
-                        if rem > 0 {
-                            v += 1;
-                            rem -= 1;
-                        }
-                        if is_left {
-                            it.ml += v;
-                        } else {
-                            it.mr += v;
-                        }
-                    }
-                }
-            }
-            left = 0;
-        }
-    }
-    let left = left.max(0);
-    let (offset, between) = match justify {
-        Justify::Start => (0, 0),
-        Justify::Center => (left / 2, 0),
-        Justify::End => (left, 0),
-        Justify::Between if n > 1 => (0, left / (n - 1)),
-        Justify::Between => (0, 0),
-        Justify::Around => (left / (2 * n.max(1)), left / n.max(1)),
-        Justify::Evenly => (left / (n + 1), left / (n + 1)),
-    };
-    let mut cx = x + offset;
-    for it in items.iter_mut() {
-        it.x = cx + it.ml;
-        cx += it.ml + it.w + it.mr + gap + between;
-    }
-}
-
-/// The content of a flex container: rows (wrapping or not) or a column of boxes. Returns the y
-/// below it.
-pub(super) fn flex_layout<'a>(
-    p: &mut Painter<'a>,
-    el: &'a Element,
-    c: &Computed,
-    inner: Area,
-    y: i32,
-) -> i32 {
-    let Some(mut items) = gather(p, el, c) else {
-        return block_content(p, el, c, inner, y);
-    };
-    if items.is_empty() {
-        return y;
-    }
-    measure(p, &mut items, inner.w);
-    items.sort_by_key(|it| it.c.flex.order);
-    if c.flex.reverse {
-        items.reverse();
-    }
-    let (gap_row, gap_col) = (p.z(c.flex.gap_row), p.z(c.flex.gap_col));
-    if !c.flex.row {
-        return column_layout(p, &mut items, c, inner, y, gap_row);
-    }
-    let mut justify = c.flex.justify;
-    if c.flex.reverse {
-        justify = match justify {
-            Justify::Start => Justify::End,
-            Justify::End => Justify::Start,
-            j => j,
-        };
-    }
-    lines_layout(
-        p,
-        &mut items,
-        c,
-        inner,
-        y,
-        gap_col,
-        gap_row,
-        justify,
-        c.flex.wrap,
-    )
-}
-
-/// Rows of boxes: break into lines when `wrap`, size each line, place and align it.
-#[allow(clippy::too_many_arguments)]
-fn lines_layout<'a>(
-    p: &mut Painter<'a>,
-    items: &mut [FItem<'a>],
-    c: &Computed,
-    inner: Area,
-    mut y: i32,
-    gap_col: i32,
-    gap_row: i32,
-    justify: Justify,
-    wrap: bool,
-) -> i32 {
-    let mut start = 0;
-    let mut first_line = true;
-    while start < items.len() {
-        // The boxes of this line.
-        let mut end = start;
-        let mut w = 0;
-        while end < items.len() {
-            let it = &items[end];
-            let hyp = it.base.clamp(it.min, it.max.max(it.min));
-            let next = w + hyp + it.ml + it.mr + if end > start { gap_col } else { 0 };
-            if wrap && end > start && next > inner.w {
-                break;
-            }
-            w = next;
-            end += 1;
-        }
-        let line = &mut items[start..end];
-        let leftover = resolve_line(line, inner.w, gap_col);
-        position_line(line, inner.x, leftover, justify, gap_col);
-        if !first_line {
-            y = adv(y, gap_row);
-        }
-        first_line = false;
-        let mut line_h = 0;
-        for it in line.iter_mut() {
-            let h = place(p, it, c, inner, adv(y, it.mt));
-            line_h = line_h.max(h + it.mt + it.mb);
-        }
-        for it in line.iter() {
-            let align = it.c.flex.align_self.unwrap_or(c.flex.align);
-            align_item(p, it, line_h, align);
-        }
-        y = adv(y, line_h);
-        start = end;
-    }
-    y
-}
-
-/// A column of boxes: stacked, each as wide as the container (or as its content when the
-/// alignment is not `stretch`).
-fn column_layout<'a>(
-    p: &mut Painter<'a>,
-    items: &mut [FItem<'a>],
-    c: &Computed,
-    inner: Area,
-    mut y: i32,
-    gap: i32,
-) -> i32 {
-    let n = items.len();
-    for (i, it) in items.iter_mut().enumerate() {
-        let align = it.c.flex.align_self.unwrap_or(c.flex.align);
-        let room = (inner.w - it.ml - it.mr).max(1);
-        let explicit = it.c.width != Len::Auto || it.c.flex.basis != Len::Auto;
-        let w = if align == CrossAlign::Stretch && !explicit {
-            room
-        } else {
-            it.base.clamp(it.min, it.max.max(it.min)).min(room)
-        }
-        .clamp(it.min.min(room), it.max.max(1));
-        it.w = w;
-        let spare = (room - w).max(0);
-        let off = match (it.ml_auto, it.mr_auto, align) {
-            (true, true, _) => spare / 2,
-            (true, false, _) => spare,
-            (false, true, _) => 0,
-            (_, _, CrossAlign::Center) => spare / 2,
-            (_, _, CrossAlign::End) => spare,
-            _ => 0,
-        };
-        it.x = inner.x + it.ml + off;
-        let h = place(p, it, c, inner, adv(y, it.mt));
-        y = adv(y, it.mt + h + it.mb);
-        if i + 1 < n {
-            y = adv(y, gap);
-        }
-    }
-    y
-}
-
-/// The content of a grid container: boxes placed row by row into the columns of
-/// `grid-template-columns` (`fr`, lengths, `auto`, `repeat(auto-fill, minmax())`), all of a row as
-/// tall as the tallest.
-pub(super) fn grid_layout<'a>(
-    p: &mut Painter<'a>,
-    el: &'a Element,
-    c: &Computed,
-    inner: Area,
-    mut y: i32,
-) -> i32 {
-    let Some(mut items) = gather(p, el, c) else {
-        return block_content(p, el, c, inner, y);
-    };
-    if items.is_empty() {
-        return y;
-    }
-    measure(p, &mut items, inner.w);
-    items.sort_by_key(|it| it.c.flex.order);
-    let (gap_row, gap_col) = (p.z(c.flex.gap_row), p.z(c.flex.gap_col));
-    let spec = c.flex.tracks.clone();
-    // The tracks.
-    let tracks: Vec<Track> = match (spec.auto_min, spec.cols.is_empty()) {
-        (Some(min), true) => {
-            let min = p.z(min).max(1);
-            let n = ((inner.w + gap_col) / (min + gap_col)).clamp(1, 12) as usize;
-            alloc::vec![Track::Fr(1000); n]
-        }
-        (_, true) => alloc::vec![Track::Fr(1000)],
-        _ => spec.cols.clone(),
-    };
-    // The areas of `grid-template-areas`: the cells each name covers, `(row, column, rows, columns)`.
-    let area_cols = spec.areas.iter().map(Vec::len).max().unwrap_or(0);
-    let ncols = tracks.len().max(area_cols);
-    let mut tracks = tracks;
-    tracks.resize(ncols, Track::Fr(1000));
-    let find_area = |name: &str| -> Option<(usize, usize, usize, usize)> {
-        let (mut r0, mut r1, mut c0, mut c1) = (usize::MAX, 0, usize::MAX, 0);
-        for (r, row) in spec.areas.iter().enumerate() {
-            for (k, cell) in row.iter().enumerate() {
-                if cell == name {
-                    r0 = r0.min(r);
-                    r1 = r1.max(r);
-                    c0 = c0.min(k);
-                    c1 = c1.max(k);
-                }
-            }
-        }
-        (r0 != usize::MAX).then_some((r0, c0, r1 - r0 + 1, c1 - c0 + 1))
-    };
-    // Place the boxes: named areas where they are, the rest row by row in the free cells.
-    let mut taken: Vec<Vec<bool>> = Vec::new();
-    let mark = |taken: &mut Vec<Vec<bool>>, r: usize, c: usize, rs: usize, cs: usize| {
-        while taken.len() < r + rs {
-            taken.push(alloc::vec![false; ncols]);
-        }
-        for row in taken.iter_mut().skip(r).take(rs) {
-            for cell in row.iter_mut().skip(c).take(cs) {
-                *cell = true;
-            }
-        }
-    };
-    let mut auto: Vec<usize> = Vec::new();
-    for (i, it) in items.iter_mut().enumerate() {
-        let named = it.c.flex.area.as_deref().and_then(find_area);
-        if let Some((r, c0, rs, cs)) = named {
-            it.row = r;
-            it.col = c0;
-            it.rspan = rs;
-            it.span = cs;
-            mark(&mut taken, r, c0, rs, cs);
-        } else {
-            auto.push(i);
-        }
-    }
-    let (mut col, mut row) = (0usize, 0usize);
-    for i in auto {
-        let span = usize::from(items[i].c.flex.span).clamp(1, ncols);
-        loop {
-            if col + span > ncols {
-                col = 0;
-                row += 1;
-            }
-            let free = (col..col + span).all(|k| !taken.get(row).is_some_and(|r| r[k]));
-            if free {
-                break;
-            }
-            col += 1;
-        }
-        items[i].row = row;
-        items[i].col = col;
-        items[i].rspan = 1;
-        items[i].span = span;
-        mark(&mut taken, row, col, 1, span);
-        col += span;
-    }
-    let nrows = items.iter().map(|it| it.row + it.rspan).max().unwrap_or(0);
-    // Track widths: lengths first, `auto` from the widest single-column box, `fr` share the rest.
-    let gaps = gap_col * (ncols as i32 - 1);
-    let mut widths = alloc::vec![0i32; ncols];
-    let mut fr_total = 0i64;
-    for (k, t) in tracks.iter().enumerate() {
-        match *t {
-            Track::Px(v) => widths[k] = p.z(v),
-            Track::Pct(v) => widths[k] = (i64::from(inner.w) * i64::from(v) / 100) as i32,
-            Track::Auto => {
-                widths[k] = items
-                    .iter()
-                    .filter(|it| it.col == k && it.span == 1)
-                    .map(|it| it.base.clamp(it.min, it.max.max(it.min)) + it.ml + it.mr)
-                    .max()
-                    .unwrap_or(0)
-                    .min(inner.w / 2 + 1);
-            }
-            Track::Fr(f) => fr_total += i64::from(f.max(1)),
-        }
-    }
-    let fixed: i32 = widths.iter().sum::<i32>() + gaps;
-    let rest = (inner.w - fixed).max(0);
-    for (k, t) in tracks.iter().enumerate() {
-        if let Track::Fr(f) = *t {
-            widths[k] = (i64::from(rest) * i64::from(f.max(1)) / fr_total.max(1)) as i32;
-        }
-    }
-    let mut colx = Vec::with_capacity(ncols);
-    let mut x = inner.x;
-    for w in &widths {
-        colx.push(x);
-        x += w + gap_col;
-    }
-    // Rows, top to bottom. A box that spans rows is laid out at its first one; its last row is made
-    // tall enough to hold it.
-    let mut row_top = alloc::vec![y; nrows + 1];
-    let mut any_before = false;
-    for r in 0..nrows {
-        let starting: Vec<usize> = (0..items.len()).filter(|&i| items[i].row == r).collect();
-        let ending: Vec<usize> = (0..items.len())
-            .filter(|&i| items[i].row + items[i].rspan - 1 == r)
-            .collect();
-        if starting.is_empty() && ending.is_empty() {
-            row_top[r + 1] = row_top[r];
-            continue;
-        }
-        if any_before {
-            row_top[r] = adv(row_top[r], gap_row);
-        }
-        any_before = true;
-        for &i in &starting {
-            let it = &mut items[i];
-            let last = (it.col + it.span).min(ncols);
-            let span_w: i32 = widths[it.col..last].iter().sum::<i32>()
-                + gap_col * (last - it.col) as i32
-                - gap_col;
-            it.w = (span_w - it.ml - it.mr).max(1);
-            it.x = colx[it.col] + it.ml;
-            // A box with its own width is not stretched to the cell.
-            if it.c.width != Len::Auto
-                && it.c.flex.align_self.unwrap_or(c.flex.align) != CrossAlign::Stretch
-            {
-                it.w = it.base.clamp(it.min, it.max.max(it.min)).min(it.w);
-            }
-            let top = adv(row_top[r], it.mt);
-            place(p, it, c, inner, top);
-        }
-        // The height of the row: the boxes that end in it, measured from where they began.
-        let mut row_h = 0;
-        for &i in &ending {
-            let it = &items[i];
-            let need = it.placed.h + it.mt + it.mb - (row_top[r] - row_top[it.row]);
-            row_h = row_h.max(need);
-        }
-        for &i in &ending {
-            let it = &items[i];
-            let total = row_h + (row_top[r] - row_top[it.row]);
-            let align = it.c.flex.align_self.unwrap_or(c.flex.align);
-            align_item(p, it, total, align);
-        }
-        row_top[r + 1] = adv(row_top[r], row_h);
-    }
-    y = row_top[nrows];
-    y
-}
-
 /// The children of `el` laid out as ordinary block content.
 fn block_content<'a>(
     p: &mut Painter<'a>,
@@ -708,7 +269,6 @@ fn block_content<'a>(
     let y = flow(p, &el.children, c, c, inner, y);
     flush_inline(p, c, inner, y, None)
 }
-
 /// A run of `inline-block` siblings (and the blanks between them) starting at `nodes[start]`, laid
 /// out as wrapping rows aligned by the container's `text-align`. Returns the y below it and the
 /// number of nodes consumed.
@@ -759,108 +319,3 @@ pub(super) fn inline_run<'a>(
 }
 
 // ---- floats ----
-
-/// The room for a line (or a box that avoids floats) in `[y, y + h)`: `area` narrowed by the
-/// floats that overlap it.
-pub(super) fn band(p: &Painter, area: Area, y: i32, h: i32) -> Area {
-    let (mut l, mut r) = (area.x, area.x + area.w);
-    for f in &p.floats {
-        if f.top < y + h.max(1) && f.bottom > y {
-            if f.left {
-                l = l.max(f.x1);
-            } else {
-                r = r.min(f.x0);
-            }
-        }
-    }
-    Area {
-        x: l,
-        w: (r - l).max(1),
-    }
-}
-
-/// The y of the lowest bottom edge of the floats `clear` asks to get past (or `y`).
-pub(super) fn cleared(p: &Painter, clear: Clear, y: i32) -> i32 {
-    let mut out = y;
-    for f in &p.floats {
-        let hit = match clear {
-            Clear::None => false,
-            Clear::Left => f.left,
-            Clear::Right => !f.left,
-            Clear::Both => true,
-        };
-        if hit {
-            out = out.max(f.bottom);
-        }
-    }
-    out
-}
-
-/// Lowest bottom edge of the floats from index `from` on.
-pub(super) fn floats_bottom(p: &Painter, from: usize) -> i32 {
-    p.floats[from.min(p.floats.len())..]
-        .iter()
-        .map(|f| f.bottom)
-        .max()
-        .unwrap_or(i32::MIN)
-}
-
-/// Put the floating element `el` (style `c`) at the left or right of `area`, at `y` or lower if it
-/// does not fit beside the floats already there. It takes no room in the flow.
-pub(super) fn place_float<'a>(
-    p: &mut Painter<'a>,
-    el: &'a Element,
-    c: &Computed,
-    area: Area,
-    y: i32,
-) {
-    if p.floats.len() >= MAX_FLOATS {
-        return;
-    }
-    let mut items = alloc::vec![new_item(el, c.clone())];
-    measure(p, &mut items, area.w);
-    let mut it = items.pop().unwrap_or_else(|| unreachable!());
-    // Width: its own, or what its content wants, never wider than the room.
-    let room = (area.w - it.ml - it.mr).max(1);
-    it.w = it.base.clamp(it.min, it.max.max(it.min)).min(room).max(1);
-    let outer = it.w + it.ml + it.mr;
-    let left = c.float == Float::Left;
-    let mut ty = y;
-    // Move down until it fits between the floats already there.
-    for _ in 0..MAX_FLOATS {
-        let b = band(p, area, ty, 1);
-        if b.w >= outer || b.w >= area.w {
-            break;
-        }
-        // The next edge below: the nearest bottom of a float overlapping this band.
-        let next = p
-            .floats
-            .iter()
-            .filter(|f| f.top < ty + 1 && f.bottom > ty)
-            .map(|f| f.bottom)
-            .min();
-        match next {
-            Some(n) if n > ty => ty = n,
-            _ => break,
-        }
-    }
-    let b = band(p, area, ty, 1);
-    let x = if left {
-        b.x
-    } else {
-        (b.x + b.w - outer).max(b.x)
-    };
-    it.x = x + it.ml;
-    let saved = (p.pending, p.space.take());
-    let top = adv(ty, it.mt);
-    let h = place(p, &mut it, c, area, top);
-    p.pending = saved.0;
-    p.space = saved.1;
-    p.floats.push(FloatBox {
-        x0: x,
-        x1: x + outer,
-        top: ty,
-        bottom: adv(ty, it.mt + h + it.mb),
-        left,
-    });
-}
