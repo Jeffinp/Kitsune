@@ -10,10 +10,11 @@ pub(super) fn matched_decls<'a>(
     anc: &[&Element],
     sheet: &'a Stylesheet,
     budget: &mut u32,
+    pseudo: u8,
 ) -> (Vec<&'a Decl>, Vec<&'a Decl>) {
     let mut hit: Vec<(Specificity, &'a super::super::css::Rule)> = Vec::new();
     let mut test = |r: &'a super::super::css::Rule| {
-        if !sheet.rule_applies(r) {
+        if r.pseudo != pseudo || !sheet.rule_applies(r) {
             return;
         }
         let mut best: Option<Specificity> = None;
@@ -64,38 +65,9 @@ pub(crate) fn compute(
     budget: &mut u32,
 ) -> Computed {
     let mut c = parent.clone();
-    // Not inherited: reset to the initial values.
-    c.display = default_display(&el.tag);
-    c.bg = None;
-    c.margin = [Len::Px(0); 4];
-    c.padding = [Len::Px(0); 4];
-    c.border_w = [0; 4];
-    c.radius = 0;
-    c.width = Len::Auto;
-    c.max_width = Len::Auto;
-    c.min_height = 0;
-    c.border_box = false;
-    c.spacing = 2;
-    c.collapse = false;
-    c.valign = VAlign::Middle;
-    c.vshift = 0;
-    c.float = Float::None;
-    c.clear = Clear::None;
-    c.bfc = false;
-    c.clearfix = false;
-    c.position = Pos::Static;
-    c.min_width = Len::Auto;
-    c.flex = FlexStyle {
-        // `align-items`, the gaps and the track list belong to the container; the item
-        // properties start over, and the grid spec is not inherited either.
-        ..FlexStyle::default()
-    };
-    c.hidden = false;
-    c.clipped = false;
-    c.offscreen = false;
-    // `text-indent` is inherited; the rest above are not.
+    reset_non_inherited(&mut c, el);
 
-    let (ua, mut au) = matched_decls(el, anc, sheet, budget);
+    let (ua, mut au) = matched_decls(el, anc, sheet, budget, 0);
     let parent_px = parent.font_px;
     apply_decls(&mut c, &ua, parent_px);
     // Presentational attributes beat the user-agent sheet and lose to the page's.
@@ -139,6 +111,82 @@ fn hidden_by_position(c: &Computed) -> bool {
     }
     let tiny_w = matches!(c.width, Len::Px(w) if w <= 2);
     c.offscreen || (c.clipped && (tiny_w || c.bfc)) || (tiny_w && c.bfc)
+}
+
+/// The declarations of the rules for the `kind` generated box of `el` (author sheet, in cascade order).
+pub(crate) fn matched_pseudo_decls<'a>(
+    el: &Element,
+    anc: &[&Element],
+    sheet: &'a Stylesheet,
+    budget: &mut u32,
+    kind: u8,
+) -> (Vec<&'a Decl>, Vec<&'a Decl>) {
+    matched_decls(el, anc, sheet, budget, kind)
+}
+
+/// Reset what is not inherited to its initial value (`tag` decides the default `display`).
+fn reset_non_inherited(c: &mut Computed, el: &Element) {
+    let tag = el.tag.as_str();
+    // Not inherited: reset to the initial values.
+    c.display = default_display(tag);
+    c.bg = None;
+    c.margin = [Len::Px(0); 4];
+    c.padding = [Len::Px(0); 4];
+    c.border_w = [0; 4];
+    c.radius = 0;
+    c.width = Len::Auto;
+    c.max_width = Len::Auto;
+    c.min_height = 0;
+    c.border_box = false;
+    c.spacing = 2;
+    c.collapse = false;
+    c.valign = VAlign::Middle;
+    c.vshift = 0;
+    c.float = Float::None;
+    c.clear = Clear::None;
+    c.bfc = false;
+    c.clearfix = false;
+    c.position = Pos::Static;
+    c.min_width = Len::Auto;
+    c.flex = FlexStyle {
+        // `align-items`, the gaps and the track list belong to the container; the item
+        // properties start over, and the grid spec is not inherited either.
+        ..FlexStyle::default()
+    };
+    c.hidden = false;
+    c.clipped = false;
+    c.offscreen = false;
+    // `text-indent` is inherited; the rest above are not.
+    c.content = None;
+}
+
+/// The style of the `::before` (1) or `::after` (2) box of `el`, when a rule gives it `content`;
+/// `parent` is the style of `el`, `anc` its ancestors. `None` when there is no such box.
+pub(crate) fn compute_pseudo(
+    el: &Element,
+    sheet: &Stylesheet,
+    parent: &Computed,
+    anc: &[&Element],
+    kind: u8,
+    budget: &mut u32,
+) -> Option<Computed> {
+    let (_, au) = matched_decls(el, anc, sheet, budget, kind);
+    if au.is_empty() {
+        return None;
+    }
+    let mut c = parent.clone();
+    // A generated box is an inline child of its element: the box properties start over.
+    reset_non_inherited(&mut c, el);
+    c.display = Disp::Inline;
+    gather_vars(&mut c, &au);
+    apply_decls(&mut c, &au, parent.font_px);
+    if let Some(bg) = c.bg {
+        c.backdrop = bg;
+    }
+    if c.hidden || c.display == Disp::None {
+        return None;
+    }
+    c.content.is_some().then_some(c)
 }
 
 /// Custom properties declared by `decls` join the inherited ones.
@@ -441,6 +489,7 @@ pub(super) fn apply_decls(c: &mut Computed, decls: &[&Decl], parent_px: i32) {
                     c.min_height = p.max(c.min_height.min(0)).max(0);
                 }
             }
+            "content" => c.content = parse_content(v),
             "position" => {
                 c.position = match v.to_ascii_lowercase().as_str() {
                     "absolute" | "fixed" => Pos::Abs,
@@ -821,4 +870,71 @@ fn pick_args(v: &str) -> String {
         break;
     }
     out
+}
+
+/// The text of a `content` value: its quoted strings (CSS escapes decoded), `open-quote` and
+/// `close-quote`; `attr()`, counters and `url()` give nothing. `None` for `none` / `normal`. Private-use
+/// characters (icon fonts) are dropped: there is no font for them.
+fn parse_content(v: &str) -> Option<String> {
+    let l = v.trim();
+    if l.eq_ignore_ascii_case("none") || l.eq_ignore_ascii_case("normal") {
+        return None;
+    }
+    let mut out = String::new();
+    let b = l.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            q @ (b'"' | b'\'') => {
+                i += 1;
+                while i < b.len() && b[i] != q {
+                    if b[i] == b'\\' && i + 1 < b.len() {
+                        i += 1;
+                        let hex: String = l[i..]
+                            .chars()
+                            .take_while(char::is_ascii_hexdigit)
+                            .take(6)
+                            .collect();
+                        if hex.is_empty() {
+                            // An escaped character stands for itself (a newline escape is nothing).
+                            let ch = l[i..].chars().next().unwrap_or(' ');
+                            if ch != '\n' {
+                                out.push(ch);
+                            }
+                            i += ch.len_utf8();
+                        } else {
+                            let cp = u32::from_str_radix(&hex, 16).unwrap_or(0xfffd);
+                            if let Some(ch) = char::from_u32(cp) {
+                                out.push(ch);
+                            }
+                            i += hex.len();
+                            // One space after a hex escape belongs to it.
+                            if b.get(i) == Some(&b' ') {
+                                i += 1;
+                            }
+                        }
+                    } else {
+                        let ch = l[i..].chars().next().unwrap_or(' ');
+                        out.push(ch);
+                        i += ch.len_utf8();
+                    }
+                }
+                i += 1;
+            }
+            _ => {
+                let rest = &l[i..];
+                if rest.starts_with("open-quote") {
+                    out.push('\u{201c}');
+                    i += 10;
+                } else if rest.starts_with("close-quote") {
+                    out.push('\u{201d}');
+                    i += 11;
+                } else {
+                    i += rest.chars().next().map_or(1, char::len_utf8);
+                }
+            }
+        }
+    }
+    out.retain(|c| !('\u{e000}'..='\u{f8ff}').contains(&c));
+    Some(out)
 }

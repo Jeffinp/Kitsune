@@ -51,6 +51,23 @@ fn webp_svg_and_empty_are_unsupported() {
 }
 
 #[test]
+fn svg_pictures_decode_at_their_size_or_the_column() {
+    let svg = b"<svg xmlns='http://www.w3.org/2000/svg' width='200' height='100'><rect width='200' height='100' fill='#336699'/></svg>";
+    assert_eq!(peek_dims(svg), Some((200, 100)));
+    let l = decode_for_page(svg, 1000).unwrap();
+    assert_eq!((l.orig_w, l.orig_h), (200, 100));
+    assert_eq!((l.img.width(), l.img.height()), (200, 100));
+    let l = decode_for_page(svg, 50).unwrap();
+    assert_eq!((l.orig_w, l.img.width(), l.img.height()), (200, 50, 25));
+    // Opaque after flattening over the page colour.
+    assert!(l.img.is_opaque());
+    assert_eq!(
+        decode_for_page(b"<svg width='99999' height='9'/>", 100).err(),
+        Some(ImgFail::TooBig)
+    );
+}
+
+#[test]
 fn truncated_png_fails_cleanly() {
     let p = png(50, 50);
     assert_eq!(

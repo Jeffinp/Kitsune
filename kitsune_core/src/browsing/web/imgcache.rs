@@ -25,6 +25,7 @@
 
 use crate::format::base64;
 use crate::format::image::{self, Filter, Format, Image};
+use crate::format::svg;
 use crate::tk;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -127,6 +128,9 @@ pub struct Loaded {
 /// Width and height from the file header, without decoding. `None` for an
 /// unknown or truncated header.
 pub fn peek_dims(bytes: &[u8]) -> Option<(usize, usize)> {
+    if svg::looks_like(bytes) {
+        return svg::dims(bytes);
+    }
     match image::detect(bytes)? {
         Format::Png => {
             let h = crate::format::png::read_header(bytes).ok()?;
@@ -184,6 +188,9 @@ pub fn decode_for_page(body: &[u8], fit_w: usize) -> Result<Loaded, ImgFail> {
     if body.len() > MAX_IMAGE_BYTES {
         return Err(ImgFail::TooBig);
     }
+    if svg::looks_like(body) {
+        return decode_svg(body, fit_w);
+    }
     if image::detect(body).is_none() {
         return Err(ImgFail::Unsupported);
     }
@@ -210,6 +217,22 @@ pub fn decode_for_page(body: &[u8], fit_w: usize) -> Result<Loaded, ImgFail> {
         img
     };
     img.flatten(PAGE_BG);
+    Ok(Loaded {
+        orig_w: ow,
+        orig_h: oh,
+        img,
+    })
+}
+
+/// An SVG picture, drawn at its own size or the column's width, whichever is smaller.
+fn decode_svg(body: &[u8], fit_w: usize) -> Result<Loaded, ImgFail> {
+    let mut img = svg::render(body, fit_w.clamp(16, 4096)).map_err(|e| match e {
+        svg::SvgError::NotSvg => ImgFail::Unsupported,
+        svg::SvgError::BadSize => ImgFail::TooBig,
+        svg::SvgError::OutOfMemory => ImgFail::Failed,
+    })?;
+    img.flatten(PAGE_BG);
+    let (ow, oh) = svg::dims(body).unwrap_or((img.width(), img.height()));
     Ok(Loaded {
         orig_w: ow,
         orig_h: oh,

@@ -17,6 +17,8 @@ renomeio mantêm o nome da época.
   quirks mode, caixas escondidas de propósito. `MAX_NODES` 20 000, `MAX_RULES` 6 000.
 - **Correção de TLS**: o buffer de registro era de 16 KiB exatos e todo registro de tamanho máximo falhava, cortando páginas
   grandes (a Wikipédia vinha com 15 KB de 72 KB); agora 16 KiB + 256. Índice de regras por tag, classe e id.
+- **`::before`/`::after`** (texto gerado e clearfix), **combinadores de irmão** (`+`, `~`) e um **rasterizador de SVG** próprio
+  (`format::svg`) para logos e ícones.
 - Planejado: bloqueador de anúncios nativo, escolhido pela pessoa (`docs/ROADMAP.md`, item 10).
 - Ferramentas: `tools/render-page.py` + exemplo `render_page` (renderizam páginas reais no host),
   `tools/fetch-page-css.py`; cenários `w49-browser-css.sh` e `w50-real-site.sh`.

@@ -28,7 +28,7 @@ use super::imgcache::{ImageLookup, ImgState, NoImages};
 use super::metrics::{FixedAdvance, Font, TextMetrics};
 use super::style::{
     Align, Clear, Computed, CrossAlign, Disp, Float, Justify, Len, LineH, ListStyle, Pos, Track,
-    UA_CSS, Ws, compute, transform_text, zoom_px,
+    UA_CSS, Ws, compute, compute_pseudo, transform_text, zoom_px,
 };
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -321,6 +321,7 @@ impl Doc {
         let base = sheet.medias.len();
         sheet.medias.extend(own.medias);
         sheet.imports = own.imports;
+        sheet.has_pseudo |= own.has_pseudo;
         sheet.rules.extend(own.rules.into_iter().map(|mut r| {
             if r.media != 0 {
                 r.media += base as u16;
@@ -391,6 +392,7 @@ impl Doc {
         let base = self.sheet.medias.len();
         let room = MAX_RULES.saturating_sub(self.sheet.rules.len());
         self.sheet.medias.extend(new.medias);
+        self.sheet.has_pseudo |= new.has_pseudo;
         let take = new.rules.len().min(room);
         let at = self.ua_rules + self.ext_rules;
         let rules: Vec<_> = new

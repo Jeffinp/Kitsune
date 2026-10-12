@@ -88,6 +88,75 @@ fn only_boxes<'a>(p: &mut Painter<'a>, nodes: &'a [Node], parent: &Computed) -> 
     })
 }
 
+/// The generated box of `el`: its `::before` (`kind` 1) or `::after` (2). `p.anc` ends with `el`.
+/// Text joins the inline content with the box's own style; a block-level box with `content: ""`, a
+/// height and a background is drawn as a bar. Returns the new y.
+fn pseudo_box<'a>(
+    p: &mut Painter<'a>,
+    el: &'a Element,
+    c: &Computed,
+    area: Area,
+    mut y: i32,
+    kind: u8,
+) -> i32 {
+    if !p.sheet.has_pseudo {
+        return y;
+    }
+    let n = p.anc.len().saturating_sub(1);
+    let anc: Vec<&Element> = p.anc[..n].to_vec();
+    let Some(pc) = compute_pseudo(el, p.sheet, c, &anc, kind, &mut p.budget) else {
+        return y;
+    };
+    let text = pc.content.clone().unwrap_or_default();
+    let block = !matches!(pc.display, Disp::Inline | Disp::InlineBlock);
+    if block {
+        y = flush_inline(p, c, area, y, None);
+    }
+    if text.trim().is_empty() {
+        if block && pc.min_height > 0 {
+            y = adv(y, core::mem::take(&mut p.pending));
+            if let Some(bg) = pc.bg {
+                let w = pc
+                    .width
+                    .resolve(area.w, p.zoom)
+                    .unwrap_or(area.w)
+                    .clamp(1, area.w);
+                let h = p.z(pc.min_height);
+                p.push_cmd(Cmd::Rect {
+                    x: area.x,
+                    y,
+                    w,
+                    h,
+                    color: bg,
+                    radius: p.z(pc.radius),
+                });
+            }
+            y = adv(y, p.z(pc.min_height));
+        }
+        return y;
+    }
+    // Inline-block and inline boxes: the text takes the box's style (colour, weight, size).
+    p.space = None;
+    push_text(p, &text, &pc);
+    if block {
+        y = flush_inline(p, c, area, y, None);
+    }
+    y
+}
+
+/// Does the `::after` of `el` clear floats (a "clearfix")? `p.anc` holds the ancestors of `el`.
+fn pseudo_clears<'a>(p: &mut Painter<'a>, el: &'a Element, c: &Computed) -> bool {
+    if !p.sheet.has_pseudo {
+        return false;
+    }
+    let anc: Vec<&Element> = p.anc.to_vec();
+    let (_, au) =
+        crate::browsing::web::style::matched_pseudo_decls(el, &anc, p.sheet, &mut p.budget, 2);
+    let _ = c;
+    au.iter()
+        .any(|d| d.name == "clear" && !d.value.trim().eq_ignore_ascii_case("none"))
+}
+
 /// An inline element: special ones (`br`, `img`, controls), otherwise its
 /// children join the inline run.
 pub(super) fn inline_element<'a>(
@@ -133,7 +202,9 @@ pub(super) fn inline_element<'a>(
         p.items.push(Item::Gap(pl, st, sp));
     }
     p.anc.push(el);
+    let y = pseudo_box(p, el, c, area, y, 1);
     let y = flow(p, &el.children, c, c, area, y);
+    let y = pseudo_box(p, el, c, area, y, 2);
     p.anc.pop();
     if pr > 0 {
         p.items.push(Item::Gap(pr, st, None));
@@ -555,7 +626,9 @@ pub(super) fn layout_block_in<'a>(
     } else if c.display == Disp::Grid {
         y = grid_layout(p, el, c, inner, y);
     } else {
+        y = pseudo_box(p, el, c, inner, y, 1);
         y = flow(p, &el.children, c, c, inner, y);
+        y = pseudo_box(p, el, c, inner, y, 2);
         y = flush_inline(p, c, inner, y, None);
     }
     p.anc.pop();
@@ -570,7 +643,8 @@ pub(super) fn layout_block_in<'a>(
                 c.display,
                 Disp::Table | Disp::Flex | Disp::Grid | Disp::TableCell | Disp::InlineBlock
             )
-            || y <= content_top;
+            || y <= content_top
+            || pseudo_clears(p, el, c);
         if holds {
             y = y.max(floats_bottom(p, floats_before));
             p.floats.truncate(floats_before);

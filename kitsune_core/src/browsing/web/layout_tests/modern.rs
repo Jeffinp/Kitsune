@@ -331,3 +331,48 @@ fn translucent_colours_blend_over_the_ancestor_background() {
         "{blended:?}"
     );
 }
+
+#[test]
+fn generated_text_before_and_after() {
+    let p = lay(
+        "<style>.q::before{content:\"« \"}.q::after{content:\" »\";color:#010101}\
+         .e::after{content:\"\\2192\"}.i::before{content:\"\\f101\"}</style>\
+         <body style='margin:0'><p class=q>texto</p><p class=e>x</p><p class=i>y</p></body>",
+        600,
+    );
+    let all: String = texts(&p).join("|");
+    assert!(all.contains("«") && all.contains("»"), "{all}");
+    assert!(all.contains('\u{2192}'), "{all}");
+    // An icon-font character has no glyph: the box adds nothing.
+    assert!(!all.contains('\u{f101}'), "{all}");
+    // The ::after has its own colour.
+    let after = p.cmds.iter().find_map(|c| match c {
+        Cmd::Text { text, color, .. } if text.contains('»') => Some(*color),
+        _ => None,
+    });
+    assert_eq!(after, Some(Rgb(1, 1, 1)));
+}
+
+#[test]
+fn clearfix_after_holds_the_floats() {
+    let p = lay(
+        "<style>.cf::after{content:\"\";display:table;clear:both}</style>\
+         <body style='margin:0'><div class=cf style='background:#010101'>\
+         <div style='float:left;width:50px;height:60px;background:#020202'>f</div></div>\
+         <p style='margin:0'>below</p></body>",
+        300,
+    );
+    let (_, _, _, h) = rect_of(&p, Rgb(1, 1, 1)).unwrap();
+    assert!(h >= 60, "the container grew to the float: {h}");
+    assert!(y_of(&p, "below") >= 60);
+}
+
+#[test]
+fn content_none_and_unsupported_pseudo_elements_add_nothing() {
+    let p = lay(
+        "<style>p::before{content:none}p::marker{content:\"x\"}p::first-line{color:red}</style>\
+         <body style='margin:0'><p>a</p></body>",
+        300,
+    );
+    assert_eq!(texts(&p), ["a"]);
+}

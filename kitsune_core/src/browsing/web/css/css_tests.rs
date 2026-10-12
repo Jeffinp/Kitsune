@@ -159,12 +159,12 @@ fn descendant_and_child_combinators_match_the_chain() {
 fn unsupported_selectors_never_match() {
     for s in [
         "a:hover",
-        "p::before",
+        "p::marker",
+        "p::before:hover",
         "a:focus",
         "a:visited",
-        "h1 + p",
-        "h1 ~ p",
         "a >",
+        "a +",
         "p:unknown-thing",
         "p:not(.a .b)",
     ] {
@@ -221,7 +221,8 @@ fn the_index_offers_every_rule_that_can_match_in_rule_order() {
     let mut ss = parse_css(
         "p{a:1} .x{a:2} div p{a:3} h1,p{a:4} *{a:5} [id]{a:6} span > b{a:7} a, .y{a:8} #k{a:9} p.z{a:10}",
     );
-    let nodes = el_of("<p id=k class='x z'>t</p><section></section><h1></h1><b></b><a class=y></a>");
+    let nodes =
+        el_of("<p id=k class='x z'>t</p><section></section><h1></h1><b></b><a class=y></a>");
     let el = |i: usize| match &nodes[i] {
         Node::Element(e) => e,
         _ => panic!(),
@@ -245,7 +246,10 @@ fn the_index_offers_every_rule_that_can_match_in_rule_order() {
     for (k, e) in (0..5).map(|k| (k, el(k))) {
         let cand = names(e);
         for (i, r) in ss.rules.iter().enumerate() {
-            let hit = r.selectors.iter().any(|s| s.matches_element(e) && s.ancestors.is_empty());
+            let hit = r
+                .selectors
+                .iter()
+                .any(|s| s.matches_element(e) && s.ancestors.is_empty());
             assert!(!hit || cand.contains(&i), "element {k} rule {i}");
         }
     }
@@ -286,4 +290,31 @@ fn structural_and_logical_pseudo_classes() {
             .len(),
         2
     );
+}
+
+#[test]
+fn sibling_combinators() {
+    let nodes =
+        el_of("<div><h1>t</h1><p id=a>1</p><p id=b>2</p><span id=c>3</span><p id=d>4</p></div>");
+    let Node::Element(div) = &nodes[0] else {
+        panic!()
+    };
+    let child = |i: usize| match &div.children[i] {
+        Node::Element(e) => e,
+        _ => panic!(),
+    };
+    let anc = [div];
+    assert!(m("h1 + p", child(1), &anc));
+    assert!(!m("h1 + p", child(2), &anc), "not adjacent");
+    assert!(m("h1 ~ p", child(2), &anc) && m("h1 ~ p", child(4), &anc));
+    assert!(m("p + span", child(3), &anc) && !m("p + span", child(4), &anc));
+    assert!(m("p + p", child(2), &anc) && !m("p + p", child(1), &anc));
+    assert!(m("span + p", child(4), &anc));
+    // Mixed with the other combinators.
+    assert!(m("div > h1 + p", child(1), &anc));
+    assert!(m("div h1 ~ p#d", child(4), &anc));
+    assert!(!m("h1 + p", child(0), &anc));
+    // The index still finds the rule (it is keyed by the rightmost compound).
+    let ss = parse_css("h1 + p{color:red}");
+    assert_eq!(ss.rules.len(), 1);
 }

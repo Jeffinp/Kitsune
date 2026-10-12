@@ -231,7 +231,11 @@ impl Net {
                 Err(e) => {
                     // Includes the peer's close_notify; anything else is worth knowing about.
                     if !matches!(e, embedded_tls::TlsError::ConnectionClosed) {
-                        crate::serial_println!("https: read ended with {:?} after {} bytes", e, out.len());
+                        crate::serial_println!(
+                            "https: read ended with {:?} after {} bytes",
+                            e,
+                            out.len()
+                        );
                     }
                     break;
                 }

@@ -416,7 +416,7 @@ está; `@supports not` é pulado), `var(--x, fallback)`, `calc()`, `min()`, `max
 do ancestral (e não com o branco), `;` dentro de `url(...)` e de strings, `html` sempre existe (`:root` vale em
 fragmentos). Seletores: `:not()`, `:is()`, `:where()`, `:first/last/only-child`, `:nth-child()` e `:nth-of-type()`
 (e os `last`), `:first/last-of-type`, `:empty`, `:link`, `:checked`, `:disabled`, `:enabled`; `:hover`, `:focus`,
-`:visited`, pseudo-elementos e irmãos (`+`, `~`) continuam fazendo a regra não valer. Entidades: todas as do HTML 4.
+`:visited` e os pseudo-elementos que não são `::before`/`::after` continuam fazendo a regra não valer. Combinadores de irmão (`+`, `~`) valem. Entidades: todas as do HTML 4.
 
 **Layout** (`layout/flex.rs`): `display:flex` em linha ou coluna (`wrap`, `flex` / `grow` / `shrink` / `basis`, `gap`,
 `justify-content`, `align-items` / `align-self`, `order`, margens `auto`, `reverse`), `display:grid`
@@ -428,8 +428,18 @@ diferente de `visible`, é um `::after{clear}` ou só tem floats), tabelas em *q
 escondidas de propósito (`visibility:hidden`, `opacity:0`, `position:absolute` fora da tela ou recortada,
 `text-indent:-9999px`, `[hidden]`) não são desenhadas; `position:absolute` e `fixed` ficam no fluxo.
 
-**Limites.** Sem JavaScript, sem `::before`/`::after`, sem `position` de verdade (`sticky`, `fixed`, `absolute`
-vão para o fluxo), sem imagens de fundo, sem `grid-template-areas` nem linhas explícitas, sem fontes da web, sem
+**Conteúdo gerado.** `::before` e `::after` (`content` com texto, aspas e escapes; o texto toma a cor, o peso e o tamanho da regra;
+caracteres da área privada de fontes de ícones são descartados; um bloco vazio com altura e fundo vira uma barra;
+`::after{clear:both}` faz o elemento conter os seus floats).
+
+**SVG** (`format::svg`, só inteiros): `<img src=*.svg>` e `data:image/svg+xml` são desenhados por um rasterizador próprio
+com bordas suavizadas: `path` (todos os comandos; o arco elíptico vira a corda), `rect`, `circle`, `ellipse`, `line`,
+`polyline`, `polygon`, `fill`/`stroke`/`stroke-width`, opacidades, `fill-rule`, `transform`, `style="..."`, `viewBox`,
+gradientes (a primeira cor vale pelo gradiente). Sem texto, `use`, filtros, máscaras, recortes nem `<style>`. Logos
+e ícones de Wikipédia, Python, Rust e HN saem certos.
+
+**Limites.** Sem JavaScript, sem `position` de verdade (`sticky`, `fixed`, `absolute`
+vão para o fluxo), sem imagens de fundo (`background-image: url()`), sem `grid-template-areas` nem linhas explícitas, sem fontes da web, sem
 `rowspan`, sem cookies. Uma página SPA (BBC, por exemplo) mostra só o que o HTML do servidor traz.
 
 **Como olhar uma página sem iniciar o sistema.** `tools/fetch-page-css.py URL pasta` baixa a página e as folhas

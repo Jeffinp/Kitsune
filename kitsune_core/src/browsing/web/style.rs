@@ -362,6 +362,8 @@ pub(crate) struct Computed {
     pub(crate) clipped: bool,
     /// Offsets `left`, `top` far off the page.
     pub(crate) offscreen: bool,
+    /// `content` of a `::before` / `::after` box (decoded; `None` = no box).
+    pub(crate) content: Option<String>,
 }
 
 /// The custom properties in effect: name (lower case, with the `--`) to its text.
@@ -411,6 +413,7 @@ impl Computed {
             indent: 0,
             clipped: false,
             offscreen: false,
+            content: None,
         }
     }
 }

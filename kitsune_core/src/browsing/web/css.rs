@@ -5,7 +5,7 @@
 //! approximated: a selector with a pseudo-class (`a:hover`), a sibling combinator
 //! or a pseudo-element never matches, so it cannot restyle the wrong elements.
 
-use super::dom::Element;
+use super::dom::{Element, Node};
 
 mod media;
 use alloc::string::{String, ToString};
@@ -43,6 +43,8 @@ pub struct Stylesheet {
     pub medias: Vec<Media>,
     /// Addresses of the `@import`ed sheets, in order.
     pub imports: Vec<String>,
+    /// Some rule styles a `::before` or `::after`.
+    pub has_pseudo: bool,
     /// The rules that can match an element, found by what it is called, its `id` and its classes: per
     /// name, the indices (in rule order) of the rules whose selectors end in that tag, id or class.
     /// Empty until [`build_index`].
@@ -140,6 +142,8 @@ pub struct Rule {
     /// From the page (true) or from the user-agent sheet (false). Presentational attributes
     /// beat the second kind and lose to the first.
     pub author: bool,
+    /// `::before` (1) / `::after` (2): the rule styles the generated box, not the element (0 = the element).
+    pub pseudo: u8,
     /// `1 + index` into [`Stylesheet::medias`] when the rule sits in an `@media` block (0 = always).
     pub media: u16,
 }
@@ -284,6 +288,8 @@ pub struct Compound {
     pub classes: Vec<String>,
     pub attrs: Vec<AttrSel>,
     pub pseudos: Vec<Pseudo>,
+    /// `::before` (1) or `::after` (2) at the end of the selector, 0 for none.
+    pub pseudo_el: u8,
 }
 
 impl Compound {
@@ -328,6 +334,10 @@ pub enum Comb {
     Descendant,
     /// `a > b`: the parent.
     Child,
+    /// `a + b`: the element right before.
+    Adjacent,
+    /// `a ~ b`: any element before, under the same parent.
+    Sibling,
 }
 
 /// A selector: the compound for the element itself (the rightmost one, kept in
@@ -339,6 +349,8 @@ pub struct Selector {
     pub classes: Vec<String>,
     pub attrs: Vec<AttrSel>,
     pub pseudos: Vec<Pseudo>,
+    /// `::before` (1) or `::after` (2): the rule styles that generated box of the element.
+    pub pseudo_el: u8,
     /// Compounds to the left, nearest first, with how each relates to the one to its right.
     pub ancestors: Vec<(Comb, Compound)>,
 }
@@ -400,6 +412,8 @@ impl Selector {
             return false;
         }
         let mut idx = anc.len();
+        // The element the next compound is to the left of (a sibling step moves it sideways).
+        let mut cur: &Element = el;
         for (comb, comp) in &self.ancestors {
             match comb {
                 Comb::Child => {
@@ -411,6 +425,7 @@ impl Selector {
                     if !comp.matches(anc[idx]) {
                         return false;
                     }
+                    cur = anc[idx];
                 }
                 Comb::Descendant => loop {
                     if idx == 0 || *budget == 0 {
@@ -419,9 +434,44 @@ impl Selector {
                     *budget -= 1;
                     idx -= 1;
                     if comp.matches(anc[idx]) {
+                        cur = anc[idx];
                         break;
                     }
                 },
+                Comb::Adjacent | Comb::Sibling => {
+                    // The siblings are the children of the parent, `anc[idx - 1]`.
+                    if idx == 0 || *budget == 0 {
+                        return false;
+                    }
+                    *budget -= 1;
+                    let parent = anc[idx - 1];
+                    let Some(pos) = parent
+                        .children
+                        .iter()
+                        .position(|n| matches!(n, Node::Element(e) if core::ptr::eq(e, cur)))
+                    else {
+                        return false;
+                    };
+                    let mut found = None;
+                    for n in parent.children[..pos].iter().rev() {
+                        let Node::Element(s) = n else { continue };
+                        if *budget == 0 {
+                            return false;
+                        }
+                        *budget -= 1;
+                        if comp.matches(s) {
+                            found = Some(s);
+                            break;
+                        }
+                        if *comb == Comb::Adjacent {
+                            return false;
+                        }
+                    }
+                    match found {
+                        Some(s) => cur = s,
+                        None => return false,
+                    }
+                }
             }
         }
         true
@@ -458,8 +508,10 @@ pub fn parse_css(input: &str) -> Stylesheet {
     let text = strip_comments(&input[..end]);
     let mut st = ParseState::default();
     parse_into(text.as_bytes(), 0, 0, &mut st);
+    let has_pseudo = st.rules.iter().any(|r| r.pseudo != 0);
     Stylesheet {
         rules: st.rules,
+        has_pseudo,
         medias: st.medias,
         imports: st.imports,
         ..Default::default()
@@ -593,12 +645,23 @@ fn parse_into(b: &[u8], media: u16, depth: u8, st: &mut ParseState) {
         let decls = parse_decls(decl_text);
         if !selectors.is_empty() && !decls.is_empty() {
             st.selector_total += selectors.len();
-            st.rules.push(Rule {
-                selectors,
-                decls,
-                author: true,
-                media,
-            });
+            // A list that mixes elements and generated boxes becomes one rule per kind.
+            for kind in 0..3u8 {
+                let group: Vec<Selector> = selectors
+                    .iter()
+                    .filter(|s| s.pseudo_el == kind)
+                    .cloned()
+                    .collect();
+                if !group.is_empty() {
+                    st.rules.push(Rule {
+                        selectors: group,
+                        decls: decls.clone(),
+                        author: true,
+                        pseudo: kind,
+                        media,
+                    });
+                }
+            }
         }
     }
 }
@@ -704,7 +767,14 @@ fn parse_complex_selector(s: &str) -> Option<Selector> {
                 pending = Comb::Child;
                 i += 1;
             }
-            b'+' | b'~' => return None,
+            b'+' => {
+                pending = Comb::Adjacent;
+                i += 1;
+            }
+            b'~' => {
+                pending = Comb::Sibling;
+                i += 1;
+            }
             _ => {
                 let (comp, n) = parse_compound(&s[i..])?;
                 i += n;
@@ -717,7 +787,14 @@ fn parse_complex_selector(s: &str) -> Option<Selector> {
         }
     }
     // `pending` after the loop would be a dangling combinator ("a >"): invalid.
-    if parts.is_empty() || (pending == Comb::Child) {
+    if parts.is_empty() || pending != Comb::Descendant {
+        return None;
+    }
+    // A generated box can only end a selector.
+    if parts[..parts.len() - 1]
+        .iter()
+        .any(|(_, c)| c.pseudo_el != 0)
+    {
         return None;
     }
     // `parts[k].0` is the combinator between compound k-1 and compound k.
@@ -733,6 +810,7 @@ fn parse_complex_selector(s: &str) -> Option<Selector> {
         classes: last.classes,
         attrs: last.attrs,
         pseudos: last.pseudos,
+        pseudo_el: last.pseudo_el,
         ancestors,
     })
 }
@@ -787,6 +865,7 @@ fn parse_compound(s: &str) -> Option<(Compound, usize)> {
         && c.classes.is_empty()
         && c.attrs.is_empty()
         && c.pseudos.is_empty()
+        && c.pseudo_el == 0
     {
         return None;
     }
@@ -798,8 +877,27 @@ fn parse_compound(s: &str) -> Option<(Compound, usize)> {
 /// the whole selector is dropped.
 fn parse_pseudo(s: &str, c: &mut Compound) -> Option<usize> {
     let b = s.as_bytes();
+    // `::before` / `::after` (and the one-colon spelling) style a generated box; the other
+    // pseudo-elements are not drawn.
+    for (name, kind) in [
+        ("::before", 1u8),
+        (":before", 1),
+        ("::after", 2),
+        (":after", 2),
+    ] {
+        if s.len() >= name.len()
+            && s.as_bytes()[..name.len()].eq_ignore_ascii_case(name.as_bytes())
+            && !s
+                .as_bytes()
+                .get(name.len())
+                .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'-')
+        {
+            c.pseudo_el = kind;
+            return Some(name.len());
+        }
+    }
     if b.get(1) == Some(&b':') {
-        return None; // a pseudo-element
+        return None; // another pseudo-element
     }
     let mut n = 1;
     while n < b.len() && (b[n].is_ascii_alphanumeric() || b[n] == b'-') {
