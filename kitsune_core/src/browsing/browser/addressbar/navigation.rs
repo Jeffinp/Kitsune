@@ -165,6 +165,4 @@ impl Browser {
         self.pending = true;
         self.status = Status::Loading;
     }
-
-    // ---- the browser's own pages, favourites and suggestions ----
 }

@@ -114,5 +114,3 @@ impl Compose {
         }
     }
 }
-
-// ---- editing state ----

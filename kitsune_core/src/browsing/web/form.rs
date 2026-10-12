@@ -162,7 +162,6 @@ pub fn urlencode(s: &str, out: &mut String) {
     }
 }
 
-// ---- dead-key composition ----
 /// What a key did to the focused control.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FormOutcome {
