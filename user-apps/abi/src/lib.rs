@@ -2,7 +2,7 @@
 //!
 //! Numbers 0–6 (exit, write, yield, getpid, sleep, uptime, brk) and 16–21 (the WebAssembly host,
 //! `kitsune_core::appabi::remote`) are documented where they are served; this crate owns 32–42 (files
-//! and arguments) and 48–51 (a window).
+//! and arguments), 48–51 (a window) and 52–54 (child processes).
 //! A call is `rax` = number, `rdi`, `rsi`, `rdx`, `r10`, `r8` = arguments, result in `rax`
 //! (negative = `-errno`, see [`errno`]). Pointers are user addresses; the kernel copies through the
 //! process's page tables and never trusts them.
@@ -35,6 +35,13 @@ pub const SYS_WIN_OPEN: u64 = 48;
 pub const SYS_WIN_PRESENT: u64 = 49;
 pub const SYS_WIN_EVENT: u64 = 50;
 pub const SYS_WIN_TITLE: u64 = 51;
+
+/// `spawn(req_ptr, req_len)`: start a program (see [`pack_spawn`]); returns its pid.
+pub const SYS_SPAWN: u64 = 52;
+/// `proc_poll(pid, out_ptr, cap)`: take what child `pid` wrote; see [`pack_poll`].
+pub const SYS_PROC_POLL: u64 = 53;
+/// `proc_kill(pid)`: stop a child.
+pub const SYS_PROC_KILL: u64 = 54;
 
 /// Largest window content, in pixels (the biggest the desktop shows).
 pub const WIN_MAX_W: u32 = 1280;
@@ -115,7 +122,11 @@ pub const MAX_ARGS: usize = 4096;
 
 /// Negative results.
 pub mod errno {
+    pub const ESRCH: i64 = -3;
     pub const EIO: i64 = -5;
+    pub const ENOEXEC: i64 = -8;
+    pub const EAGAIN: i64 = -11;
+    pub const ENOMEM: i64 = -12;
     pub const EBADF: i64 = -9;
     pub const EBUSY: i64 = -16;
     pub const EACCES: i64 = -13;
@@ -185,6 +196,107 @@ impl StatRec {
             gid: u32_at(28),
         }
     }
+}
+
+/// Largest [`SYS_SPAWN`] request, in bytes (an executable image rides in it).
+pub const MAX_SPAWN: usize = 1 << 20;
+/// Size of the fixed head of a spawn request.
+pub const SPAWN_HEAD: usize = 16;
+
+/// A decoded [`SYS_SPAWN`] request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpawnReq<'a> {
+    /// Name of the embedded program, or the name the image runs under.
+    pub name: &'a str,
+    /// The blob of [`pack_args`].
+    pub args: &'a [u8],
+    /// An ELF image to run instead of the embedded program (empty = use the embedded one).
+    pub image: &'a [u8],
+    /// What the child reads from its standard input.
+    pub stdin: &'a [u8],
+}
+
+/// The request bytes: `u16 name_len, u16 0, u32 args_len, u32 image_len, u32 stdin_len`, then the four
+/// parts in that order. `None` when it would exceed [`MAX_SPAWN`] or the name is longer than 255 bytes.
+#[cfg(feature = "alloc")]
+pub fn pack_spawn(req: &SpawnReq<'_>) -> Option<Vec<u8>> {
+    if req.name.len() > 255 {
+        return None;
+    }
+    let total = SPAWN_HEAD + req.name.len() + req.args.len() + req.image.len() + req.stdin.len();
+    if total > MAX_SPAWN {
+        return None;
+    }
+    let mut o = Vec::with_capacity(total);
+    o.extend_from_slice(&(req.name.len() as u16).to_le_bytes());
+    o.extend_from_slice(&[0, 0]);
+    for n in [req.args.len(), req.image.len(), req.stdin.len()] {
+        o.extend_from_slice(&(n as u32).to_le_bytes());
+    }
+    o.extend_from_slice(req.name.as_bytes());
+    o.extend_from_slice(req.args);
+    o.extend_from_slice(req.image);
+    o.extend_from_slice(req.stdin);
+    Some(o)
+}
+
+/// Decodes a request made by [`pack_spawn`]; `None` if it is malformed (lengths that do not add up,
+/// a name that is not UTF-8 or is empty).
+pub fn unpack_spawn(b: &[u8]) -> Option<SpawnReq<'_>> {
+    let head = b.get(..SPAWN_HEAD)?;
+    let name_len = usize::from(u16::from_le_bytes([head[0], head[1]]));
+    let word =
+        |i: usize| u32::from_le_bytes([head[i], head[i + 1], head[i + 2], head[i + 3]]) as usize;
+    let (args_len, image_len, stdin_len) = (word(4), word(8), word(12));
+    let total = SPAWN_HEAD
+        .checked_add(name_len)?
+        .checked_add(args_len)?
+        .checked_add(image_len)?
+        .checked_add(stdin_len)?;
+    if total != b.len() || name_len == 0 {
+        return None;
+    }
+    let (name, rest) = b[SPAWN_HEAD..].split_at(name_len);
+    let (args, rest) = rest.split_at(args_len);
+    let (image, stdin) = rest.split_at(image_len);
+    Some(SpawnReq {
+        name: core::str::from_utf8(name).ok()?,
+        args,
+        image,
+        stdin,
+    })
+}
+
+/// How a child stands, in [`SYS_PROC_POLL`]'s result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChildState {
+    Running,
+    /// Ended by itself with this status (low 16 bits, signed).
+    Exited(i16),
+    /// A fault or a kill.
+    Killed,
+}
+
+/// `SYS_PROC_POLL` result: bits 0..32 the bytes written to the buffer, bits 32..34 the state
+/// (0 running, 1 exited, 2 killed), bits 40..56 the exit status. Never negative.
+pub fn pack_poll(bytes: usize, state: ChildState) -> i64 {
+    let (k, code) = match state {
+        ChildState::Running => (0u64, 0u64),
+        ChildState::Exited(c) => (1, u64::from(c as u16)),
+        ChildState::Killed => (2, 0),
+    };
+    ((bytes as u64 & 0xFFFF_FFFF) | k << 32 | code << 40) as i64
+}
+
+/// Splits a [`pack_poll`] result.
+pub fn unpack_poll(v: i64) -> (usize, ChildState) {
+    let v = v as u64;
+    let state = match (v >> 32) & 3 {
+        0 => ChildState::Running,
+        1 => ChildState::Exited(((v >> 40) & 0xFFFF) as u16 as i16),
+        _ => ChildState::Killed,
+    };
+    ((v & 0xFFFF_FFFF) as usize, state)
 }
 
 /// The arguments blob [`SYS_GETARGS`] returns: the working directory, then each argument, every one

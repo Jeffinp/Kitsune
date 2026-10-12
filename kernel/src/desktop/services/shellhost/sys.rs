@@ -107,6 +107,7 @@ impl SysInfo for KSys {
         };
         let args = kitsune_userabi::pack_args(&ctx.cwd, &ctx.args).ok_or(SpawnFail::BadArgs)?;
         let launch = Launch {
+            parent: 0,
             cwd: ctx.cwd.clone(),
             args,
             stdin: ctx.stdin.clone(),

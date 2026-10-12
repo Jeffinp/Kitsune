@@ -32,6 +32,8 @@ interface pequena de chamadas de sistema. É o primeiro passo da fase 3 de
 | 4 | `sleep_ms(ms)` | até um minuto, bloqueia a thread sem gastar tempo |
 | 5 | `uptime_ms()` | |
 | 6 | `brk(fim)` | cresce o heap (a partir de `0x1000_0000`, até 8 MiB) com páginas zeradas; devolve o fim do heap, inalterado se recusado |
+| 7 | `time()` | segundos desde 1970 no relógio de parede, já no fuso escolhido |
+| 8 | `language()` | idioma da interface (0 português, 1 inglês) |
 | 16–21 | `host_*` | só para o hospedeiro WebAssembly (seção abaixo) |
 | 32 | `open(caminho, len, flags)` | `O_WRITE` 1, `O_CREATE` 2, `O_TRUNC` 4, `O_APPEND` 8; devolve o descritor (3 em diante, até 16 abertos) |
 | 33 | `close(fd)` | |
@@ -48,6 +50,9 @@ interface pequena de chamadas de sistema. É o primeiro passo da fase 3 de
 | 49 | `win_present(ptr, w, h)` | mostra um quadro: `w * h` pixels RGBA, 4 bytes cada, sem folga entre linhas |
 | 50 | `win_event(ptr, timeout_ms)` | escreve 16 bytes (`Event`: tipo e três inteiros) e devolve 1; devolve 0 se nada veio no prazo (0 só olha, `u64::MAX` espera sem limite) |
 | 51 | `win_title(ptr, len)` | muda o título |
+| 52 | `spawn(req, len)` | inicia um filho (programa embutido ou imagem ELF, argumentos, pasta, entrada padrão; até 1 MiB; `pack_spawn`); devolve o pid. Age com a mesma `Cred` do pai |
+| 53 | `proc_poll(pid, ptr, cap)` | move até `cap` bytes da saída do filho e diz se ele ainda roda (`pack_poll`: bytes, estado, status) |
+| 54 | `proc_kill(pid)` | para um filho |
 
 Todo ponteiro é traduzido pelas tabelas do próprio processo, página por página
 (`AddressSpace::copy_in`), antes de o kernel tocar nele: um ponteiro ruim é um erro de retorno
@@ -100,6 +105,29 @@ e o pedido de fechar (`EV_KEY`, `EV_TEXT`, `EV_POINTER`, `EV_RESIZE`, `EV_CLOSE`
 * **Provado.** Cenário `tools/perf/scen/w47-ring3-window.sh`: o `gfxdemo` abre a janela, anima um quadrado,
   a cruz segue o ponteiro, uma tecla muda a barra, o botão de fechar termina o programa e devolve o prompt, e
   `Ctrl+C` mata o processo e a janela mostra o motivo.
+
+## Processos filhos e o Terminal em anel 3
+
+`spawn`, `proc_poll` e `proc_kill` (52–54) deixam um processo iniciar e acompanhar outros. O pedido de `spawn`
+(`kitsune_userabi::pack_spawn`: nome, argumentos, imagem opcional, entrada padrão) é enfileirado e a `procfsd`
+cria o processo, com a `Cred` do pai e a pasta de trabalho dos argumentos. O pai só enxerga os próprios filhos
+(`ESRCH` para os outros) e o kernel **guarda o filho até o pai coletar o fim** (`reap` espera; se o pai some, o
+filho é recolhido normalmente), então status e saída não se perdem. A saída chega por `proc_poll` em pedaços de
+até 64 KiB; o filho só conta como terminado quando tudo foi lido.
+
+O **`kterm`** (`user-apps/kterm`, `run kterm`) é o Terminal como programa de anel 3: o mesmo motor de shell e
+editor de linha do Terminal do desktop (`kitsune_core::shell`: `Term`, `Shell`, `ShellFs`, `SysInfo`), rodando
+num processo próprio com janela própria. `ShellFs` fala com as chamadas de arquivo (cada operação checada contra os
+direitos do usuário: `echo oi > /x` na raiz dá "Permissão negada"), `SysInfo` com `time`, `uptime`, `spawn`
+e `proc_poll` (o `run` do shell funciona, com pipe, argumentos e `Ctrl+C`). Enquanto um comando roda o
+processo continua lendo os eventos da janela: `Ctrl+C` cancela, fechar a janela encerra. O desenho usa a fonte
+bitmap 8x8 em 2x (`user-apps/glyphs.rs`, a mesma tabela do kernel), então é mais simples que o Terminal do desktop
+(sem seleção, sem cursor piscante, sem rolagem do mouse). A pilha do `kterm` é de 512 KiB (o parser e o executor
+recursam). Hoje ele é aberto pelo Terminal do desktop (`run kterm`); o desktop ainda não o põe no dock.
+
+Ainda sem: `ps`, `kill`, `free`, `df`, `whoami` e rede (`ping`, `curl`, `nslookup`), `edit`, `files` e `tasks`
+(precisam de chamadas que o processo ainda não tem), `chmod`/`chown`, tamanho de arquivo em `ls` custa uma
+chamada `stat` por entrada.
 
 ## O que foi provado em QEMU (cenário W43)
 
@@ -169,7 +197,7 @@ janelas `stac`/`clac`. Também: NX nas pilhas e no heap do processo, W^X imposto
 
 ## O que ainda não está
 
-* O Terminal, o Editor, o Navegador, o compositor e os apps v1/WASI **continuam no anel 0**; rodam
+* O Terminal do desktop, o Editor, o Navegador, o compositor e os apps v1/WASI **continuam no anel 0**; rodam
   isolados os programas ELF e os apps WebAssembly v2. As funções `osj.*` (e o estado de arquivos, rede e
   desktop) ainda executam no kernel, a serviço do processo, e o `wasmi` do kernel segue compilado para os
   apps que não podem sair dele.

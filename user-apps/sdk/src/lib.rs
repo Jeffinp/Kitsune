@@ -19,6 +19,8 @@
 use core::fmt;
 
 pub mod fs;
+#[cfg(feature = "heap")]
+mod heap;
 pub mod win;
 pub use kitsune_userabi as abi;
 
@@ -31,6 +33,8 @@ mod nr {
     pub const SLEEP_MS: u64 = 4;
     pub const UPTIME_MS: u64 = 5;
     pub const BRK: u64 = 6;
+    pub const TIME: u64 = 7;
+    pub const LANG: u64 = 8;
 }
 
 /// A raw three-argument system call.
@@ -115,6 +119,19 @@ pub fn sleep_ms(ms: u64) {
 pub fn uptime_ms() -> u64 {
     // SAFETY: no arguments.
     unsafe { syscall3(nr::UPTIME_MS, 0, 0, 0) as u64 }
+}
+
+/// Seconds since 1970-01-01 on the wall clock, already in the time zone the user chose (`0` when the
+/// system has no clock).
+pub fn local_time_secs() -> i64 {
+    // SAFETY: no arguments.
+    unsafe { syscall3(nr::TIME, 0, 0, 0) }
+}
+
+/// The language of the interface (`0` Portuguese, `1` English), as the user chose it.
+pub fn language() -> u8 {
+    // SAFETY: no arguments.
+    unsafe { syscall3(nr::LANG, 0, 0, 0) as u8 }
 }
 
 /// Grow the heap to at least `end` (a byte address, `0` = just ask). Returns the end of the heap

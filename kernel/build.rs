@@ -104,6 +104,8 @@ const USER_CRATES: &[(&str, &[&str])] = &[
     ),
     // The WebAssembly host that runs an app inside a process (see `src/wasm/remote.rs`).
     ("wasmhost", &["wasmhost"]),
+    // The Terminal in ring 3 (`run kterm`): the shell engine over the file and process calls.
+    ("kterm", &["kterm"]),
 ];
 
 /// Build every crate of [`USER_CRATES`] for bare metal with the user linker script and write

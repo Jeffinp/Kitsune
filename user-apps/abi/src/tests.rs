@@ -95,3 +95,70 @@ fn events_round_trip() {
         assert!(kinds[i + 1..].iter().all(|b| b != a));
     }
 }
+
+#[test]
+fn spawn_request_round_trips() {
+    let req = SpawnReq {
+        name: "cat",
+        args: b"/home\0a.txt\0",
+        image: &[],
+        stdin: b"hello",
+    };
+    let wire = pack_spawn(&req).unwrap();
+    assert_eq!(unpack_spawn(&wire).unwrap(), req);
+    let with_image = SpawnReq {
+        image: b"\x7fELFxx",
+        ..req.clone()
+    };
+    let wire = pack_spawn(&with_image).unwrap();
+    assert_eq!(unpack_spawn(&wire).unwrap(), with_image);
+}
+
+#[test]
+fn bad_spawn_requests_are_refused() {
+    assert!(unpack_spawn(&[]).is_none());
+    assert!(unpack_spawn(&[0; SPAWN_HEAD]).is_none()); // empty name
+    let req = SpawnReq {
+        name: "a",
+        args: b"",
+        image: b"",
+        stdin: b"xyz",
+    };
+    let mut wire = pack_spawn(&req).unwrap();
+    wire.push(0); // trailing byte
+    assert!(unpack_spawn(&wire).is_none());
+    wire.truncate(wire.len() - 2); // short
+    assert!(unpack_spawn(&wire).is_none());
+    // Lengths that overflow.
+    let mut huge = vec![0u8; SPAWN_HEAD];
+    huge[0] = 1;
+    huge[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
+    huge[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(unpack_spawn(&huge).is_none());
+    let big = vec![0u8; MAX_SPAWN];
+    assert!(
+        pack_spawn(&SpawnReq {
+            name: "a",
+            args: b"",
+            image: &big,
+            stdin: b""
+        })
+        .is_none()
+    );
+}
+
+#[test]
+fn poll_results_round_trip() {
+    for state in [
+        ChildState::Running,
+        ChildState::Exited(0),
+        ChildState::Exited(-1),
+        ChildState::Exited(130),
+        ChildState::Exited(i16::MIN),
+        ChildState::Killed,
+    ] {
+        let v = pack_poll(65_536, state);
+        assert!(v >= 0);
+        assert_eq!(unpack_poll(v), (65_536, state));
+    }
+}

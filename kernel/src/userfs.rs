@@ -10,6 +10,7 @@
 
 use crate::desktop::vfs;
 use crate::userproc::{self, Fd, FsReq};
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use kitsune_core::perm::Cred;
@@ -262,10 +263,38 @@ fn run(pid: u32, req: FsReq, cred: &Option<Cred>) -> Result<i64, i64> {
             crate::wasm::native_title(handle, core::str::from_utf8(&title).unwrap_or(""));
             Ok(0)
         }
+        FsReq::Spawn { req } => spawn_child(pid, &req, cred),
         FsReq::Rename { from, to } => {
             on_volume(cred, |b| b.rename(&from, &to, now()))?;
             vfs::touch();
             Ok(0)
         }
     }
+}
+
+/// Start the program a `SYS_SPAWN` request describes as a child of `parent`, acting as the same user.
+fn spawn_child(parent: u32, wire: &[u8], cred: &Option<Cred>) -> Result<i64, i64> {
+    use userproc::{Launch, SpawnError};
+    let req = abi::unpack_spawn(wire).ok_or(errno::EINVAL)?;
+    let image: &[u8] = if req.image.is_empty() {
+        userproc::embedded(req.name).ok_or(errno::ENOENT)?
+    } else {
+        req.image
+    };
+    let cwd = String::from(abi::unpack_args(req.args).0);
+    let launch = Launch {
+        parent,
+        cwd,
+        args: req.args.to_vec(),
+        stdin: req.stdin.to_vec(),
+        cred: cred.clone(),
+    };
+    userproc::spawn_elf(req.name, image, launch)
+        .map(i64::from)
+        .map_err(|e| match e {
+            SpawnError::BadElf(_) => errno::ENOEXEC,
+            SpawnError::OutOfMemory => errno::ENOMEM,
+            SpawnError::TooMany => errno::EAGAIN,
+            SpawnError::NoHost => errno::ENOENT,
+        })
 }

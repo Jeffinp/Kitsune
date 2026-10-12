@@ -1,0 +1,21 @@
+# The Terminal as a ring 3 program: the shell engine of `kitsune_core` over the file and process
+# calls of the kernel, drawn into its own window. See docs/design/processos.md.
+[package]
+name = "kterm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+kitsune-user = { path = "../sdk", features = ["heap"] }
+kitsune-userabi = { path = "../abi", features = ["alloc"] }
+kitsune_core = { path = "../../kitsune_core" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
+codegen-units = 1
+strip = true
+
+[workspace]

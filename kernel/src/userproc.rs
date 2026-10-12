@@ -41,6 +41,9 @@ use kitsune_userabi as abi;
 /// Pages of user stack, and for a WebAssembly host (its interpreter and module translator recurse).
 const STACK_PAGES: u64 = 16;
 const HOST_STACK_PAGES: u64 = 256;
+/// Programs that run the shell engine (deep recursion in the parser and executor) get a larger stack.
+const SHELL_STACK_PAGES: u64 = 128;
+const BIG_STACK: &[&str] = &["kterm"];
 /// The stack's top: the last page of the user range, with the guard page (unmapped) below the stack.
 const STACK_TOP: u64 = USER_END - PAGE_SIZE;
 /// What an ELF may occupy: the first gigabyte (so the small code model reaches everything).
@@ -105,6 +108,9 @@ struct Proc {
     /// Who the program acts as when it touches files: the user that started it (`None` before any
     /// account exists: full rights, like the rest of the desktop in early boot).
     cred: Option<Cred>,
+    /// The process that started it (`0` = none) and whether it must wait for that parent to collect its end.
+    parent: u32,
+    keep: bool,
     /// The folder it was started in, and the arguments blob `getargs` returns.
     cwd: String,
     args: Vec<u8>,
@@ -185,6 +191,10 @@ pub enum FsReq {
     WinTitle {
         title: Vec<u8>,
     },
+    /// Start a child program; the bytes are a `kitsune_userabi::pack_spawn` request.
+    Spawn {
+        req: Vec<u8>,
+    },
 }
 
 enum FsState {
@@ -198,6 +208,9 @@ enum FsState {
 /// What a program is started with besides its image.
 #[derive(Default)]
 pub struct Launch {
+    /// The process that starts it (`0` = nobody: the shell or the desktop). A parent collects the
+    /// child's output and end with `SYS_PROC_POLL`, so the child is kept until it has.
+    pub parent: u32,
     pub cwd: String,
     /// Made by `kitsune_userabi::pack_args`.
     pub args: Vec<u8>,
@@ -301,6 +314,8 @@ fn spawn(
     }
     let stack_pages = if host.is_some() {
         HOST_STACK_PAGES
+    } else if BIG_STACK.contains(&name) {
+        SHELL_STACK_PAGES
     } else {
         STACK_PAGES
     };
@@ -356,6 +371,8 @@ fn spawn(
         heap_max: HEAP_BASE + heap,
         host,
         cred: launch.cred,
+        parent: launch.parent,
+        keep: launch.parent != 0,
         cwd: launch.cwd,
         args: launch.args,
         stdin: launch.stdin,
@@ -440,6 +457,8 @@ pub fn reap() {
         procs
             .iter()
             .filter(|p| end_of(p) != End::Running)
+            // A child is kept until its parent has collected its end (unless the parent is gone).
+            .filter(|p| !(p.keep && procs.iter().any(|q| q.pid == p.parent)))
             .filter(|p| {
                 p.out.is_empty()
                     || p.over_tick != 0
@@ -573,9 +592,23 @@ pub extern "C" fn syscall_entry(rsp: u64) -> u64 {
             r.rax = sys_brk(slot, a);
             rsp
         }
+        7 => {
+            // Wall clock: seconds since the Unix epoch in the zone the settings chose (what `date` shows).
+            let secs = crate::clock::trusted_unix_secs()
+                .or_else(|| crate::clock::local_unix_ms().map(|ms| ms / 1000))
+                .unwrap_or(0);
+            r.rax = (secs as i64 + i64::from(crate::rtc::tz_minutes()) * 60) as u64;
+            rsp
+        }
+        8 => {
+            // The interface language (index for `i18n::Lang::from_index`).
+            r.rax = u64::from(kitsune_core::i18n::lang() as u8);
+            rsp
+        }
         remote::SYS_HOST_MODULE_LEN..=remote::SYS_HOST_BATCH => host_call(r, rsp, slot),
         abi::SYS_OPEN..=abi::SYS_GETARGS => file_call(r, rsp, slot),
         abi::SYS_WIN_OPEN..=abi::SYS_WIN_TITLE => file_call(r, rsp, slot),
+        abi::SYS_SPAWN..=abi::SYS_PROC_KILL => file_call(r, rsp, slot),
         _ => {
             r.rax = ENOSYS as u64;
             rsp
@@ -957,6 +990,28 @@ fn file_call(r: &mut Regs, rsp: u64, slot: usize) -> u64 {
             r.rax = write_out(slot, b, c) as u64;
             return rsp;
         }
+        abi::SYS_PROC_POLL => {
+            drop(procs);
+            r.rax = child_poll(slot, a, b, c) as u64;
+            return rsp;
+        }
+        abi::SYS_PROC_KILL => {
+            drop(procs);
+            r.rax = child_kill(slot, a) as u64;
+            return rsp;
+        }
+        abi::SYS_SPAWN => {
+            // (req_ptr, req_len)
+            let len = b as usize;
+            if !(abi::SPAWN_HEAD..=abi::MAX_SPAWN).contains(&len) {
+                Err(abi::errno::EINVAL)
+            } else {
+                let mut raw = alloc::vec![0u8; len];
+                asp.copy_in(a, &mut raw)
+                    .map(|()| FsReq::Spawn { req: raw })
+                    .map_err(|_| abi::errno::EFAULT)
+            }
+        }
         abi::SYS_WIN_EVENT => {
             // (ptr, timeout_ms): one input event, or wait for one up to the timeout.
             let now = crate::interrupts::ticks();
@@ -1076,6 +1131,62 @@ fn file_call(r: &mut Regs, rsp: u64, slot: usize) -> u64 {
             r.rax = e as u64;
             rsp
         }
+    }
+}
+
+/// `SYS_PROC_POLL`: move up to `cap` bytes of child `pid`'s output to the caller and say how it stands.
+/// The child counts as over only once its output is all taken; then it may be reaped.
+fn child_poll(slot: usize, pid: u64, ptr: u64, cap: u64) -> i64 {
+    let cap = (cap as usize).min(abi::MAX_IO);
+    let mut procs = PROCS.lock();
+    let Some(me) = procs.iter().find(|p| p.slot == slot).map(|p| p.pid) else {
+        return abi::errno::EINVAL;
+    };
+    let Some(c) = procs
+        .iter_mut()
+        .find(|p| u64::from(p.pid) == pid && p.parent == me)
+    else {
+        return abi::errno::ESRCH;
+    };
+    let n = c.out.len().min(cap);
+    let chunk: Vec<u8> = c.out.drain(..n).collect();
+    let state = match end_of(c) {
+        _ if !c.out.is_empty() => abi::ChildState::Running,
+        End::Running => abi::ChildState::Running,
+        End::Exited(code) => abi::ChildState::Exited(code as i16),
+        _ => abi::ChildState::Killed,
+    };
+    if state != abi::ChildState::Running {
+        c.keep = false;
+    }
+    let ok = procs
+        .iter()
+        .find(|p| p.pid == me)
+        .and_then(|p| p.aspace.as_ref())
+        .is_some_and(|a| a.poke(ptr, &chunk).is_ok());
+    if ok {
+        abi::pack_poll(n, state)
+    } else {
+        abi::errno::EFAULT
+    }
+}
+
+/// `SYS_PROC_KILL`: stop a child of the caller.
+fn child_kill(slot: usize, pid: u64) -> i64 {
+    let target = {
+        let procs = PROCS.lock();
+        let Some(me) = procs.iter().find(|p| p.slot == slot).map(|p| p.pid) else {
+            return abi::errno::EINVAL;
+        };
+        procs
+            .iter()
+            .find(|p| u64::from(p.pid) == pid && p.parent == me)
+            .map(|p| p.pid)
+    };
+    match target {
+        Some(t) if kill(t) => 0,
+        Some(_) => 0, // already over
+        None => abi::errno::ESRCH,
     }
 }
 

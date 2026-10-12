@@ -4,6 +4,18 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — O Terminal em anel 3 (`kterm`)
+
+- Novo programa **`kterm`** (`run kterm`): o motor de shell do `kitsune_core` (`Term`, `Shell`, `ShellFs`, `SysInfo`) num
+  processo de anel 3 com janela própria. Arquivos pelas chamadas 32–42 (direitos do usuário: gravar na raiz dá
+  "Permissão negada"), `run` com filhos, pipe, argumentos e `Ctrl+C`, `date`, título com a pasta atual. Cenário
+  `w48-ring3-terminal.sh`.
+- Chamadas novas: **`spawn`, `proc_poll`, `proc_kill`** (52–54: um processo inicia e acompanha filhos com a `Cred` do
+  pai; o kernel guarda o filho até o pai coletar o fim), `time` (7) e `language` (8). Contratos `pack_spawn`/`pack_poll` no
+  `kitsune-userabi` (testados).
+- SDK: recurso `heap` (alocador por `brk`) e `local_time_secs`/`language`; a tabela da fonte 8x8 passou a um só arquivo
+  (`user-apps/glyphs.rs`) incluído pelo kernel e pelo `kterm`. Pilha maior (512 KiB) para programas que rodam o shell.
+
 ## 2026-10 — Janela e entrada para processos em anel 3
 
 - Um programa ELF pode ter **uma janela** (`win_open`, `win_present`, `win_event`, `win_title`; chamadas 48–51): ele
