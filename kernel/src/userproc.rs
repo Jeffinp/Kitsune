@@ -353,15 +353,11 @@ fn spawn(
     } else {
         intern(name)
     };
-    let Some(slot) = crate::sched::spawn_user(tname, root, prog.entry, STACK_TOP) else {
-        asp.destroy();
-        return Err(SpawnError::TooMany);
-    };
     let pid = NEXT_PID.fetch_add(1, Ordering::Relaxed);
-    PROCS.lock().push(Proc {
+    let mut proc = Proc {
         pid,
         name: String::from(name),
-        slot,
+        slot: usize::MAX,
         aspace: Some(asp),
         exit: None,
         pages,
@@ -382,7 +378,22 @@ fn spawn(
         win: 0,
         events: VecDeque::new(),
         event_deadline: None,
-    });
+    };
+    // The entry goes into the table in the same critical section that makes the thread runnable (the
+    // lock keeps interrupts off): the thread's first system call looks its process up by slot, and
+    // must find it (it used to find nothing, or the previous owner of the slot, when a tick fell
+    // between the two).
+    let mut procs = PROCS.lock();
+    let Some(slot) = crate::sched::spawn_user(tname, root, prog.entry, STACK_TOP) else {
+        drop(procs);
+        if let Some(a) = proc.aspace.take() {
+            a.destroy();
+        }
+        return Err(SpawnError::TooMany);
+    };
+    proc.slot = slot;
+    procs.push(proc);
+    drop(procs);
     crate::klog!(
         Info,
         "proc: started '{name}' pid {pid} (slot {slot}, {pages} pages, entry {:#x})",
@@ -474,12 +485,15 @@ pub fn reap() {
         }
     }
     for (pid, slot) in candidates {
-        let Some(rel) = crate::sched::release_dead_user(slot) else {
-            continue; // still the running thread: next time
-        };
+        // Free the thread slot and drop the entry in one critical section: once the slot is free a
+        // new process may take it, and its system calls (which look the process up by slot) must
+        // never find this one.
         let mut procs = PROCS.lock();
         let Some(i) = procs.iter().position(|p| p.pid == pid) else {
             continue;
+        };
+        let Some(rel) = crate::sched::release_dead_user(slot) else {
+            continue; // still the running thread: next time
         };
         let mut p = procs.remove(i);
         drop(procs);
