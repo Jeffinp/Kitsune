@@ -35,6 +35,7 @@ mod nr {
     pub const BRK: u64 = 6;
     pub const TIME: u64 = 7;
     pub const LANG: u64 = 8;
+    pub const UNIX_MS: u64 = 9;
 }
 
 /// A raw three-argument system call.
@@ -128,6 +129,13 @@ pub fn local_time_secs() -> i64 {
     unsafe { syscall3(nr::TIME, 0, 0, 0) }
 }
 
+/// Milliseconds since 1970-01-01 in UTC (SNTP-corrected when the network gave the time; `0` when the
+/// system has no clock). This is what `Date.now()` is; [`local_time_secs`] minus it is the time zone.
+pub fn unix_time_ms() -> i64 {
+    // SAFETY: no arguments.
+    unsafe { syscall3(nr::UNIX_MS, 0, 0, 0) }
+}
+
 /// The language of the interface (`0` Portuguese, `1` English), as the user chose it.
 pub fn language() -> u8 {
     // SAFETY: no arguments.
@@ -135,7 +143,8 @@ pub fn language() -> u8 {
 }
 
 /// Grow the heap to at least `end` (a byte address, `0` = just ask). Returns the end of the heap
-/// after the call; the heap starts at [`HEAP_BASE`] and can reach 8 MiB. It never shrinks.
+/// after the call; the heap starts at [`HEAP_BASE`] and can reach the process's limit (8 MiB for most
+/// programs, more for a few the kernel names). It never shrinks.
 pub fn brk(end: u64) -> u64 {
     // SAFETY: one plain argument.
     unsafe { syscall3(nr::BRK, end, 0, 0) as u64 }

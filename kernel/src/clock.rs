@@ -129,6 +129,15 @@ pub fn trusted_unix_secs() -> Option<u64> {
     unixtime::is_plausible(secs).then_some(secs)
 }
 
+/// Corrected Unix time in milliseconds (system call 9, `Date.now()` of `jsrun`); `None` as for
+/// [`trusted_unix_secs`].
+pub fn trusted_unix_ms() -> Option<u64> {
+    let local = local_unix_ms().unwrap_or_else(now_ms);
+    let ms = i128::from(local) + i128::from(OFFSET_MS.load(Ordering::Relaxed));
+    let ms = u64::try_from(ms).ok()?;
+    unixtime::is_plausible(ms / 1000).then_some(ms)
+}
+
 /// True once an SNTP measurement set the offset.
 pub fn confirmed() -> bool {
     CONFIRMED.load(Ordering::Acquire)

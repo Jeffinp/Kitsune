@@ -14,6 +14,9 @@
 //! | 4 | `sleep_ms` | milliseconds | 0 |
 //! | 5 | `uptime_ms` | | milliseconds since boot |
 //! | 6 | `brk` | new end of the heap (0 = just ask) | the heap's end after the call (unchanged when refused) |
+//! | 7 | `time` | | seconds since 1970 on the wall clock, in the user's time zone |
+//! | 8 | `language` | | the interface language |
+//! | 9 | `unix_ms` | | milliseconds since 1970 in UTC (`0` without a clock) |
 //! | 16–21 | `host_*` | only for a WebAssembly host process, see [`HostLink`] | |
 //! | 48–51 | `win_open`, `win_present`, `win_event`, `win_title` | one window on the desktop, see `kitsune_userabi` and `crate::wasm::manager::native` | |
 //! | 32–42 | `open`, `close`, `read`, `write`, `seek`, `stat`, `readdir`, `mkdir`, `remove`, `rename`, `getargs` | files and arguments, see `kitsune_userabi` and [`crate::userfs`] | |
@@ -41,9 +44,10 @@ use kitsune_userabi as abi;
 /// Pages of user stack, and for a WebAssembly host (its interpreter and module translator recurse).
 const STACK_PAGES: u64 = 16;
 const HOST_STACK_PAGES: u64 = 256;
-/// Programs that run the shell engine (deep recursion in the parser and executor) get a larger stack.
-const SHELL_STACK_PAGES: u64 = 128;
-const BIG_STACK: &[&str] = &["kterm"];
+/// Embedded programs that recurse deeply get a larger stack, in pages: the shell engine's parser and
+/// executor (512 KiB) and the JavaScript engine (4 MiB: QuickJS uses ~1 KiB of C stack per JavaScript
+/// call, so this allows ~3800 nested calls).
+const BIG_STACK: &[(&str, u64)] = &[("kterm", 128), ("jsrun", 1024)];
 /// The stack's top: the last page of the user range, with the guard page (unmapped) below the stack.
 const STACK_TOP: u64 = USER_END - PAGE_SIZE;
 /// What an ELF may occupy: the first gigabyte (so the small code model reaches everything).
@@ -55,6 +59,8 @@ const MAX_WRITE: usize = 4096;
 /// Where a process's heap starts, and the most it may grow to.
 const HEAP_BASE: u64 = 0x1000_0000;
 const MAX_HEAP: u64 = 8 * 1024 * 1024;
+/// Embedded programs allowed a larger heap: the JavaScript engine (scripts and their objects).
+const BIG_HEAP: &[(&str, u64)] = &[("jsrun", 64 * 1024 * 1024)];
 /// The most a WebAssembly host may use (guest memory included).
 const MAX_HOST_HEAP: u64 = 96 * 1024 * 1024;
 /// Most uncollected output kept per process.
@@ -279,7 +285,22 @@ pub fn embedded(name: &str) -> Option<&'static [u8]> {
 
 /// Start the ELF program `image` as process `name`. Returns its process id.
 pub fn spawn_elf(name: &str, image: &[u8], launch: Launch) -> Result<u32, SpawnError> {
-    spawn(name, image, MAX_HEAP, None, launch)
+    spawn(name, image, heap_limit(name, image), None, launch)
+}
+
+/// True when `image` is the embedded program `name` itself, not a file that happens to have its
+/// name: only those get the larger stack and heap of [`BIG_STACK`] and [`BIG_HEAP`].
+fn is_embedded(name: &str, image: &[u8]) -> bool {
+    embedded(name)
+        .is_some_and(|e| core::ptr::eq(e.as_ptr(), image.as_ptr()) && e.len() == image.len())
+}
+
+/// The most the heap of program `name` may grow to.
+fn heap_limit(name: &str, image: &[u8]) -> u64 {
+    match BIG_HEAP.iter().find(|(n, _)| *n == name) {
+        Some(&(_, bytes)) if is_embedded(name, image) => bytes,
+        _ => MAX_HEAP,
+    }
 }
 
 /// Start the embedded WebAssembly host as process `name`, to run `module`. `heap` is how much memory
@@ -312,12 +333,10 @@ fn spawn(
     if PROCS.lock().len() >= MAX_PROCS {
         return Err(SpawnError::TooMany);
     }
-    let stack_pages = if host.is_some() {
-        HOST_STACK_PAGES
-    } else if BIG_STACK.contains(&name) {
-        SHELL_STACK_PAGES
-    } else {
-        STACK_PAGES
+    let stack_pages = match BIG_STACK.iter().find(|(n, _)| *n == name) {
+        _ if host.is_some() => HOST_STACK_PAGES,
+        Some(&(_, pages)) if is_embedded(name, image) => pages,
+        _ => STACK_PAGES,
     };
     let prog = elf::parse(image, USER_BASE, IMAGE_END, MAX_IMAGE).map_err(SpawnError::BadElf)?;
     let mut asp = AddressSpace::new().map_err(|_| SpawnError::OutOfMemory)?;
@@ -619,6 +638,14 @@ pub extern "C" fn syscall_entry(rsp: u64) -> u64 {
             r.rax = u64::from(kitsune_core::i18n::lang() as u8);
             rsp
         }
+        9 => {
+            // Wall clock in UTC milliseconds (`Date.now()`): the SNTP-corrected time when there is a
+            // plausible one, else the uncorrected clock, else 0.
+            r.rax = crate::clock::trusted_unix_ms()
+                .or_else(crate::clock::local_unix_ms)
+                .unwrap_or(0);
+            rsp
+        }
         remote::SYS_HOST_MODULE_LEN..=remote::SYS_HOST_BATCH => host_call(r, rsp, slot),
         abi::SYS_OPEN..=abi::SYS_GETARGS => file_call(r, rsp, slot),
         abi::SYS_WIN_OPEN..=abi::SYS_WIN_TITLE => file_call(r, rsp, slot),
@@ -630,7 +657,8 @@ pub extern "C" fn syscall_entry(rsp: u64) -> u64 {
     }
 }
 
-/// `brk`: grow the heap to `want` (page-rounded) with zeroed pages, within [`MAX_HEAP`]. The heap
+/// `brk`: grow the heap to `want` (page-rounded) with zeroed pages, within the process's limit
+/// ([`MAX_HEAP`], or its entry in [`BIG_HEAP`]). The heap
 /// only grows; asking for less than the current end, or for too much, changes nothing. Returns the
 /// end of the heap after the call.
 fn sys_brk(slot: usize, want: u64) -> u64 {
