@@ -24,6 +24,13 @@ use kitsune_core::appmanifest::{ClipPerm, NetPerm};
 use kitsune_core::appnet;
 use wasmi::{Caller, FuncType, Linker, Val, ValType};
 
+mod guest;
+mod hostio;
+mod pixels;
+pub(crate) use guest::*;
+use hostio::*;
+use pixels::*;
+
 type R<T> = Result<T, wasmi::Error>;
 
 /// Per-app v2 state, in the `Store`'s `HostState`.
@@ -46,7 +53,6 @@ pub(crate) struct V2 {
     /// Path-escape attempts already reported to the serial log.
     pub escapes_logged: u32,
 }
-
 impl V2 {
     pub(crate) fn new(
         id: &str,
@@ -74,90 +80,12 @@ impl V2 {
         }
     }
 }
-
-/// Where a host call runs: the guest's memory, its fuel and the host state, wherever the guest
-/// executes. In the kernel it is a wasmi `Caller`; for an app in a user process it is that process's
-/// page tables (`wasm::remote`). The functions below are written once against this trait.
-pub(crate) trait Guest {
-    fn host(&self) -> &HostState;
-    fn host_mut(&mut self) -> &mut HostState;
-    /// Bytes of linear memory the guest has right now.
-    fn mem_size(&self) -> usize;
-    /// Copy out a range already checked against [`Guest::mem_size`].
-    fn read_mem(&self, r: Range<usize>) -> Vec<u8>;
-    /// Copy into a range already checked against [`Guest::mem_size`].
-    fn write_mem(&mut self, at: usize, bytes: &[u8]);
-    /// Charge `units` of fuel for host work; the `OutOfFuel` trap when the budget is spent.
-    fn charge(&mut self, units: u64) -> R<()>;
-}
-
-fn fault(what: &'static str) -> wasmi::Error {
-    wasmi::Error::host(AppFault(what))
-}
-
-fn mono_ms() -> u64 {
-    interrupts::ticks() * 4
-}
-
-fn v2(g: &mut dyn Guest) -> R<&mut V2> {
-    g.host_mut()
-        .v2
-        .as_deref_mut()
-        .ok_or_else(|| fault(kitsune_core::tk!("apps.why.no_abi2")))
-}
-
-/// Validated range. A bad range is a fault (the app dies).
-fn range(g: &dyn Guest, ptr: i32, len: i32) -> R<Range<usize>> {
-    check_range(g.mem_size(), ptr, len)
-        .map_err(|_| fault(kitsune_core::tk!("apps.why.bad_pointer")))
-}
-
-/// Copy `[ptr, ptr+len)` out of guest memory. `Ok(Err(code))` when `len > cap`.
-fn read_capped(g: &dyn Guest, ptr: i32, len: i32, cap: usize) -> R<Result<Vec<u8>, i32>> {
-    let r = check_capped(g.mem_size(), ptr, len, cap)
-        .map_err(|_| fault(kitsune_core::tk!("apps.why.bad_pointer")))?;
-    Ok(r.map(|r| g.read_mem(r)))
-}
-
-fn write_guest(g: &mut dyn Guest, ptr: i32, bytes: &[u8]) -> R<()> {
-    let r = range(g, ptr, bytes.len() as i32)?;
-    g.write_mem(r.start, bytes);
-    Ok(())
-}
-
-/// The wasmi side: a `Caller` is a [`Guest`].
-struct Local<'a, 'b>(Caller<'a, HostState>, core::marker::PhantomData<&'b ()>);
-
-impl Guest for Local<'_, '_> {
-    fn host(&self) -> &HostState {
-        self.0.data()
-    }
-    fn host_mut(&mut self) -> &mut HostState {
-        self.0.data_mut()
-    }
-    fn mem_size(&self) -> usize {
-        guest_mem(&self.0).map_or(0, |m| m.data_size(&self.0))
-    }
-    fn read_mem(&self, r: Range<usize>) -> Vec<u8> {
-        guest_mem(&self.0).map_or_else(Vec::new, |m| m.data(&self.0)[r].to_vec())
-    }
-    fn write_mem(&mut self, at: usize, bytes: &[u8]) {
-        if let Some(m) = guest_mem(&self.0) {
-            m.data_mut(&mut self.0)[at..at + bytes.len()].copy_from_slice(bytes);
-        }
-    }
-    fn charge(&mut self, units: u64) -> R<()> {
-        super::charge(&mut self.0, units)
-    }
-}
-
 fn val_ty(t: Ty) -> ValType {
     match t {
         Ty::I32 => ValType::I32,
         Ty::I64 => ValType::I64,
     }
 }
-
 /// Register every `osj.*` function: each one forwards to [`call`] with its wire id.
 pub(crate) fn install(l: &mut Linker<HostState>) -> Result<(), &'static str> {
     for (id, f) in HOST_FNS.iter().enumerate() {
@@ -193,7 +121,6 @@ pub(crate) fn install(l: &mut Linker<HostState>) -> Result<(), &'static str> {
     }
     Ok(())
 }
-
 /// Run host function `id` of `HOST_FNS` with `a` (each `i32` sign-extended). The value is the
 /// function's result (`0` for none).
 pub(crate) fn call(g: &mut dyn Guest, id: usize, a: &[i64; 6]) -> R<i64> {
@@ -475,224 +402,4 @@ pub(crate) fn call(g: &mut dyn Guest, id: usize, a: &[i64; 6]) -> R<i64> {
         _ => return Err(fault(kitsune_core::tk!("apps.why.no_abi2"))),
     };
     Ok(i64::from(v))
-}
-
-fn net_http_get(g: &mut dyn Guest, url: i32, ulen: i32, out: i32, cap: i32) -> R<i32> {
-    let bytes = match read_capped(g, url, ulen, MAX_URL)? {
-        Ok(b) => b,
-        Err(e) => return Ok(e),
-    };
-    range(g, out, cap.clamp(0, appnet::MAX_BODY as i32))?;
-    let st = v2(g)?;
-    // One gate for the request (and, on the fetcher, for every redirect hop):
-    // permission, destination filter, the manifest's allow-list.
-    let parsed = match appnet::authorize(st.net, &st.net_hosts, &bytes) {
-        Ok(u) => u,
-        Err(code) => return Ok(code),
-    };
-    if !st.limiter.allow(mono_ms()) {
-        return Ok(ERR_NET);
-    }
-    crate::serial_println!(
-        "[app {}] net_http_get {}://{}:{}{}",
-        st.id,
-        if parsed.https { "https" } else { "http" },
-        parsed.host,
-        parsed.port,
-        parsed.path
-    );
-    let (perm, hosts, id) = (st.net, st.net_hosts.clone(), st.id.clone());
-    // The transport is the fetcher thread (`fetch`, owned by netd): this thread sleeps until the
-    // answer, a timeout or the death of the fetcher, and holds no lock meanwhile. HTTPS gets a
-    // longer budget (a software TLS handshake). The other apps wait for this call (one `appd`
-    // thread); the compositor and everything else keep running.
-    let budget = if parsed.https {
-        appnet::TIMEOUT_HTTPS_MS
-    } else {
-        appnet::TIMEOUT_MS
-    };
-    let cap = cap.clamp(0, appnet::MAX_BODY as i32) as usize;
-    let loaded = match crate::fetch::app_get(&bytes, perm, &hosts, budget) {
-        Ok(l) => l,
-        Err(e) => {
-            crate::serial_println!("[app {}] net_http_get failed: {:?}", id, e);
-            return Ok(ERR_NET);
-        }
-    };
-    let (body, cut) = match appnet::app_response(&loaded.data, cap) {
-        Ok(r) => r,
-        Err(e) => {
-            crate::serial_println!("[app {}] net_http_get: response refused: {:?}", id, e);
-            return Ok(e.code());
-        }
-    };
-    write_guest(g, out, &body)?;
-    g.charge(500 + body.len() as u64 / 16)?;
-    crate::serial_println!(
-        "[app {}] net_http_get: {} bytes{}",
-        id,
-        body.len(),
-        if cut || loaded.truncated {
-            " (cut)"
-        } else {
-            ""
-        }
-    );
-    Ok(body.len() as i32)
-}
-
-fn res(r: Result<i32, kitsune_core::appfs::FsError>) -> i32 {
-    match r {
-        Ok(v) => v,
-        Err(e) => e.code(),
-    }
-}
-
-/// Logs path-escape attempts once each (the sandbox counts them).
-fn report_escapes(st: &mut V2) {
-    let n = st.sandbox.escapes;
-    if n > st.escapes_logged {
-        crate::serial_println!(
-            "[app {}] sandbox: path escape refused (attempt {})",
-            st.id,
-            n
-        );
-        st.escapes_logged = n;
-    }
-}
-
-fn path_op(
-    g: &mut dyn Guest,
-    p: i32,
-    n: i32,
-    f: impl FnOnce(
-        &mut Sandbox,
-        &mut dyn kitsune_core::appfs::AppFs,
-        &[u8],
-    ) -> Result<(), kitsune_core::appfs::FsError>,
-) -> R<i32> {
-    let path = match read_capped(g, p, n, MAX_PATH_ARG)? {
-        Ok(b) => b,
-        Err(e) => return Ok(e),
-    };
-    let st = v2(g)?;
-    let r = appfs_backend::try_with(|fs| f(&mut st.sandbox, fs, &path));
-    report_escapes(st);
-    Ok(res(r.map(|()| 0)))
-}
-
-// ------------------------------------------------------------------ pixels
-
-/// Byte offset of pixel `(x, y)` in the surface, or `None` outside it.
-fn offset(info: &bootloader_api::info::FrameBufferInfo, x: i64, y: i64) -> Option<usize> {
-    if x < 0 || y < 0 || x >= info.width as i64 || y >= info.height as i64 {
-        return None;
-    }
-    Some((y as usize * info.stride + x as usize) * info.bytes_per_pixel)
-}
-
-/// Writes one RGB pixel in the surface's native order.
-#[inline]
-fn put_px(
-    buf: &mut [u8],
-    info: &bootloader_api::info::FrameBufferInfo,
-    o: usize,
-    r: u8,
-    g: u8,
-    b: u8,
-) {
-    use bootloader_api::info::PixelFormat;
-    let bpp = info.bytes_per_pixel;
-    if o + bpp > buf.len() || bpp < 3 {
-        return;
-    }
-    match info.pixel_format {
-        PixelFormat::Bgr => {
-            buf[o] = b;
-            buf[o + 1] = g;
-            buf[o + 2] = r;
-        }
-        _ => {
-            buf[o] = r;
-            buf[o + 1] = g;
-            buf[o + 2] = b;
-        }
-    }
-}
-
-/// `osj.blit_rgba`: 1:1 copy of an RGBA image (alpha ignored), clipped to the surface.
-fn blit_1to1(st: &mut HostState, px: &[u8], w: i32, h: i32, dx: i32, dy: i32) {
-    let Some(info) = st.info else { return };
-    if st.fb.is_null() {
-        return;
-    }
-    // SAFETY: `fb`/`fb_len` describe the live back surface set by `appd` right before this guest call
-    // (see `HostState::set_surface`); only the `appd` thread, which is running this call, touches it.
-    let buf = unsafe { core::slice::from_raw_parts_mut(st.fb, st.fb_len) };
-    for row in 0..h as i64 {
-        let y = dy as i64 + row;
-        if y < 0 || y >= st.ch as i64 {
-            continue;
-        }
-        for col in 0..w as i64 {
-            let x = dx as i64 + col;
-            if x < 0 || x >= st.cw as i64 {
-                continue;
-            }
-            let Some(o) = offset(&info, x, y) else {
-                continue;
-            };
-            let s = ((row * w as i64 + col) * 4) as usize;
-            put_px(buf, &info, o, px[s], px[s + 1], px[s + 2]);
-        }
-    }
-}
-
-/// `osj.draw_image_png`: alpha-blended draw, clipped to the surface.
-fn blit_alpha(st: &HostState, px: &[u8], w: i32, h: i32, dx: i32, dy: i32) {
-    let Some(info) = st.info else { return };
-    if st.fb.is_null() {
-        return;
-    }
-    // SAFETY: same contract as `blit_1to1` (the `appd` thread is the only one touching the surface).
-    let buf = unsafe { core::slice::from_raw_parts_mut(st.fb, st.fb_len) };
-    for row in 0..h as i64 {
-        let y = dy as i64 + row;
-        if y < 0 || y >= st.ch as i64 {
-            continue;
-        }
-        for col in 0..w as i64 {
-            let x = dx as i64 + col;
-            if x < 0 || x >= st.cw as i64 {
-                continue;
-            }
-            let s = ((row * w as i64 + col) * 4) as usize;
-            let a = px[s + 3] as u32;
-            if a == 0 {
-                continue;
-            }
-            let Some(o) = offset(&info, x, y) else {
-                continue;
-            };
-            if a == 255 {
-                put_px(buf, &info, o, px[s], px[s + 1], px[s + 2]);
-                continue;
-            }
-            // read back the destination in RGB order
-            use bootloader_api::info::PixelFormat;
-            let (dr, dg, db) = match info.pixel_format {
-                PixelFormat::Bgr => (buf[o + 2], buf[o + 1], buf[o]),
-                _ => (buf[o], buf[o + 1], buf[o + 2]),
-            };
-            let mix = |s: u8, d: u8| ((s as u32 * a + d as u32 * (255 - a)) / 255) as u8;
-            put_px(
-                buf,
-                &info,
-                o,
-                mix(px[s], dr),
-                mix(px[s + 1], dg),
-                mix(px[s + 2], db),
-            );
-        }
-    }
 }
