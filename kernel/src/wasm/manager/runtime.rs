@@ -337,6 +337,8 @@ fn guest_slice(rt: &mut Runtime, job: &Job, fuel: u64, w: i32, h: i32) -> Result
 /// Deliver one input event. Returns whether the app should redraw afterwards.
 fn dispatch(rt: &mut Runtime, ev: Ev, v1: bool, fuel: u64) -> Result<bool, Halt> {
     match ev {
+        // Only the windows of processes get these (and `appd` never runs those).
+        Ev::Resize(..) => Ok(false),
         Ev::Key(code, mods) => {
             if v1 && !(0x20..0x7F).contains(&code) && code != 10 && code != 27 {
                 return Ok(false);

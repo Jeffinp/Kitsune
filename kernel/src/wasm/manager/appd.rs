@@ -5,7 +5,8 @@ use super::*;
 
 /// Is slot `s` ready to run a slice at `now`?
 fn ready(s: &Slot, now: u64) -> bool {
-    if s.closing || s.restart {
+    // A window of a process has no runtime to run: the process runs by itself.
+    if s.closing || s.restart || s.native.is_some() {
         return false;
     }
     match s.state {
@@ -38,7 +39,7 @@ fn next_deadline() -> u64 {
     with(|slots| {
         let mut d = crate::sched::FOREVER;
         for s in slots.iter().flatten() {
-            if s.closing || s.restart || s.state != State::Running {
+            if s.closing || s.restart || s.state != State::Running || s.native.is_some() {
                 continue;
             }
             if s.v1 {
@@ -55,7 +56,7 @@ fn next_deadline() -> u64 {
 }
 
 fn any_ready() -> bool {
-    if rts().iter().flatten().any(|rt| rt.is_dead()) {
+    if rts().iter().flatten().any(|rt| rt.is_dead()) || native::any_ended() {
         return true;
     }
     let now = crate::interrupts::ticks();
@@ -89,6 +90,7 @@ pub extern "C" fn worker() -> ! {
 
 /// Drop the runtime of closing/restarting apps (frees their memory at once).
 fn housekeeping() {
+    native::reap_ended();
     // A process that died while its app was idle (killed from Tarefas, a fault): end the app.
     for i in 0..MAX_APPS {
         if rts()[i].as_ref().is_some_and(|rt| rt.is_dead()) {

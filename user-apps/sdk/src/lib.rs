@@ -19,6 +19,7 @@
 use core::fmt;
 
 pub mod fs;
+pub mod win;
 pub use kitsune_userabi as abi;
 
 /// System call numbers.

@@ -79,6 +79,8 @@ pub enum State {
 
 #[derive(Clone, Copy)]
 enum Ev {
+    /// The window's content size changed (windows of ring 3 processes only).
+    Resize(i32, i32),
     Key(i32, i32),
     Text(i32),
     Pointer(i32, i32, i32),
@@ -110,6 +112,10 @@ struct Slot {
     /// Surface index the compositor is copying right now.
     reading: Option<usize>,
     closing: bool,
+    /// The ring 3 process that owns this window (no `wasm` runs: see `native`).
+    native: Option<u32>,
+    /// Content size the process was last told (`Ev::Resize`).
+    native_size: (i32, i32),
     restart: bool,
     rt_dropped: bool,
     // ---- accounting ----
@@ -232,25 +238,18 @@ pub enum LaunchError {
     Full,
 }
 
-/// Start an app from its package bytes. `w`/`h` are the window's content size.
-/// The module is instantiated by `appd`; failures show up as `Crashed` in the window.
-pub fn launch(
-    wasm: Vec<u8>,
-    manifest: Manifest,
-    v1: bool,
-    w: i32,
-    h: i32,
-) -> Result<AppId, LaunchError> {
+/// A new slot in the `Starting` state (what `launch` and `launch_native` put in the table).
+fn make_slot(manifest: Manifest, v1: bool, wasm: Arc<[u8]>, w: i32, h: i32) -> Slot {
     let quotas = manifest.granted();
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed) as AppId;
     let now = crate::interrupts::ticks();
     let (w, h) = (w.clamp(1, 1280), h.clamp(1, 800));
-    let slot = Slot {
+    Slot {
         id,
         manifest,
         quotas,
         v1,
-        wasm: Arc::from(wasm),
+        wasm,
         state: State::Starting,
         reason: Why::default(),
         events: VecDeque::new(),
@@ -267,6 +266,8 @@ pub fn launch(
         ready: false,
         reading: None,
         closing: false,
+        native: None,
+        native_size: (0, 0),
         restart: false,
         rt_dropped: true,
         cpu_total: 0,
@@ -281,7 +282,20 @@ pub fn launch(
         started_tick: now,
         last_frame: 0,
         last_tick: now,
-    };
+    }
+}
+
+/// Start an app from its package bytes. `w`/`h` are the window's content size.
+/// The module is instantiated by `appd`; failures show up as `Crashed` in the window.
+pub fn launch(
+    wasm: Vec<u8>,
+    manifest: Manifest,
+    v1: bool,
+    w: i32,
+    h: i32,
+) -> Result<AppId, LaunchError> {
+    let slot = make_slot(manifest, v1, Arc::from(wasm), w, h);
+    let id = slot.id;
     let ok = with(|slots| match slots.iter_mut().find(|s| s.is_none()) {
         Some(free) => {
             *free = Some(slot);
@@ -298,24 +312,36 @@ pub fn launch(
 
 /// The window was asked to close: tell the app (`on_close`) and mark it for removal.
 pub fn request_close(id: AppId) {
+    let mut native_msg = None;
     with(|slots| {
         if let Some(s) = slot_of(slots, id)
             && matches!(s.state, State::Running | State::Suspended)
         {
-            s.events.push_back(Ev::Close);
+            // A window of a process tells the process (it decides how to finish).
+            match s.native {
+                Some(pid) => native_msg = Some(pid),
+                None => s.events.push_back(Ev::Close),
+            }
         }
     });
+    if let Some(pid) = native_msg {
+        crate::userproc::win_push(pid, ev_to_abi(Ev::Close));
+    }
     wake_worker();
 }
 
 /// The window is gone: drop the app (runtime first, by `appd`; the slot on `reap`).
 pub fn close(id: AppId) {
-    with(|slots| {
-        if let Some(s) = slot_of(slots, id) {
-            s.closing = true;
-            s.events.clear();
-        }
+    let native = with(|slots| {
+        let s = slot_of(slots, id)?;
+        s.closing = true;
+        s.events.clear();
+        s.native
     });
+    // The window of a process is gone: so is the process (it was told to finish at `request_close`).
+    if let Some(pid) = native {
+        crate::userproc::kill(pid);
+    }
     wake_worker();
 }
 
@@ -324,6 +350,7 @@ pub fn restart(id: AppId) {
     with(|slots| {
         if let Some(s) = slot_of(slots, id)
             && !s.closing
+            && s.native.is_none()
         {
             s.restart = true;
         }
@@ -349,6 +376,7 @@ pub fn reap() {
 pub fn sync_window(id: AppId, w: i32, h: i32, visible: bool) -> Option<String> {
     let now = crate::interrupts::ticks();
     let mut wake = false;
+    let mut resized = None;
     let title = with(|slots| {
         let s = slot_of(slots, id)?;
         let (w, h) = (w.clamp(1, 1280), h.clamp(1, 800));
@@ -357,6 +385,13 @@ pub fn sync_window(id: AppId, w: i32, h: i32, visible: bool) -> Option<String> {
             s.req_h = h;
             s.req_at = now;
             wake = true;
+        }
+        // A process hears about its new size at once (it redraws and presents at that size).
+        if let Some(pid) = s.native
+            && s.native_size != (w, h)
+        {
+            s.native_size = (w, h);
+            resized = Some(pid);
         }
         if visible != s.visible {
             s.visible = visible;
@@ -372,6 +407,12 @@ pub fn sync_window(id: AppId, w: i32, h: i32, visible: bool) -> Option<String> {
         }
         (!s.title.is_empty()).then(|| s.title.clone())
     });
+    if let Some(pid) = resized {
+        crate::userproc::win_push(
+            pid,
+            ev_to_abi(Ev::Resize(w.clamp(1, 1280), h.clamp(1, 800))),
+        );
+    }
     if wake {
         wake_worker();
     }
@@ -381,11 +422,16 @@ pub fn sync_window(id: AppId, w: i32, h: i32, visible: bool) -> Option<String> {
 // ---------------------------------------------------------------- input (compositor)
 
 fn push_ev(id: AppId, ev: Ev) {
+    let mut to_process = None;
     let queued = with(|slots| {
         let Some(s) = slot_of(slots, id) else {
             return false;
         };
         if !matches!(s.state, State::Running | State::Starting) || s.closing {
+            return false;
+        }
+        if let Some(pid) = s.native {
+            to_process = Some(pid);
             return false;
         }
         // Coalesce pointer motion: only the newest position matters.
@@ -400,9 +446,25 @@ fn push_ev(id: AppId, ev: Ev) {
         s.events.push_back(ev);
         true
     });
+    if let Some(pid) = to_process {
+        crate::userproc::win_push(pid, ev_to_abi(ev));
+    }
     if queued {
         wake_worker();
     }
+}
+
+/// An input event as the process sees it.
+fn ev_to_abi(ev: Ev) -> kitsune_userabi::Event {
+    use kitsune_userabi as abi;
+    let (kind, a, b, c) = match ev {
+        Ev::Key(code, mods) => (abi::EV_KEY, code, mods, 0),
+        Ev::Text(cp) => (abi::EV_TEXT, cp, 0, 0),
+        Ev::Pointer(x, y, buttons) => (abi::EV_POINTER, x, y, buttons),
+        Ev::Resize(w, h) => (abi::EV_RESIZE, w, h, 0),
+        Ev::Close => (abi::EV_CLOSE, 0, 0, 0),
+    };
+    abi::Event { kind, a, b, c }
 }
 
 /// Key press: `code` per the ABI (ASCII, 10 Enter, 27 Esc, 8 BS, 127 Del, 0x100.. arrows),
@@ -484,9 +546,13 @@ struct Job {
 mod appd;
 mod clip;
 mod draw;
+mod native;
 mod runtime;
 
 pub use appd::worker;
 pub use clip::{clip_generation, clip_get, clip_load, clip_set};
 pub use draw::blit;
+pub(crate) use native::{
+    launch_native, native_info, native_present, native_title, take_native_windows,
+};
 use runtime::{account, build_runtime, publish, resize_surfaces, run_guest, sync_title};

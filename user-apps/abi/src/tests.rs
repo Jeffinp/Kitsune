@@ -79,3 +79,19 @@ fn numbers_do_not_collide_with_the_other_calls() {
         assert!(mine[i + 1..].iter().all(|b| b != a));
     }
 }
+
+#[test]
+fn events_round_trip() {
+    let e = Event {
+        kind: EV_POINTER,
+        a: -3,
+        b: 799,
+        c: 1,
+    };
+    assert_eq!(Event::from_bytes(&e.to_bytes()), e);
+    assert_eq!(core::mem::size_of::<Event>(), EVENT_LEN);
+    let kinds = [EV_KEY, EV_TEXT, EV_POINTER, EV_RESIZE, EV_CLOSE];
+    for (i, a) in kinds.iter().enumerate() {
+        assert!(kinds[i + 1..].iter().all(|b| b != a));
+    }
+}

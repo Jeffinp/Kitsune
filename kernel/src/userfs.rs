@@ -1,4 +1,4 @@
-//! `procfsd`: the thread that does the file requests of ring 3 processes.
+//! `procfsd`: the thread that does the file and window requests of ring 3 processes.
 //!
 //! A process asks for a file operation with `int 0x80` (calls 32–42, `kitsune_userabi`); the call only
 //! *queues* the request (the kernel is in an interrupt there, where a disk transfer and a lock that
@@ -237,6 +237,29 @@ fn run(pid: u32, req: FsReq, cred: &Option<Cred>) -> Result<i64, i64> {
         FsReq::Remove { path } => {
             on_volume(cred, |b| kitsune_core::vfs::remove(b, &path, now()))?;
             vfs::touch();
+            Ok(0)
+        }
+        FsReq::WinOpen { w, h, title } => {
+            let (name, _) = userproc::win_of(pid).ok_or(errno::EBADF)?;
+            let title = core::str::from_utf8(&title).map_err(|_| errno::EINVAL)?;
+            let handle =
+                crate::wasm::launch_native(pid, &name, title, w, h).map_err(|_| errno::ENOSPC)?;
+            userproc::set_win(pid, handle);
+            Ok(0)
+        }
+        FsReq::WinPresent { ptr, w, h } => {
+            let (_, handle) = userproc::win_of(pid).ok_or(errno::EBADF)?;
+            let n = (w as usize) * (h as usize) * 4;
+            let rgba = userproc::host_read(pid, ptr, n).ok_or(errno::EFAULT)?;
+            if crate::wasm::native_present(handle, w, h, &rgba) {
+                Ok(0)
+            } else {
+                Err(errno::EINVAL)
+            }
+        }
+        FsReq::WinTitle { title } => {
+            let (_, handle) = userproc::win_of(pid).ok_or(errno::EBADF)?;
+            crate::wasm::native_title(handle, core::str::from_utf8(&title).unwrap_or(""));
             Ok(0)
         }
         FsReq::Rename { from, to } => {

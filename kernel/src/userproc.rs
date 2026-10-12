@@ -15,6 +15,7 @@
 //! | 5 | `uptime_ms` | | milliseconds since boot |
 //! | 6 | `brk` | new end of the heap (0 = just ask) | the heap's end after the call (unchanged when refused) |
 //! | 16–21 | `host_*` | only for a WebAssembly host process, see [`HostLink`] | |
+//! | 48–51 | `win_open`, `win_present`, `win_event`, `win_title` | one window on the desktop, see `kitsune_userabi` and `crate::wasm::manager::native` | |
 //! | 32–42 | `open`, `close`, `read`, `write`, `seek`, `stat`, `readdir`, `mkdir`, `remove`, `rename`, `getargs` | files and arguments, see `kitsune_userabi` and [`crate::userfs`] | |
 //!
 //! Every pointer is translated through the process's own page tables before the kernel touches
@@ -26,6 +27,7 @@
 
 use crate::allocator::SpinLock;
 use crate::uvm::{AddressSpace, USER_BASE, USER_END};
+use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -113,6 +115,11 @@ struct Proc {
     fds: Vec<Option<Fd>>,
     /// The file request in flight (served by the `procfsd` thread, see `userfs`).
     fs: FsState,
+    /// Its window (the handle in the app table, `0` = none), the input waiting for it and the tick
+    /// at which a `win_event` that waits gives up.
+    win: u32,
+    events: VecDeque<abi::Event>,
+    event_deadline: Option<u64>,
 }
 
 /// An open file: where it is and where the next read or write happens.
@@ -164,6 +171,19 @@ pub enum FsReq {
     Rename {
         from: Vec<u8>,
         to: Vec<u8>,
+    },
+    WinOpen {
+        w: i32,
+        h: i32,
+        title: Vec<u8>,
+    },
+    WinPresent {
+        ptr: u64,
+        w: i32,
+        h: i32,
+    },
+    WinTitle {
+        title: Vec<u8>,
     },
 }
 
@@ -342,6 +362,9 @@ fn spawn(
         stdin_pos: 0,
         fds: Vec::new(),
         fs: FsState::Idle,
+        win: 0,
+        events: VecDeque::new(),
+        event_deadline: None,
     });
     crate::klog!(
         Info,
@@ -552,6 +575,7 @@ pub extern "C" fn syscall_entry(rsp: u64) -> u64 {
         }
         remote::SYS_HOST_MODULE_LEN..=remote::SYS_HOST_BATCH => host_call(r, rsp, slot),
         abi::SYS_OPEN..=abi::SYS_GETARGS => file_call(r, rsp, slot),
+        abi::SYS_WIN_OPEN..=abi::SYS_WIN_TITLE => file_call(r, rsp, slot),
         _ => {
             r.rax = ENOSYS as u64;
             rsp
@@ -933,6 +957,84 @@ fn file_call(r: &mut Regs, rsp: u64, slot: usize) -> u64 {
             r.rax = write_out(slot, b, c) as u64;
             return rsp;
         }
+        abi::SYS_WIN_EVENT => {
+            // (ptr, timeout_ms): one input event, or wait for one up to the timeout.
+            let now = crate::interrupts::ticks();
+            if let Some(ev) = p.events.pop_front() {
+                p.event_deadline = None;
+                r.rax = match asp.poke(a, &ev.to_bytes()) {
+                    Ok(()) => 1,
+                    Err(_) => EFAULT as u64,
+                };
+                return rsp;
+            }
+            let deadline = match p.event_deadline {
+                Some(d) => d,
+                None => {
+                    let ticks = if b == u64::MAX {
+                        crate::sched::FOREVER
+                    } else {
+                        now.saturating_add(
+                            (b.min(3_600_000) * u64::from(crate::interrupts::TIMER_HZ))
+                                .div_ceil(1000),
+                        )
+                    };
+                    p.event_deadline = Some(ticks);
+                    ticks
+                }
+            };
+            if b == 0 || now >= deadline {
+                p.event_deadline = None;
+                r.rax = 0;
+                return rsp;
+            }
+            drop(procs);
+            // Restart this call when woken (an event arrived) or when the deadline passes.
+            r.rax = number;
+            r.rip -= 2;
+            crate::sched::set_wake(slot, deadline);
+            return crate::sched::yield_switch(rsp);
+        }
+        abi::SYS_WIN_OPEN => {
+            // (w, h, title_ptr, title_len)
+            let (w, h) = (a as i64, b as i64);
+            if w < 1 || h < 1 || w > i64::from(abi::WIN_MAX_W) || h > i64::from(abi::WIN_MAX_H) {
+                Err(abi::errno::EINVAL)
+            } else if p.win != 0 {
+                Err(abi::errno::EEXIST)
+            } else {
+                copy_title(asp, c, d).map(|title| FsReq::WinOpen {
+                    w: w as i32,
+                    h: h as i32,
+                    title,
+                })
+            }
+        }
+        abi::SYS_WIN_PRESENT => {
+            let (w, h) = (b as i64, c as i64);
+            if p.win == 0 {
+                Err(abi::errno::EBADF)
+            } else if w < 1
+                || h < 1
+                || w > i64::from(abi::WIN_MAX_W)
+                || h > i64::from(abi::WIN_MAX_H)
+            {
+                Err(abi::errno::EINVAL)
+            } else {
+                Ok(FsReq::WinPresent {
+                    ptr: a,
+                    w: w as i32,
+                    h: h as i32,
+                })
+            }
+        }
+        abi::SYS_WIN_TITLE => {
+            if p.win == 0 {
+                Err(abi::errno::EBADF)
+            } else {
+                copy_title(asp, a, b).map(|title| FsReq::WinTitle { title })
+            }
+        }
         abi::SYS_OPEN => copy_path(asp, cwd, a, b).map(|path| FsReq::Open { path, flags: c }),
         abi::SYS_READ => Ok(FsReq::Read {
             fd: a as i64,
@@ -975,6 +1077,20 @@ fn file_call(r: &mut Regs, rsp: u64, slot: usize) -> u64 {
             rsp
         }
     }
+}
+
+fn copy_title(asp: &AddressSpace, ptr: u64, len: u64) -> Result<Vec<u8>, i64> {
+    let len = usize::try_from(len).map_err(|_| abi::errno::EINVAL)?;
+    if len > abi::WIN_MAX_TITLE {
+        return Err(abi::errno::ENAMETOOLONG);
+    }
+    let mut raw = alloc::vec![0u8; len];
+    asp.copy_in(ptr, &mut raw).map_err(|_| abi::errno::EFAULT)?;
+    // Printable ASCII only (the title bar draws it as it is).
+    if raw.iter().any(|b| !(0x20..0x7F).contains(b)) {
+        return Err(abi::errno::EINVAL);
+    }
+    Ok(raw)
 }
 
 fn close_fd(p: &mut Proc, fd: i64) -> i64 {
@@ -1072,4 +1188,56 @@ pub(crate) fn fs_done(pid: u32, value: i64) {
     };
     crate::sched::wake(slot);
     crate::sched::hand_off(slot);
+}
+
+// ---- the window of a process ----
+
+/// Queue an input event for the window of process `pid` and wake it if it waits (pointer motion
+/// replaces the one before it).
+pub(crate) fn win_push(pid: u32, ev: abi::Event) {
+    let slot = {
+        let mut procs = PROCS.lock();
+        let Some(p) = procs.iter_mut().find(|p| p.pid == pid) else {
+            return;
+        };
+        if ev.kind == abi::EV_POINTER
+            && let Some(last) = p.events.back_mut()
+            && last.kind == abi::EV_POINTER
+            && last.c == ev.c
+        {
+            *last = ev;
+        } else if ev.kind == abi::EV_RESIZE
+            && let Some(last) = p.events.back_mut()
+            && last.kind == abi::EV_RESIZE
+        {
+            *last = ev;
+        } else if p.events.len() < 256 {
+            p.events.push_back(ev);
+        }
+        p.slot
+    };
+    crate::sched::wake(slot);
+}
+
+/// How process `pid` ended (`Running` while it lives; a process no longer in the table exited).
+pub(crate) fn end(pid: u32) -> End {
+    PROCS
+        .lock()
+        .iter()
+        .find(|p| p.pid == pid)
+        .map_or(End::Exited(0), end_of)
+}
+
+/// The program's name and the window it owns (`0` = none).
+pub(crate) fn win_of(pid: u32) -> Option<(String, u32)> {
+    let procs = PROCS.lock();
+    let p = procs.iter().find(|p| p.pid == pid)?;
+    Some((p.name.clone(), p.win))
+}
+
+/// Remember the window `handle` of process `pid`.
+pub(crate) fn set_win(pid: u32, handle: u32) {
+    if let Some(p) = PROCS.lock().iter_mut().find(|p| p.pid == pid) {
+        p.win = handle;
+    }
 }

@@ -44,6 +44,10 @@ interface pequena de chamadas de sistema. É o primeiro passo da fase 3 de
 | 40 | `remove(caminho, len)` | vai para a lixeira, como em todo lugar do sistema |
 | 41 | `rename(de, len, para, len)` | o destino não pode existir |
 | 42 | `getargs(ptr, cap)` | a pasta de trabalho e os argumentos, cada um terminado em NUL; devolve o tamanho |
+| 48 | `win_open(w, h, titulo, len)` | abre a janela do programa (uma por processo; conteúdo de até 1280 x 800; título em ASCII imprimível, até 64 bytes) |
+| 49 | `win_present(ptr, w, h)` | mostra um quadro: `w * h` pixels RGBA, 4 bytes cada, sem folga entre linhas |
+| 50 | `win_event(ptr, timeout_ms)` | escreve 16 bytes (`Event`: tipo e três inteiros) e devolve 1; devolve 0 se nada veio no prazo (0 só olha, `u64::MAX` espera sem limite) |
+| 51 | `win_title(ptr, len)` | muda o título |
 
 Todo ponteiro é traduzido pelas tabelas do próprio processo, página por página
 (`AddressSpace::copy_in`), antes de o kernel tocar nele: um ponteiro ruim é um erro de retorno
@@ -73,6 +77,29 @@ códigos de erro e registros, `resolve` de caminhos, `pack_args`/`unpack_args`) 
   argumentos; `readdir` percorre a pasta a cada chamada (O(n²) para listar tudo), como o `osj.fs_readdir`.
 * **Provado.** Cenário `tools/perf/scen/w46-ring3-files.sh`: `cat` de um arquivo, de um pipe e de um arquivo que
   não existe, `ls /`, e o `fstest` com todos os passos `ok`, inclusive "gravar em `/etc/accounts` é recusado".
+
+## Janelas e entrada
+
+Um programa pede **uma janela** com `win_open` e a desenha em memória própria (RGBA); `win_present` entrega o
+quadro e `win_event` devolve o teclado, o ponteiro (posição no conteúdo e botões), o novo tamanho do conteúdo
+e o pedido de fechar (`EV_KEY`, `EV_TEXT`, `EV_POINTER`, `EV_RESIZE`, `EV_CLOSE`; tabela em
+`user-apps/abi`). SDK: `kitsune_user::win` (`Window`, `next_event`, `put`, `fill_rect`); exemplo `gfxdemo`.
+
+* **Para o desktop é um app como os outros.** A janela ocupa um *slot sem runtime WebAssembly* na tabela do
+  gerenciador (`wasm/manager/native.rs`): o compositor, a barra de título, minimizar, redimensionar, o Tarefas e
+  fechar funcionam como para um app WebAssembly, e o `appd` nunca o executa. Os quadros chegam pela thread
+  `procfsd`, que copia os pixels do processo, converte para o formato da tela fora de qualquer trava e os grava na
+  superfície de trás em faixas de 32 KiB (a trava só é tomada por faixa); depois troca as superfícies. A entrada
+  vai no sentido contrário: o gerenciador a coloca na fila do processo (movimento do ponteiro se funde) e o
+  acorda.
+* **Fim de vida.** Fechar a janela avisa o programa (`EV_CLOSE`) e, quando a janela some, encerra o processo;
+  o processo que acaba (ou é morto, `Ctrl+C` no `run`) deixa a janela mostrando o motivo, como um app WebAssembly.
+* **Limites e notas.** Uma janela por processo, quadros de até 1280 x 800, a fila de eventos guarda 256. A tecla
+  Esc não chega ao programa (o desktop a consome). Um quadro de tamanho diferente do conteúdo aparece no canto
+  superior esquerdo; o programa refaz o desenho ao receber `EV_RESIZE`.
+* **Provado.** Cenário `tools/perf/scen/w47-ring3-window.sh`: o `gfxdemo` abre a janela, anima um quadrado,
+  a cruz segue o ponteiro, uma tecla muda a barra, o botão de fechar termina o programa e devolve o prompt, e
+  `Ctrl+C` mata o processo e a janela mostra o motivo.
 
 ## O que foi provado em QEMU (cenário W43)
 
@@ -146,7 +173,7 @@ janelas `stac`/`clac`. Também: NX nas pilhas e no heap do processo, W^X imposto
   isolados os programas ELF e os apps WebAssembly v2. As funções `osj.*` (e o estado de arquivos, rede e
   desktop) ainda executam no kernel, a serviço do processo, e o `wasmi` do kernel segue compilado para os
   apps que não podem sair dele.
-* Sem rede, janelas nem entrada de teclado/mouse para processos ELF genéricos (têm arquivos e argumentos; os
-  hospedeiros WebAssembly recebem tudo isso pelo kernel, pelo contrato acima); sem `mmap` nem memória
+* Sem rede para processos ELF genéricos (têm arquivos, argumentos, janela e entrada; os hospedeiros
+  WebAssembly recebem tudo isso pelo kernel, pelo contrato acima); sem `mmap` nem memória
   compartilhada; sem limite de CPU além da preempção.
 * Um fio de kernel por processo de usuário, 8 processos ao mesmo tempo.

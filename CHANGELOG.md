@@ -4,6 +4,17 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — Janela e entrada para processos em anel 3
+
+- Um programa ELF pode ter **uma janela** (`win_open`, `win_present`, `win_event`, `win_title`; chamadas 48–51): ele
+  desenha em memória própria (RGBA) e entrega o quadro; recebe teclas, ponteiro, novo tamanho e o pedido de fechar.
+  Para o desktop é um app como os outros: um *slot sem runtime WebAssembly* na tabela do gerenciador
+  (`wasm/manager/native.rs`), então compositor, título, minimizar, redimensionar, Tarefas e fechar funcionam sem
+  mudança; os quadros e a conversão para o formato da tela passam pela thread `procfsd`, com a trava só por faixa.
+  Fechar a janela avisa o programa e depois o encerra; o processo que acaba deixa a janela com o motivo.
+- SDK `kitsune_user::win`; programa `gfxdemo`; `Event` e as chamadas no crate `kitsune-userabi` (testados). Cenário
+  `w47-ring3-window.sh` (quadros, ponteiro, tecla, fechar, `Ctrl+C`).
+
 ## 2026-10 — Arquivos, argumentos e pipe para processos em anel 3
 
 - Programas ELF ganham **arquivos**: `open`, `close`, `read`, `write`, `seek`, `stat`, `readdir`, `mkdir`,

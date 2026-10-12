@@ -1,7 +1,8 @@
 //! Files and arguments for ring 3 programs: what both sides of `int 0x80` agree on.
 //!
 //! Numbers 0–6 (exit, write, yield, getpid, sleep, uptime, brk) and 16–21 (the WebAssembly host,
-//! `kitsune_core::appabi::remote`) are documented where they are served; this crate owns 32–42.
+//! `kitsune_core::appabi::remote`) are documented where they are served; this crate owns 32–42 (files
+//! and arguments) and 48–51 (a window).
 //! A call is `rax` = number, `rdi`, `rsi`, `rdx`, `r10`, `r8` = arguments, result in `rax`
 //! (negative = `-errno`, see [`errno`]). Pointers are user addresses; the kernel copies through the
 //! process's page tables and never trusts them.
@@ -29,6 +30,65 @@ pub const SYS_MKDIR: u64 = 39;
 pub const SYS_REMOVE: u64 = 40;
 pub const SYS_RENAME: u64 = 41;
 pub const SYS_GETARGS: u64 = 42;
+
+pub const SYS_WIN_OPEN: u64 = 48;
+pub const SYS_WIN_PRESENT: u64 = 49;
+pub const SYS_WIN_EVENT: u64 = 50;
+pub const SYS_WIN_TITLE: u64 = 51;
+
+/// Largest window content, in pixels (the biggest the desktop shows).
+pub const WIN_MAX_W: u32 = 1280;
+pub const WIN_MAX_H: u32 = 800;
+/// Longest window title, in bytes.
+pub const WIN_MAX_TITLE: usize = 64;
+
+/// Kinds of [`Event`].
+pub const EV_KEY: u32 = 1;
+pub const EV_TEXT: u32 = 2;
+pub const EV_POINTER: u32 = 3;
+pub const EV_RESIZE: u32 = 4;
+pub const EV_CLOSE: u32 = 5;
+
+/// What [`SYS_WIN_EVENT`] writes: 16 bytes, little endian.
+///
+/// | kind | `a` | `b` | `c` |
+/// |---|---|---|---|
+/// | `EV_KEY` | key code (ASCII, 10 Enter, 27 Esc, 8 Backspace, 127 Delete, 0x100.. arrows) | modifiers (bit 0 Shift, 1 Ctrl, 2 Alt) | |
+/// | `EV_TEXT` | the Unicode character typed | | |
+/// | `EV_POINTER` | x in the content | y | buttons (bit 0 left, 1 right) |
+/// | `EV_RESIZE` | new content width | height | |
+/// | `EV_CLOSE` | | | the window was asked to close: finish |
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Event {
+    pub kind: u32,
+    pub a: i32,
+    pub b: i32,
+    pub c: i32,
+}
+
+/// Size of an [`Event`] on the wire.
+pub const EVENT_LEN: usize = 16;
+
+impl Event {
+    pub fn to_bytes(&self) -> [u8; EVENT_LEN] {
+        let mut o = [0u8; EVENT_LEN];
+        o[0..4].copy_from_slice(&self.kind.to_le_bytes());
+        o[4..8].copy_from_slice(&self.a.to_le_bytes());
+        o[8..12].copy_from_slice(&self.b.to_le_bytes());
+        o[12..16].copy_from_slice(&self.c.to_le_bytes());
+        o
+    }
+
+    pub fn from_bytes(b: &[u8; EVENT_LEN]) -> Event {
+        let w = |i: usize| [b[i], b[i + 1], b[i + 2], b[i + 3]];
+        Event {
+            kind: u32::from_le_bytes(w(0)),
+            a: i32::from_le_bytes(w(4)),
+            b: i32::from_le_bytes(w(8)),
+            c: i32::from_le_bytes(w(12)),
+        }
+    }
+}
 
 /// `open` flags.
 pub const O_WRITE: u64 = 1;

@@ -134,19 +134,27 @@ impl Desktop {
         let app_id = manifest.id.clone();
         let (cw, ch) = (manifest.win_w as i32, manifest.win_h as i32);
         let v1 = manifest.abi == Abi::V1;
-        let (min_w, min_h) = (
-            manifest.win_min_w as i32 + FRAME_W,
-            manifest.win_min_h as i32 + FRAME_H,
-        );
-        let resizable = manifest.resizable;
-        let title = String::from(manifest.display_name());
-        let handle = match wasm::launch(bytes, manifest, v1, cw, ch) {
+        let handle = match wasm::launch(bytes, manifest.clone(), v1, cw, ch) {
             Ok(h) => h,
             Err(e) => {
                 serial_println!("apps: cannot start `{}`: {:?}", app_id, e);
                 return None;
             }
         };
+        self.adopt_wasm(manifest, handle)
+    }
+
+    /// The window of the app `handle` (already in the manager's table): process entry, rectangle,
+    /// title and the window itself. Closes the app again if there is no room.
+    fn adopt_wasm(&mut self, manifest: Manifest, handle: wasm::AppId) -> Option<WindowId> {
+        let app_id = manifest.id.clone();
+        let (cw, ch) = (manifest.win_w as i32, manifest.win_h as i32);
+        let (min_w, min_h) = (
+            manifest.win_min_w as i32 + FRAME_W,
+            manifest.win_min_h as i32 + FRAME_H,
+        );
+        let resizable = manifest.resizable;
+        let title = String::from(manifest.display_name());
         let index = self.free_index_wasm(&app_id);
         let mut name = [0u8; 16];
         let n = numbered_name(&app_id, index, &mut name);
@@ -204,6 +212,25 @@ impl Desktop {
         }
     }
 
+    /// Open the windows ring 3 processes asked for (`win_open`): each already has its slot in the
+    /// manager's table, so it is adopted like a WebAssembly app that has just started.
+    fn adopt_native_windows(&mut self) {
+        for handle in wasm::take_native_windows() {
+            let Some((id, title, w, h)) = wasm::native_info(handle) else {
+                continue;
+            };
+            let mut m = Manifest::legacy(&id, &title);
+            m.win_w = w as u32;
+            m.win_h = h as u32;
+            m.win_min_w = 160;
+            m.win_min_h = 120;
+            m.resizable = true;
+            if self.wm.is_full() || self.adopt_wasm(m, handle).is_none() {
+                wasm::close(handle);
+            }
+        }
+    }
+
     /// The manager handle of a WASM window.
     pub(crate) fn wasm_handle(&self, id: WindowId) -> Option<wasm::AppId> {
         match &self.wm.get(id)?.app.app {
@@ -216,6 +243,7 @@ impl Desktop {
     /// adopt guest-set titles, free finished instances and mirror the clipboard.
     pub fn wasm_sync(&mut self) {
         wasm::reap();
+        self.adopt_native_windows();
         self.poll_fs_changes();
         let mut titles: Vec<(WindowId, String)> = Vec::new();
         for w in self.wm.windows() {

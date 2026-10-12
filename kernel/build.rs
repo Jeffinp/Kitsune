@@ -99,7 +99,7 @@ const USER_CRATES: &[(&str, &[&str])] = &[
     (
         "demo",
         &[
-            "hello", "spin", "crash", "probe", "mem", "cat", "ls", "fstest",
+            "hello", "spin", "crash", "probe", "mem", "cat", "ls", "fstest", "gfxdemo",
         ],
     ),
     // The WebAssembly host that runs an app inside a process (see `src/wasm/remote.rs`).
