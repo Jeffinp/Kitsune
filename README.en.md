@@ -89,7 +89,7 @@ dedicated stack, with no reboot and no black screen):
 ## 🚀 Getting started
 
 ```bash
-git clone https://github.com/Jeffinp/OSjeff && cd OSjeff
+git clone https://github.com/Jeffinp/Kitsune && cd Kitsune
 rustup show                  # installs the pinned toolchain and targets
 sudo apt install qemu-system-x86 ovmf    # or your distro's equivalent
 tools/run.sh                 # build and open QEMU (BIOS)

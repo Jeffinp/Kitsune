@@ -25,7 +25,7 @@ reiniciadas nem liberam recursos, DHCP e DNS sem autenticação, imagem sem assi
 ## Como relatar
 
 Use **GitHub Private Vulnerability Reporting** (aba *Security* → *Report a vulnerability*
-em <https://github.com/Jeffinp/OSjeff>) ou, se não estiver disponível, abra uma issue
+em <https://github.com/Jeffinp/Kitsune>) ou, se não estiver disponível, abra uma issue
 sem detalhes de exploração pedindo um canal privado. Inclua:
 
 - o commit testado e o modo (BIOS/UEFI, QEMU ou hardware);

@@ -89,7 +89,7 @@ pilha própria, sem reinício e sem tela preta):
 ## 🚀 Começando
 
 ```bash
-git clone https://github.com/Jeffinp/OSjeff && cd OSjeff
+git clone https://github.com/Jeffinp/Kitsune && cd Kitsune
 rustup show                  # instala o toolchain fixado e os alvos
 sudo apt install qemu-system-x86 ovmf    # ou o equivalente da sua distro
 tools/run.sh                 # compila e abre o QEMU (BIOS)

@@ -14,7 +14,7 @@ O Titular concede a qualquer pessoa uma permissão adicional, limitada e revogá
 - copiar e **modificar** o código **somente** para preparar uma contribuição ao projeto
   (corrigir um erro, propor um recurso, escrever testes ou documentação);
 - **enviar** essa modificação ao Titular, como pull request ao repositório oficial
-  (`github.com/Jeffinp/OSjeff`) ou por outro canal que o Titular indicar.
+  (`github.com/Jeffinp/Kitsune`) ou por outro canal que o Titular indicar.
 
 Essa permissão **não** inclui: publicar a modificação em outro lugar como projeto ou fork
 independente, distribuir o código, usá-lo em outro sistema, produto ou serviço, nem qualquer uso
