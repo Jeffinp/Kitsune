@@ -4,6 +4,23 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — Navegador: páginas reais (CSS externo e layout moderno)
+
+- **Folhas de estilo externas**: `<link rel=stylesheet>` e `@import` são buscados pelo `fetcher` (fila por página, até 12
+  folhas e 1 MiB) e o layout é refeito a cada folha. O "continuar mesmo assim" de um certificado vale também para
+  as imagens e folhas do site.
+- **CSS**: `@media`, `@supports`, `@layer`, `var()`, `calc()`/`min()`/`max()`/`clamp()`, `vw`/`vh`, `light-dark()`,
+  `color-mix()`, cores translúcidas sobre o fundo do ancestral, `;` dentro de `url()`; seletores `:not()`, `:is()`,
+  `:where()`, `:first/last/only-child`, `:nth-*`, `:empty`, `:link`, `:checked`, `:disabled`; entidades do HTML 4.
+- **Layout**: `flex` (linha e coluna, wrap, grow/shrink/basis, gap, justify, align, order, margens auto), `grid`
+  (`fr`, `repeat`, `auto-fill`, `span`), fileiras de `inline-block`, `float`/`clear` com texto contornando, tabelas em
+  quirks mode, caixas escondidas de propósito. `MAX_NODES` 20 000, `MAX_RULES` 6 000.
+- **Correção de TLS**: o buffer de registro era de 16 KiB exatos e todo registro de tamanho máximo falhava, cortando páginas
+  grandes (a Wikipédia vinha com 15 KB de 72 KB); agora 16 KiB + 256. Índice de regras por tag, classe e id.
+- Planejado: bloqueador de anúncios nativo, escolhido pela pessoa (`docs/ROADMAP.md`, item 10).
+- Ferramentas: `tools/render-page.py` + exemplo `render_page` (renderizam páginas reais no host),
+  `tools/fetch-page-css.py`; cenários `w49-browser-css.sh` e `w50-real-site.sh`.
+
 ## 2026-10 — O Terminal em anel 3 (`kterm`)
 
 - Novo programa **`kterm`** (`run kterm`): o motor de shell do `kitsune_core` (`Term`, `Shell`, `ShellFs`, `SysInfo`) num
