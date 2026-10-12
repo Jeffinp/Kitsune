@@ -70,6 +70,26 @@ pub fn harden() -> (bool, bool) {
     (smep, smap)
 }
 
+/// Let ring 3 code use SSE (x86_64 always has SSE2): CR4.OSFXSR says the OS saves the SSE state with
+/// `fxsave`/`fxrstor` (the scheduler does, per thread, see `sched::FxArea`), CR4.OSXMMEXCPT routes
+/// unmasked SIMD floating-point exceptions to `#XM` (which kills only the offending process), and
+/// CR0.EM off / CR0.MP on make the instructions run instead of raising `#UD`/`#NM`. Without this a
+/// program compiled with SSE (the C of `jsrun`: QuickJS uses hardware doubles) dies on its first
+/// `movups`. The kernel itself stays soft-float. Must run before the first thread's save area is
+/// seeded (`sched::init`), so every area starts with a valid MXCSR.
+pub fn enable_sse() {
+    use x86_64::registers::control::{Cr0, Cr0Flags, Cr4, Cr4Flags};
+    let mut cr0 = Cr0::read();
+    cr0.remove(Cr0Flags::EMULATE_COPROCESSOR | Cr0Flags::TASK_SWITCHED);
+    cr0.insert(Cr0Flags::MONITOR_COPROCESSOR);
+    // SAFETY: only the coprocessor bits change; every x86_64 CPU has an FPU and SSE2.
+    unsafe { Cr0::write(cr0) };
+    let cr4 = Cr4::read() | Cr4Flags::OSFXSR | Cr4Flags::OSXMMEXCPT_ENABLE;
+    // SAFETY: both bits only enable SSE state handling the scheduler already performs (`fxsave` /
+    // `fxrstor` on every switch) and the `#XM` exception, which has a handler.
+    unsafe { Cr4::write(cr4) };
+}
+
 /// `(used, total)` frames of the allocator.
 pub fn frame_stats() -> (usize, usize) {
     FRAMES

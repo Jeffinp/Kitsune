@@ -223,13 +223,29 @@ macro_rules! println {
 
 /// Declare the program's entry: `entry!(main)` with `fn main() -> i32` defines `_start`, which
 /// calls it and exits with its value.
+///
+/// `_start` is the ELF entry point, not a function: the kernel enters it with the stack pointer
+/// 16-byte aligned (as Linux does), while compiled code expects it 8 bytes off at a function's first
+/// instruction (where a `call` left its return address). So `_start` is a few instructions that
+/// realign and *call* the real entry; otherwise every frame is misaligned and the first aligned SSE
+/// access to the stack (`movaps`, common in C built with SSE) faults.
 #[macro_export]
 macro_rules! entry {
     ($main:path) => {
-        #[unsafe(no_mangle)]
-        pub extern "C" fn _start() -> ! {
+        extern "C" fn __kitsune_entry() -> ! {
             let code: i32 = $main();
             $crate::exit(code)
+        }
+
+        #[unsafe(naked)]
+        #[unsafe(no_mangle)]
+        pub extern "C" fn _start() -> ! {
+            core::arch::naked_asm!(
+                "and rsp, -16",
+                "call {entry}",
+                "ud2",
+                entry = sym __kitsune_entry,
+            )
         }
     };
 }
