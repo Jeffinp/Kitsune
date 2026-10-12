@@ -4,6 +4,15 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — Arquivos grandes divididos
+
+- Os arquivos de código acima de ~600 linhas foram divididos por responsabilidade, sem mudar comportamento (a regra de
+  `docs/design/code-structure.md`): `foo.rs` fica com a documentação, os `mod` e os reexports, e a pasta `foo/` com os
+  submódulos (`use super::*;`). Núcleo: `web/form`, `browser/addressbar`, `format/jpeg`, `ui/{raster,brand,anim,appart}`,
+  `fs3/mount`, `apps/shell/sys`, `system/settings`, `network/dns`, `windowing/winman`. Kernel: `trace`, `sched`,
+  `wasm/abi2`, `netd`, `fetch`, `fb/shapes`. Os `impl` grandes (`Browser`, `FormState`, `Fs3`, `WindowManager`, `Netd`,
+  `Canvas`) viraram vários `impl`, um por assunto. O pai de cada um ficou com no máximo ~410 linhas.
+
 ## 2026-10 — Navegador: páginas reais (CSS externo e layout moderno)
 
 - **Folhas de estilo externas**: `<link rel=stylesheet>` e `@import` são buscados pelo `fetcher` (fila por página, até 12

@@ -48,6 +48,41 @@ Names: folders are the Portuguese app names where the app is user-facing (`regis
 ~600 lines, along the existing `// ----` section seams. `mod.rs` holds only `mod` lines, re-exports and
 the folder doc.
 
+### Splitting a large file
+
+A file over ~600 lines (tests excluded) becomes `foo.rs` (the doc, the imports, `mod` lines, the
+re-exports and the few types the children share) plus a folder `foo/` with one child per subject; the
+children start with `use super::*;`, so they see the parent's private items and imports. Items moved to a
+child keep their visibility (`pub` stays `pub`, private becomes `pub(super)`, which is the same reach as
+before) and the parent re-exports them with `use child::*;` (`pub use` for what the outside sees), so no
+caller changes. A huge `impl` is split into several `impl` blocks, one child per subject (methods that were
+private become `pub(super)`/`pub(in super::super)`). A module loaded with `#[path]` (`kernel/src/fb.rs`
+includes `fb/shapes.rs`, and the bench crate includes `fb.rs`) names its children with `#[path]` too.
+
+Files split this way, with their children:
+
+| File | Children |
+|---|---|
+| `browsing/web/form` | `compose` (dead keys), `textedit`, `values`, `editing`, `submit` |
+| `browsing/browser/addressbar` | `request`, `state`, `keys`, `navigation`, `internal`, `bookmarks`, `bar` |
+| `browsing/web/{layout,style,css,dom}`, `format/svg` | see their folders |
+| `format/jpeg` | `headers`, `scan`, `output` (+ `huffman`, `idct`, `progressive`) |
+| `ui/raster` | `color`, `corners`, `resample`, `shadow` |
+| `ui/brand` | `head`, `halo`, `hints`, `render`, `svg` |
+| `ui/anim` | `bezier`, `spring`, `transition`, `zoom`, `caret` |
+| `ui/appart` | `files`, `tools` |
+| `storage/fs3/mount` | `meta`, `inodes`, `txn` |
+| `apps/shell/sys` | `types`, `mock` |
+| `system/settings` | `timezones`, `choices`, `text`, `format` |
+| `network/dns` | `message`, `cache`, `resolve` |
+| `windowing/winman` | `lifecycle`, `focus`, `workspaces`, `geometry` (+ `helpers`) |
+| `kernel/trace` | `stats`, `report`, `bench` |
+| `kernel/sched` | `spawn`, `death`, `blocking`, `introspect`, `user` |
+| `kernel/wasm/abi2` | `guest`, `hostio`, `pixels` |
+| `kernel/netd` | `mailbox`, `pinger` |
+| `kernel/fetch` | `client`, `thread`, `load` (+ `apps`, `jobs`) |
+| `kernel/fb/shapes` | `rrect`, `shadow`, `blit`, `glow` |
+
 ## Dependency rules (core)
 
 `group -> allowed groups` (own group always allowed). Enforced by
