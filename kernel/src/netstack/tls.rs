@@ -4,7 +4,9 @@ use super::*;
 
 // ---- TLS plumbing: an embedded-io stream over the smoltcp socket + an RNG ----
 
-pub(super) const TLS_REC: usize = 16 * 1024;
+/// A TLS record buffer: the largest record (16 KiB of data) plus its header, type and tag. A buffer of
+/// exactly 16 KiB makes every full-size record of a server fail and the page stops short.
+pub(super) const TLS_REC: usize = 16 * 1024 + 256;
 pub(super) static TLS_RX: RacyCell<[u8; TLS_REC]> = RacyCell::new([0; TLS_REC]);
 pub(super) static TLS_TX: RacyCell<[u8; TLS_REC]> = RacyCell::new([0; TLS_REC]);
 

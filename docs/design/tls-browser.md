@@ -390,7 +390,65 @@ a lista de desenho é descartada e refeita ao voltar.
 | Páginas de teste (tipografia, listas, tabelas, formulários, imagens, palavras longas, idiomas, estilos, citações, 2000 nós) | `tools/w24-site.py` e `w24-pages.sh` |
 | Custo | `tools/perf/scen/w24-perf.sh` e `tools/perf/w24-perf.py` (`docs/TESTING.md`, "Navegador na W24") |
 
-Limites conhecidos: sem JavaScript; sem `float`, `flex`, `grid` (degradam para bloco); sem
-`rowspan`, `textarea` ou `select`; sem rolagem horizontal (`pre` quebra); alfabetos fora do Latim-1
+Limites conhecidos (os de CSS moderno estão no §10): sem JavaScript; sem
+`rowspan`; sem rolagem horizontal (`pre` quebra); alfabetos fora do Latim-1
 (cirílico, grego, CJK, emoji) e escrita da direita para a esquerda aparecem como quadros; sem
 cookies nem *cache* de HTTP; o itálico é uma inclinação do negrito/regular, não uma face.
+
+## 10. Páginas reais: CSS externo e layout moderno
+
+Até o §9 o navegador lia só o `<style>` da própria página e degradava `float`, `flex` e `grid` para bloco.
+Para carregar páginas da internet de verdade (que quase sempre vivem de folhas externas e de layout
+moderno) o motor ganhou:
+
+**Folhas externas.** `<link rel=stylesheet href>` (menos `alternate` e `media=print`) e `@import` entram numa
+fila por página (`web::sheets::SheetSet`, no máximo 12 folhas e 1 MiB de CSS). O desktop pede uma por vez
+ao `fetcher` (`fetch::try_post_sheet`, depois da página e antes das imagens), as regras de cada uma entram
+**antes** do `<style>` da página e depois das folhas anteriores (`Doc::add_sheet`) e o layout é refeito
+a cada folha que chega. O override de certificado ("continuar mesmo assim") vale também para as
+imagens e folhas do mesmo site.
+
+**CSS.** `@media` (largura e altura do viewport, a sintaxe de intervalo `(width >= 600px)`, tema claro,
+sem preferência de movimento, `hover`, pixel ratio 1; `print` nunca), `@supports` e `@layer` (o conteúdo vale como
+está; `@supports not` é pulado), `var(--x, fallback)`, `calc()`, `min()`, `max()`, `clamp()` (um
+`min(100%, 600px)` fica para o layout, que conhece a coluna), `vw`/`vh`/`vmin`/`vmax`/`ch`,
+`light-dark()`, `color-mix()` e `env()` (escolhem um argumento), cores translúcidas misturadas com o fundo
+do ancestral (e não com o branco), `;` dentro de `url(...)` e de strings, `html` sempre existe (`:root` vale em
+fragmentos). Seletores: `:not()`, `:is()`, `:where()`, `:first/last/only-child`, `:nth-child()` e `:nth-of-type()`
+(e os `last`), `:first/last-of-type`, `:empty`, `:link`, `:checked`, `:disabled`, `:enabled`; `:hover`, `:focus`,
+`:visited`, pseudo-elementos e irmãos (`+`, `~`) continuam fazendo a regra não valer. Entidades: todas as do HTML 4.
+
+**Layout** (`layout/flex.rs`): `display:flex` em linha ou coluna (`wrap`, `flex` / `grow` / `shrink` / `basis`, `gap`,
+`justify-content`, `align-items` / `align-self`, `order`, margens `auto`, `reverse`), `display:grid`
+(`grid-template-columns` com `fr`, px, %, `auto`, `repeat()` e `repeat(auto-fill, minmax())`, `gap`, `span`),
+uma fileira de `inline-block` como caixas lado a lado (um entre texto continua na linha), `float` e `clear`
+com o texto contornando (os floats ficam na caixa que os contém quando ela cria o seu contexto, tem `overflow`
+diferente de `visible`, é um `::after{clear}` ou só tem floats), tabelas em *quirks mode* (sem doctype) sem herdar
+`text-align` do `<center>`. Larguras de conteúdo vêm do mesmo medidor das tabelas (`table::content_intr`). Caixas
+escondidas de propósito (`visibility:hidden`, `opacity:0`, `position:absolute` fora da tela ou recortada,
+`text-indent:-9999px`, `[hidden]`) não são desenhadas; `position:absolute` e `fixed` ficam no fluxo.
+
+**Limites.** Sem JavaScript, sem `::before`/`::after`, sem `position` de verdade (`sticky`, `fixed`, `absolute`
+vão para o fluxo), sem imagens de fundo, sem `grid-template-areas` nem linhas explícitas, sem fontes da web, sem
+`rowspan`, sem cookies. Uma página SPA (BBC, por exemplo) mostra só o que o HTML do servidor traz.
+
+**Como olhar uma página sem iniciar o sistema.** `tools/fetch-page-css.py URL pasta` baixa a página e as folhas
+que ela liga; `tools/render-page.py pasta/page.html saida.png 1000 1400 --css pasta/css-*.css` roda o motor
+(exemplo `kitsune_core/examples/render_page.rs`) e pinta a lista de desenho com PIL (a fonte é a DejaVu, então as
+larguras diferem um pouco da Inter do sistema; a estrutura é a do motor).
+
+| O quê | Evidência |
+|---|---|
+| Fila de folhas, ordem, `@import`, limites | `kitsune_core` `web::sheets::tests` |
+| Flex, grid, inline-block, float, escondidos, `@media`, `var()`/`calc()`, quirks | `layout_tests::modern` |
+| Seletores, `@media`, `@import`, `;` em `url()` | `css::css_tests` |
+| Folha externa + flex + grid + float + `@media` no QEMU | `tools/perf/scen/w49-browser-css.sh` (página `/modern` de `tools/w24-site.py`) |
+| Sites reais pela rede de verdade | `tools/perf/scen/w50-real-site.sh` (`CONTINUE=1` onde o proxy do ambiente reassina o HTTPS) |
+
+## 11. Planejado: bloqueador de anúncios nativo
+
+Ainda não existe; o plano está no [`ROADMAP`](../ROADMAP.md) (item 10). Resumo: ligado por padrão e **escolhido
+pela pessoa**, por site (para quando um site pedir que o bloqueio seja desativado), com regras aplicadas antes do
+pedido de cada subrecurso e na diagramação. O ponto único para isso é a fila de recursos da página
+(`web::sheets::SheetSet` e `web::imgcache::ImageCache`): ambas passam a perguntar a um filtro (`kitsune_core`, puro
+e testável no host) se o endereço pode ser pedido.

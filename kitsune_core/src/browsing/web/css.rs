@@ -20,11 +20,11 @@ pub use media::{DEFAULT_H, DEFAULT_W, Media, set_viewport, viewport_h, viewport_
 /// the cost. With `MAX_NODES` elements this bounds the whole cascade to a few
 /// million selector tests. Later rules are dropped (document order is cascade
 /// order, so the page keeps its earliest, usually most structural, rules).
-pub const MAX_RULES: usize = 6_000;
+pub const MAX_RULES: usize = 20_000;
 
 /// Maximum selectors summed over all rules of one stylesheet: a single rule
 /// with a huge comma list would otherwise dodge [`MAX_RULES`].
-pub const MAX_SELECTORS: usize = 12_000;
+pub const MAX_SELECTORS: usize = 40_000;
 
 /// Longest compound chain of a selector (`a b > c d` is 4).
 pub const MAX_COMPOUNDS: usize = 5;
@@ -33,7 +33,7 @@ pub const MAX_COMPOUNDS: usize = 5;
 const MAX_SELECTOR_LEN: usize = 256;
 
 /// Longest stylesheet text parsed, in bytes (the HTML body is capped far below this).
-const MAX_CSS_BYTES: usize = 512 * 1024;
+const MAX_CSS_BYTES: usize = 768 * 1024;
 
 /// A parsed stylesheet: an ordered list of rules.
 #[derive(Debug, Default)]
@@ -43,42 +43,54 @@ pub struct Stylesheet {
     pub medias: Vec<Media>,
     /// Addresses of the `@import`ed sheets, in order.
     pub imports: Vec<String>,
-    /// Per element name, the indices (in rule order) of the rules that can match it: those
-    /// whose selectors name it plus those that name nothing. Empty until [`build_index`].
+    /// The rules that can match an element, found by what it is called, its `id` and its classes: per
+    /// name, the indices (in rule order) of the rules whose selectors end in that tag, id or class.
+    /// Empty until [`build_index`].
     by_tag: alloc::collections::BTreeMap<String, Vec<u32>>,
-    /// The rules that can match any element name.
+    by_class: alloc::collections::BTreeMap<String, Vec<u32>>,
+    by_id: alloc::collections::BTreeMap<String, Vec<u32>>,
+    /// The rules that name nothing to index by (`*`, `[attr]`, `:root`...).
     generic: Vec<u32>,
     indexed: bool,
 }
 
 impl Stylesheet {
-    /// Index the rules by the element name their selectors end in, so the cascade tests an
+    /// Index the rules by the tag, id or class their selectors end in, so the cascade tests an
     /// element against the few rules that can match it instead of every rule. Call after the
     /// rule list is final.
     pub fn build_index(&mut self) {
         self.by_tag.clear();
+        self.by_class.clear();
+        self.by_id.clear();
         self.generic.clear();
         for (i, r) in self.rules.iter().enumerate() {
-            let any = r
-                .selectors
-                .iter()
-                .any(|s| s.tag.as_deref().is_none_or(|t| t == "*"));
-            if any {
-                self.generic.push(i as u32);
-                continue;
-            }
+            let i = i as u32;
+            // A rule goes under the best key of each of its selectors; one without any key makes
+            // the whole rule generic.
+            let mut keyed = true;
             for s in &r.selectors {
-                if let Some(t) = &s.tag {
-                    let v = self.by_tag.entry(t.clone()).or_default();
-                    if v.last() != Some(&(i as u32)) {
-                        v.push(i as u32);
+                let map = if let Some(id) = &s.id {
+                    Some((&mut self.by_id, id.clone()))
+                } else if let Some(c) = s.classes.first() {
+                    Some((&mut self.by_class, c.clone()))
+                } else if let Some(t) = s.tag.as_ref().filter(|t| *t != "*") {
+                    Some((&mut self.by_tag, t.clone()))
+                } else {
+                    None
+                };
+                match map {
+                    Some((m, k)) => {
+                        let v = m.entry(k).or_default();
+                        if v.last() != Some(&i) {
+                            v.push(i);
+                        }
                     }
+                    None => keyed = false,
                 }
             }
-        }
-        for v in self.by_tag.values_mut() {
-            v.extend_from_slice(&self.generic);
-            v.sort_unstable();
+            if !keyed {
+                self.generic.push(i);
+            }
         }
         self.indexed = true;
     }
@@ -92,13 +104,32 @@ impl Stylesheet {
                 .is_some_and(|m| m.matches(viewport_w(), viewport_h()))
     }
 
-    /// Indices of the rules worth testing for an element called `tag`, in rule order; `None`
-    /// when the sheet was not indexed (test them all).
-    pub fn candidates(&self, tag: &str) -> Option<&[u32]> {
+    /// The rules worth testing for `el`, in rule order, written to `out` (replacing what it held);
+    /// `false` when the sheet was not indexed (test them all).
+    pub fn candidates(&self, el: &Element, out: &mut Vec<u32>) -> bool {
         if !self.indexed {
-            return None;
+            return false;
         }
-        Some(self.by_tag.get(tag).map_or(&self.generic[..], |v| &v[..]))
+        out.clear();
+        out.extend_from_slice(&self.generic);
+        if let Some(v) = self.by_tag.get(el.tag.as_str()) {
+            out.extend_from_slice(v);
+        }
+        if !self.by_class.is_empty() {
+            for c in el.classes() {
+                if let Some(v) = self.by_class.get(c) {
+                    out.extend_from_slice(v);
+                }
+            }
+        }
+        if let Some(id) = el.id()
+            && let Some(v) = self.by_id.get(id)
+        {
+            out.extend_from_slice(v);
+        }
+        out.sort_unstable();
+        out.dedup();
+        true
     }
 }
 

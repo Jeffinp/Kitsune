@@ -217,29 +217,37 @@ fn comments_inside_blocks_and_the_ancestor_budget() {
 }
 
 #[test]
-fn the_tag_index_offers_every_rule_that_can_match_in_rule_order() {
-    let mut ss =
-        parse_css("p{a:1} .x{a:2} div p{a:3} h1,p{a:4} *{a:5} [id]{a:6} span > b{a:7} a, .y{a:8}");
-    // Without an index every rule is a candidate.
-    assert!(ss.candidates("p").is_none());
-    ss.build_index();
-    let names = |t: &str| -> Vec<usize> {
-        ss.candidates(t)
-            .unwrap()
-            .iter()
-            .map(|&i| i as usize)
-            .collect()
+fn the_index_offers_every_rule_that_can_match_in_rule_order() {
+    let mut ss = parse_css(
+        "p{a:1} .x{a:2} div p{a:3} h1,p{a:4} *{a:5} [id]{a:6} span > b{a:7} a, .y{a:8} #k{a:9} p.z{a:10}",
+    );
+    let nodes = el_of("<p id=k class='x z'>t</p><section></section><h1></h1><b></b><a class=y></a>");
+    let el = |i: usize| match &nodes[i] {
+        Node::Element(e) => e,
+        _ => panic!(),
     };
-    // Rules ending in `p` plus the ones that name no element.
-    assert_eq!(names("p"), [0, 1, 2, 3, 4, 5, 7]);
+    let mut out = Vec::new();
+    // Without an index every rule is a candidate.
+    assert!(!ss.candidates(el(0), &mut out));
+    ss.build_index();
+    let mut names = |e: &Element| -> Vec<usize> {
+        assert!(ss.candidates(e, &mut out));
+        out.iter().map(|&i| i as usize).collect()
+    };
+    // `p`: its tag rules, the `.x` and `#k` rules by class and id, `p.z`, and the generic ones (`*`, `[id]`).
+    assert_eq!(names(el(0)), [0, 1, 2, 3, 4, 5, 8, 9]);
     // An element no rule names still gets the generic ones, in order.
-    assert_eq!(names("section"), [1, 4, 5, 7]);
-    assert_eq!(names("h1"), [1, 3, 4, 5, 7]);
-    assert_eq!(names("b"), [1, 4, 5, 6, 7]);
-    assert_eq!(names("a"), [1, 4, 5, 7]);
-    for t in ["p", "section", "h1", "b", "a"] {
-        let v = names(t);
-        assert!(v.windows(2).all(|w| w[0] < w[1]), "{t}: {v:?}");
+    assert_eq!(names(el(1)), [4, 5]);
+    assert_eq!(names(el(2)), [3, 4, 5]);
+    assert_eq!(names(el(3)), [4, 5, 6]);
+    assert_eq!(names(el(4)), [4, 5, 7]);
+    // Every rule that matches the element is among the candidates.
+    for (k, e) in (0..5).map(|k| (k, el(k))) {
+        let cand = names(e);
+        for (i, r) in ss.rules.iter().enumerate() {
+            let hit = r.selectors.iter().any(|s| s.matches_element(e) && s.ancestors.is_empty());
+            assert!(!hit || cand.contains(&i), "element {k} rule {i}");
+        }
     }
 }
 

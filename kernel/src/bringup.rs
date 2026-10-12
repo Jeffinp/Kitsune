@@ -132,13 +132,17 @@ pub fn pump_browser(desk: &mut Desktop, redraw: &mut bool) {
             fetch::try_post(&url[..len], &host[..hlen], body.as_deref());
         } else if let Some(len) = desk.browser_next_sheet(&mut url) {
             // The page's style sheets before its pictures: they decide what the page looks like.
-            if !fetch::try_post_sheet(&url[..len], &[]) {
+            let mut host = [0u8; 96];
+            let hlen = desk.browser_insecure_host_active(&mut host);
+            if !fetch::try_post_sheet(&url[..len], &host[..hlen]) {
                 desk.browser_sheet_done(None);
                 *redraw = true;
             }
         } else if let Some((len, fit_w)) = desk.browser_next_image(&mut url) {
             // Nothing else is waiting: fetch the next picture of the page.
-            if !fetch::try_post_image(&url[..len], &[], fit_w) {
+            let mut host = [0u8; 96];
+            let hlen = desk.browser_insecure_host_active(&mut host);
+            if !fetch::try_post_image(&url[..len], &host[..hlen], fit_w) {
                 desk.browser_image_done(Err(kitsune_core::web::imgcache::ImgFail::Failed));
                 *redraw = true;
             }

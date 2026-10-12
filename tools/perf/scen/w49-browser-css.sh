@@ -6,7 +6,7 @@ source "$(dirname "$0")/../lib.sh"
 wait_first_frame
 dock_icon browser; click; sleep 3
 key ctrl-l; sleep 0.3
-typestr "http://203.0.113.5:8079/modern"
+typestr "http://203.0.113.5:8079/${PAGE:-modern}"
 key ret
 sleep 9
 shot a-modern

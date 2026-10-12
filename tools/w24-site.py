@@ -219,6 +219,13 @@ a:hover{color:red}
             "<p class=after>Depois das colunas flutuantes.</p></main>"
             "<footer class=foot><span>Rodapé</span><span class=push>fim</span></footer></body></html>"
         ).encode()
+    if path == "/bigcss":
+        # A 300 KB sheet (served gzip-compressed): the rule that matters is the last one.
+        return (
+            "<!doctype html><html><head><meta charset=utf-8><title>CSS grande</title>"
+            "<link rel=stylesheet href=/big.css></head><body><p class=first>Primeiro</p>"
+            "<p class=last>Ultimo: vermelho se a folha chegou inteira.</p></body></html>"
+        ).encode()
     if path == "/quote":
         return page("Citações", f"<h1>Citações</h1><blockquote>{LOREM}<blockquote>Aninhada: {LOREM}</blockquote></blockquote>")
     if path == "/big":
@@ -281,6 +288,13 @@ main{max-width:min(100%, 760px);margin:0 auto;padding:20px}
 @media print{ body{display:none} }
 """
             return self.reply(200, "text/css; charset=utf-8", css.encode())
+        if u.path == "/big.css":
+            import gzip
+            rules = "".join(f".r{i}{{color:#{i % 4096:03x};margin:{i % 7}px;padding:{i % 5}px}}\n" for i in range(9000))
+            css = (rules + ".first{color:#00aa00}.last{color:#ff0000;font-weight:bold}\n").encode()
+            if "gzip" in self.headers.get("Accept-Encoding", ""):
+                return self.reply(200, "text/css", gzip.compress(css), [("Content-Encoding", "gzip")])
+            return self.reply(200, "text/css", css)
         if u.path == "/redirect":
             return self.reply(302, "text/plain", b"", [("Location", "/type")])
         if u.path == "/hang":

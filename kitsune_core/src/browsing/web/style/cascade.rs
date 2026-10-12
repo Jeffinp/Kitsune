@@ -30,16 +30,14 @@ pub(super) fn matched_decls<'a>(
             hit.push((sp, r));
         }
     };
-    match sheet.candidates(&el.tag) {
-        Some(ix) => {
-            for &i in ix {
-                test(&sheet.rules[i as usize]);
-            }
+    let mut ix: Vec<u32> = Vec::new();
+    if sheet.candidates(el, &mut ix) {
+        for &i in &ix {
+            test(&sheet.rules[i as usize]);
         }
-        None => {
-            for r in &sheet.rules {
-                test(r);
-            }
+    } else {
+        for r in &sheet.rules {
+            test(r);
         }
     }
     hit.sort_by_key(|(sp, _)| *sp);

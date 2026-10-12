@@ -78,6 +78,25 @@ SDK documentado e WASI sobre o OJFS; GIF e JPEG, POST, `<textarea>` e `<select>`
 *Aceite:* uma página com GIF e JPEG mostra as imagens; um formulário POST envia e recebe a resposta; um programa em
 Rust compilado para WASI roda no Terminal.
 
-### 10. Mais adiante: SMP, USB e som
+### 10. Bloqueador de anúncios e rastreadores nativo (a fazer, pedido do dono do projeto)
+
+O navegador deve trazer, de fábrica, um bloqueador de anúncios e rastreadores no estilo dos "Escudos" do Brave (só a
+ideia: nada do código nem da marca do Brave). Decisões já tomadas:
+
+- **A pessoa escolhe.** Ligado por padrão, com um botão na barra de endereço (e nas configurações) para desligar
+  **por site**, por sessão ou para sempre. Se um site detectar o bloqueio e pedir para desativar, a pessoa desliga ali
+  e a página recarrega sem o filtro e abre normalmente.
+- **Como:** lista de regras embutida e atualizável (formato de filtros comum, só o subconjunto de bloqueio por domínio,
+  caminho e tipo de recurso), aplicada **antes** do `fetcher` pedir qualquer subrecurso (imagens, folhas, scripts que
+  nem rodamos) e na diagramação (elementos escondidos por seletor cosmético). Sem JavaScript no navegador, o
+  ganho é menos tráfego, menos memória e páginas mais limpas.
+- **Extras do estilo Brave, em ordem:** bloquear rastreadores de terceiros, remover parâmetros de rastreio das
+  URLs (`utm_*`, `fbclid`...), atualizar http→https quando o site oferece, contador de itens bloqueados na página.
+- **Aceite:** uma página de teste com anúncios e rastreadores locais não pede nenhum deles com o filtro ligado e pede
+  todos com ele desligado; o botão desliga só o site atual; testes no host (`kitsune_core`) das regras e do casamento
+  de URLs, e uma cena no QEMU.
+- Ver `docs/design/tls-browser.md` §11.
+
+### 11. Mais adiante: SMP, USB e som
 Vários núcleos (APIC), prioridades no scheduler, USB (teclado, mouse e armazenamento) e áudio.
 *Aceite:* cada um com sua prova (o desktop usa mais de um núcleo; um teclado USB funciona).

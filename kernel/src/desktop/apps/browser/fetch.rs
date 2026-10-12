@@ -145,6 +145,25 @@ impl Desktop {
         }
     }
 
+    /// The host the user allowed past a certificate error for the page on screen (empty when none):
+    /// its pictures and style sheets come over the same connection rules.
+    pub fn browser_insecure_host_active(&mut self, out: &mut [u8]) -> usize {
+        let Some(id) = self.browser_id() else {
+            return 0;
+        };
+        let Some(b) = self.browser_state_mut(id) else {
+            return 0;
+        };
+        match b.tabs.active().browser.insecure_host() {
+            Some(h) => {
+                let n = h.len().min(out.len());
+                out[..n].copy_from_slice(&h[..n]);
+                n
+            }
+            None => 0,
+        }
+    }
+
     /// The body of the POST the tab just handed over by
     /// [`browser_take_request`](Self::browser_take_request) (`None` for a GET).
     pub fn browser_post_body(&mut self) -> Option<alloc::vec::Vec<u8>> {
