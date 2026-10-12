@@ -1,0 +1,117 @@
+//! `jsrun`: runs JavaScript in a ring 3 process with QuickJS.
+//!
+//! ```text
+//! run jsrun script.js        the file (relative paths start at the terminal's folder)
+//! run jsrun -e 'CODE'        the code given
+//! run jsrun --selftest       the built-in test of the engine, with a small benchmark
+//! echo 'CODE' | run jsrun    standard input
+//! ```
+//!
+//! `console.log` (and `print`) write to the output; an uncaught exception prints its message and stack
+//! and the status is 1. The engine and its C library are compiled by build.rs; this side reads the
+//! script, gives C its heap (`heap.rs`) and its system calls (`sys.rs`).
+#![no_std]
+#![no_main]
+
+extern crate alloc;
+
+#[path = "jsrun/heap.rs"]
+mod heap;
+#[path = "jsrun/sys.rs"]
+mod sys;
+
+use alloc::vec::Vec;
+use kitsune_user::fs::{self, Env, File};
+use kitsune_user::*;
+
+entry!(main);
+
+/// The largest script read, in bytes.
+const MAX_SCRIPT: usize = 16 * 1024 * 1024;
+
+/// The engine's own test, with a NUL after it (QuickJS wants one).
+const SELFTEST: &str = concat!(include_str!("jsrun/selftest.js"), "\0");
+
+unsafe extern "C" {
+    /// `glue.c`: evaluate `len` bytes at `src` (NUL at `src[len]`) named `name` (NUL-terminated);
+    /// returns the process status.
+    fn kjs_run(src: *const u8, len: usize, name: *const u8) -> i32;
+}
+
+const USAGE: &str = "usage: jsrun FILE.js | jsrun -e CODE | jsrun --selftest | ... | jsrun\n";
+
+fn main() -> i32 {
+    let env = Env::load();
+    let mut args = env.args();
+    let (mut source, name): (Vec<u8>, &str) = match args.next() {
+        Some("--selftest") => {
+            return run(SELFTEST.as_bytes(), SELFTEST.len() - 1, "selftest.js");
+        }
+        Some("-h" | "--help") => {
+            print!("{USAGE}");
+            return 0;
+        }
+        Some("-e") => match args.next() {
+            Some(code) => (Vec::from(code.as_bytes()), "<eval>"),
+            None => {
+                print!("{USAGE}");
+                return 2;
+            }
+        },
+        Some(path) => match read_file(path) {
+            Ok(v) => (v, path),
+            Err(msg) => {
+                println!("jsrun: {path}: {msg}");
+                return 2;
+            }
+        },
+        None => match read_stdin() {
+            Ok(v) => (v, "<stdin>"),
+            Err(msg) => {
+                println!("jsrun: <stdin>: {msg}");
+                return 2;
+            }
+        },
+    };
+    let len = source.len();
+    source.push(0);
+    run(&source, len, name)
+}
+
+fn run(src: &[u8], len: usize, name: &str) -> i32 {
+    let mut cname = Vec::with_capacity(name.len() + 1);
+    cname.extend_from_slice(name.as_bytes());
+    cname.push(0);
+    debug_assert!(src.len() > len && src[len] == 0);
+    // SAFETY: `src` holds `len` bytes and a NUL at `src[len]`; `cname` is NUL-terminated; both live
+    // through the call, which does not keep them.
+    unsafe { kjs_run(src.as_ptr(), len, cname.as_ptr()) }
+}
+
+fn read_file(path: &str) -> Result<Vec<u8>, &'static str> {
+    let mut f = File::open(path).map_err(fs::error_text)?;
+    read_all(|buf| f.read(buf).map_err(fs::error_text))
+}
+
+fn read_stdin() -> Result<Vec<u8>, &'static str> {
+    read_all(|buf| fs::read_stdin(buf).map_err(fs::error_text))
+}
+
+/// Read until the end in 64 KiB pieces (the most one call moves).
+fn read_all(
+    mut read: impl FnMut(&mut [u8]) -> Result<usize, &'static str>,
+) -> Result<Vec<u8>, &'static str> {
+    let mut out = Vec::new();
+    loop {
+        let at = out.len();
+        if at >= MAX_SCRIPT {
+            return Err("script too large (16 MiB at most)");
+        }
+        out.resize(at + 64 * 1024, 0);
+        let n = read(&mut out[at..])?;
+        out.truncate(at + n);
+        if n == 0 {
+            return Ok(out);
+        }
+    }
+}
