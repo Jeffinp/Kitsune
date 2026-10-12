@@ -462,3 +462,11 @@ pela pessoa**, por site (para quando um site pedir que o bloqueio seja desativad
 pedido de cada subrecurso e na diagramação. O ponto único para isso é a fila de recursos da página
 (`web::sheets::SheetSet` e `web::imgcache::ImageCache`): ambas passam a perguntar a um filtro (`kitsune_core`, puro
 e testável no host) se o endereço pode ser pedido.
+
+## 12. JavaScript: o motor existe, ainda fora do navegador
+
+Etapa 1 do item 11 do [`ROADMAP`](../ROADMAP.md): o **QuickJS** (C, nativo, num processo de anel 3) roda scripts
+com `run jsrun arquivo.js` e passa no teste embutido (`run jsrun --selftest`, cenário `w51-jsrun.sh`); detalhes,
+limites e números em [`processos.md`](processos.md) ("JavaScript em anel 3"). O Navegador continua sem
+JavaScript: a etapa 2 é ligar o motor ao `Doc` (a ideia é um processo por aba, com `document`, eventos, `setTimeout`
+e `fetch` servidos pelo navegador por chamadas próprias), e só então páginas que se montam com JavaScript aparecem.

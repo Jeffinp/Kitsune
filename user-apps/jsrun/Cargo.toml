@@ -1,0 +1,21 @@
+# `jsrun`: a JavaScript engine as a ring 3 program (`run jsrun script.js`). QuickJS (C, vendored in
+# vendor/quickjs) with musl's libm (vendor/musl-math) over a small C library (libc/), all compiled by
+# build.rs with clang; the Rust side reads the script, owns the heap and talks to the kernel.
+# See docs/design/processos.md.
+[package]
+name = "jsrun"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+kitsune-user = { path = "../sdk", features = ["heap"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+codegen-units = 1
+strip = true
+
+[workspace]

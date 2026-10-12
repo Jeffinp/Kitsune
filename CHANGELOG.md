@@ -12,6 +12,22 @@ renomeio mantêm o nome da época.
   `fs3/mount`, `apps/shell/sys`, `system/settings`, `network/dns`, `windowing/winman`. Kernel: `trace`, `sched`,
   `wasm/abi2`, `netd`, `fetch`, `fb/shapes`. Os `impl` grandes (`Browser`, `FormState`, `Fs3`, `WindowManager`, `Netd`,
   `Canvas`) viraram vários `impl`, um por assunto. O pai de cada um ficou com no máximo ~410 linhas.
+## 2026-10 — JavaScript em anel 3 (`jsrun`, QuickJS)
+
+- Novo programa **`jsrun`** (`run jsrun arquivo.js`, `-e 'código'`, entrada padrão, `--selftest`): o **QuickJS**
+  2026-06-04 (C, MIT, sem modificações) compilado com clang para bare metal, sobre o libm do **musl** (só double) e
+  uma libc mínima própria (`user-apps/jsrun/libc`). `console.log/info/debug/error/warn`, `print`, `performance.now()`,
+  `await` no topo, fila de promises, erro não pego com pilha e status 1, promises rejeitadas sem tratador relatadas.
+  Limites: 48 MiB de memória JS, ~3700 chamadas aninhadas (vira `RangeError`). Etapa 1 do item 11 do roadmap
+  (JavaScript/YouTube).
+- Kernel: **chamada 9** (`unix_ms`, UTC em milissegundos, `Date.now()`), pilha e heap por programa embutido
+  (`jsrun`: 4 MiB de pilha, 64 MiB de heap; só para a imagem embutida), **SSE para o anel 3** (`CR4.OSFXSR`/`OSXMMEXCPT`).
+- SDK: `_start` alinha a pilha a 16 bytes antes de chamar o `main` (código C com SSE dava `#GP` em `movaps`);
+  `unix_time_ms()`.
+- Correção: um processo recém-criado podia rodar antes de entrar na tabela (ou achar nela o dono anterior da vaga do
+  fio) e morrer em silêncio; `spawn` e `reap` agora fazem isso numa seção crítica só.
+- Cenário `tools/perf/scen/w51-jsrun.sh` (56/56 no teste embutido; `fib(27)` ~0,3 s sob TCG, ~20 ms nativo no
+  hospedeiro). Créditos em `THIRD-PARTY.md`.
 
 ## 2026-10 — Navegador: páginas reais (CSS externo e layout moderno)
 

@@ -102,9 +102,15 @@ ideia: nada do código nem da marca do Brave). Decisões já tomadas:
 Meta: abrir o YouTube, tocar um vídeo com áudio. É a página mais difícil da web de hoje; ela exige, **todas**, as peças
 abaixo, e nenhuma existe ainda. Ordem proposta, cada etapa com aceite próprio:
 
-1. **Motor de JavaScript.** Sem C no kernel, então: QuickJS compilado para WebAssembly rodando no `wasmi` dentro de um
-   processo de anel 3 (o `wasmhost` já existe), isolado e com limites de memória e de tempo. Aceite: o motor roda um
-   conjunto de testes ES2020 (test262 parcial) e um `console.log` na barra de tarefas.
+1. **Motor de JavaScript. Feito (2026-10).** O dono autorizou C fora do kernel desde que rápido, então em vez de
+   QuickJS em WebAssembly no `wasmi` é o **QuickJS nativo** (C, MIT) num processo de anel 3: `run jsrun arquivo.js`
+   (também `-e`, entrada padrão e `--selftest`), com `console.log`, `await` no topo, promises, erros com pilha, limite
+   de memória (48 MiB) e de pilha (~3700 chamadas, `RangeError`). Provado no QEMU (`w51-jsrun.sh`): 56/56 verificações
+   do teste embutido (ES2015–ES2023: classes, generators, async, regex Unicode, BigInt, Proxy, JSON, Date em UTC pela
+   chamada 9 nova), script do Terminal, exceção não pega, falta de memória sem derrubar o sistema; `fib(27)` em
+   ~0,3 s sob emulação TCG (~20 ms nativo no hospedeiro). Ver `docs/design/processos.md` ("JavaScript em anel 3").
+   Ficou de fora: `test262`, `Intl`, módulos `import`, `setTimeout`, limite de tempo de CPU (o `Ctrl+C` mata), e a
+   ligação com o Navegador (é a etapa 2).
 2. **DOM e APIs da web** sobre o `Doc`: `document`, `querySelector`, eventos, `setTimeout`, `fetch`/`XMLHttpRequest`
    sobre o `fetcher`, `localStorage`, `history`, cookies (hoje não há). Aceite: uma página com JavaScript que monta a si
    mesma (um app pequeno de React/Preact) aparece certa.

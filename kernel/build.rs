@@ -106,6 +106,9 @@ const USER_CRATES: &[(&str, &[&str])] = &[
     ("wasmhost", &["wasmhost"]),
     // The Terminal in ring 3 (`run kterm`): the shell engine over the file and process calls.
     ("kterm", &["kterm"]),
+    // The JavaScript engine (`run jsrun script.js`): QuickJS and its small C library, built by the
+    // crate's own build.rs with clang (`user-apps/jsrun`).
+    ("jsrun", &["jsrun"]),
 ];
 
 /// Build every crate of [`USER_CRATES`] for bare metal with the user linker script and write
@@ -154,6 +157,12 @@ fn build_user_programs(out: &Path) {
         }
         println!("cargo:rerun-if-changed=../user-apps/{krate}/src");
         println!("cargo:rerun-if-changed=../user-apps/{krate}/Cargo.toml");
+        // A crate with C inside (jsrun) has its own build script, C library and vendored sources.
+        for extra in ["build.rs", "libc", "vendor"] {
+            if root.join(krate).join(extra).exists() {
+                println!("cargo:rerun-if-changed=../user-apps/{krate}/{extra}");
+            }
+        }
     }
     let generated = format!(
         "/// Ring 3 programs embedded in the image (see `build.rs`): name and ELF bytes.\n\
