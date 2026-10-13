@@ -50,6 +50,12 @@ impl Desktop {
         if new.lang != old.lang {
             self.language_changed(old.lang);
         }
+        if new.volume != old.volume {
+            crate::audio::set_master(new.volume);
+        }
+        if new.muted != old.muted {
+            crate::audio::set_muted(new.muted);
+        }
         if new.appearance != old.appearance {
             // Re-resolve the look now (Auto follows the clock, the others are fixed).
             self.poll_appearance(crate::rtc::now().h);
@@ -69,6 +75,9 @@ impl Desktop {
             Some(text) => {
                 let s = Settings::parse(&text);
                 crate::settings::set(s);
+                // The stored system volume holds from boot on.
+                crate::audio::set_master(s.volume);
+                crate::audio::set_muted(s.muted);
                 self.keymap.set_layout(s.layout);
                 crate::klog!(
                     Info,

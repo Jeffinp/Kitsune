@@ -17,7 +17,7 @@ pub(super) const ROW: i32 = 48;
 pub(super) const COL_MAX: i32 = 600;
 
 /// The sections, in order: name, glyph and the colour of its badge.
-pub(super) const SECTIONS: [(&str, Glyph, u32); 11] = [
+pub(super) const SECTIONS: [(&str, Glyph, u32); 12] = [
     (tk!("settings.sec.appearance"), Glyph::Sun, 0x5B5CF6),
     (tk!("settings.sec.wallpaper"), Glyph::Image, 0xEC4899),
     (tk!("settings.sec.dock"), Glyph::Dock, 0x14B8C4),
@@ -29,12 +29,15 @@ pub(super) const SECTIONS: [(&str, Glyph, u32); 11] = [
     (tk!("settings.sec.power"), Glyph::Power, 0xFF9F0A),
     (tk!("settings.sec.users"), Glyph::User, 0x5B5CF6),
     (tk!("settings.sec.about"), Glyph::Info, 0x8B90A0),
+    // After "Sobre" so the sections before it keep their places (scenarios click them by position).
+    (tk!("settings.sec.sound"), Glyph::Speaker, 0xFF2D55),
 ];
 /// Section numbers other code opens.
 pub(crate) const ABOUT: u8 = 10;
 pub(super) const S_USERS: u8 = 9;
 pub(super) const S_TIME: u8 = 4;
 pub(super) const S_LANG: u8 = 5;
+pub(super) const S_SOUND: u8 = 11;
 
 // Control ids (what a click or the pointer can hit).
 pub(super) const A_SEC: u32 = 0x100;
@@ -64,6 +67,10 @@ pub(super) const A_LANG: u32 = 0x2C0;
 pub(super) const A_CLOCKFMT: u32 = 0x2D0;
 pub(super) const A_KBDUSE: u32 = 0x2E0;
 pub(super) const A_TZ: u32 = 0x300;
+// The Som page.
+pub(super) const A_VOLUME: u32 = 0x2F0;
+pub(super) const A_MUTE: u32 = 0x2F1;
+pub(super) const A_SNDTEST: u32 = 0x2F2;
 // The Users page.
 pub(super) const A_UFIELD: u32 = 0x500;
 pub(super) const A_UADMIN: u32 = 0x510;
@@ -138,8 +145,8 @@ pub(crate) struct SettingsState {
     pub(super) hover: Cell<u32>,
     /// A slider being dragged (its control id).
     pub(super) drag: u32,
-    /// Switch knobs: reduzir movimento, notificações, 24 horas, bloqueador de anúncios.
-    pub(super) knobs: [Glide; 4],
+    /// Switch knobs: reduzir movimento, notificações, 24 horas, bloqueador de anúncios, sem som.
+    pub(super) knobs: [Glide; 5],
     pub(super) users: UsersForm,
 }
 
@@ -177,6 +184,7 @@ impl SettingsState {
                 Glide::at(if s.toasts { 256 } else { 0 }),
                 Glide::at(if s.clock24 { 256 } else { 0 }),
                 Glide::at(if s.ad_block { 256 } else { 0 }),
+                Glide::at(if s.muted { 256 } else { 0 }),
             ],
             users: UsersForm::default(),
         };

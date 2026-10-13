@@ -6,6 +6,7 @@ use super::look::page_wallpaper;
 use super::region::page_keyboard;
 use super::region::page_language;
 use super::region::page_time;
+use super::sound::page_sound;
 use super::system::page_about;
 use super::system::page_disk;
 use super::system::page_network;
@@ -30,6 +31,7 @@ pub(in super::super) fn page(ui: &mut Ui<'_, '_>, d: &Desktop) {
         7 => page_disk(ui, d),
         8 => page_power(ui),
         S_USERS => page_users(ui),
+        S_SOUND => page_sound(ui),
         _ => page_about(ui, d),
     }
     ui.st

@@ -191,7 +191,12 @@ impl Desktop {
             A_MOTION => s.reduce_motion = !s.reduce_motion,
             A_TOASTS => s.toasts = !s.toasts,
             A_ADBLOCK => s.ad_block = !s.ad_block,
-            A_TOAST_SECS | A_ZOOM => {
+            A_MUTE => s.muted = !s.muted,
+            A_SNDTEST => {
+                crate::audio::beep(660, 250);
+                return;
+            }
+            A_TOAST_SECS | A_ZOOM | A_VOLUME => {
                 st.drag = hid;
                 self.settings_slider(id, hid, hrect, px, &mut s);
                 self.settings_apply_live(s);
@@ -317,6 +322,7 @@ impl Desktop {
             A_ZOOM => {
                 s.dock_zoom = wg::slider_value(track, px, 0, DOCK_ZOOM_MAX as i32) as u8;
             }
+            A_VOLUME => s.volume = wg::slider_value(track, px, 0, 100) as u8,
             _ => {}
         }
     }
@@ -408,6 +414,7 @@ impl Desktop {
                 st.knobs[1].set(if s.toasts { 256 } else { 0 });
                 st.knobs[2].set(if s.clock24 { 256 } else { 0 });
                 st.knobs[3].set(if s.ad_block { 256 } else { 0 });
+                st.knobs[4].set(if s.muted { 256 } else { 0 });
                 for k in st.knobs.iter_mut() {
                     k.step(dt_ms, 60);
                 }
@@ -428,7 +435,7 @@ impl Desktop {
                 || st.sb.active(crate::desktop::shell::toasts::now_ms())
                 || {
                     let s = crate::settings::get();
-                    [s.reduce_motion, s.toasts, s.clock24, s.ad_block]
+                    [s.reduce_motion, s.toasts, s.clock24, s.ad_block, s.muted]
                         .iter()
                         .zip(&st.knobs)
                         .any(|(on, k)| k.target() != if *on { 256 } else { 0 })

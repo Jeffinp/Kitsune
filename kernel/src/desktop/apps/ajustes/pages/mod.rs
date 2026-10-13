@@ -3,6 +3,7 @@
 mod index;
 mod look;
 mod region;
+mod sound;
 mod system;
 mod users;
 
