@@ -185,7 +185,15 @@ abaixo, e nenhuma existe ainda. Ordem proposta, cada etapa com aceite próprio:
    e ouvi-lo por um minuto. **Preparo feito (2026-10):** Workers, os três observers, custom elements e shadow DOM
    (o YouTube usa Web Components), `history.pushState` (a navegação do YouTube é uma SPA), `localStorage`,
    `matchMedia`, `getComputedStyle`, medidas de layout e `Intl` existem (§14 do `tls-browser.md`).
-   **Bring-up do player embutido (2026-10), até o pedido do vídeo; o vídeo não tocou nesta sandbox.** Com a página de
+   **O YouTube tocou no Kitsune (2026-10, QEMU, `w60-youtube.sh` com `VIDEO=dQw4w9WgXcQ`).** O embed oficial do vídeo
+   "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)" rodou o JavaScript do Google, recebeu os
+   segmentos VP9/Opus do `googlevideo.com` (1,27 MB num pedido), o MSE os decodificou e o player mostrou o vídeo:
+   as imagens mudam na tela (286 938 pixels diferentes em 1 s) e a saída do AC'97 tem 65,4 s de som em 118,3 s de
+   gravação. Três outros vídeos (`jNQXAC9IVRw`, `YE7VzlLtp-4`, `LXb3EKWsInQ`) deram "O conteúdo não está disponível" do
+   próprio servidor do YouTube: a resposta depende do vídeo e do IP de saída da sandbox, que muda a cada conexão (as URLs de mídia são
+   amarradas ao IP). **Falta:** medir fps e CPU da reprodução do YouTube, a `/watch`, `<iframe>`, tela cheia,
+   legendas, e repetir no computador do dono (WHPX, IP residencial).
+   **Bring-up do player embutido (2026-10), até o pedido do vídeo; o vídeo não tocou na primeira rodada.** Com a página de
    embed real (`/embed/aqz-KE-bpKQ`, aberta por um link: sem `Referer` o YouTube dá "Error 153" em qualquer
    navegador), no QEMU (`w60-youtube.sh`): HTML, os 15 scripts (o `base.js` de 1,9 MB carrega em 7,4 s sob TCG depois
    do `malloc` novo do `jsrun`; eram 62 s), os scripts que a página insere (módulos e o BotGuard, que gera o token de

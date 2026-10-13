@@ -1123,6 +1123,15 @@ navegador** (§16.4): o mesmo acontece, idêntico, rodando os mesmos scripts no 
 Por isso ficam **sem prova**: os bytes de mídia do YouTube chegando ao `SourceBuffer`, quadros na tela e som. O
 caminho do MSE em si (WebM VP9/Opus em DASH, dois `SourceBuffer`s, som pelo AC'97) foi provado no W58 (§15).
 
+**Atualização: um vídeo tocou.** Depois do resumo acima, o mesmo cenário (`w60-youtube.sh`, imagem com a raiz do gateway da
+sandbox em `EXTRA_PEM`) foi repetido com vários vídeos (`VIDEO=<id>`): **`dQw4w9WgXcQ` passou em todas as etapas**: o
+`googlevideo.com` entregou os segmentos (1 275 378 bytes num `videoplayback`), o `SourceBuffer` os recebeu, o
+`mediadec` decodificou, o título do vídeo aparece na aba, as imagens mudam na tela (286 938 pixels diferentes em 1 s) e
+o AC'97 gravou 65,4 s de som em 118,3 s (pico 16 526). `jNQXAC9IVRw`, `YE7VzlLtp-4` e `LXb3EKWsInQ` pararam no pedido da
+mídia, com "O conteúdo não está disponível" desenhado pelo player. Ou seja, o bloqueio do §16.4 é intermitente e depende
+do vídeo e do IP de saída daquele momento; o navegador cumpre o que a página do YouTube pede. Ainda sem medida: fps e
+CPU da reprodução do YouTube no QEMU.
+
 ### 16.2 Método: a sonda no hospedeiro
 
 `tools/yt-probe.js` (Node 22) faz o papel do navegador para o **processo de página de verdade**: `tools/jsrun-host.c`

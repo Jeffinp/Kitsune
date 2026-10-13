@@ -4,6 +4,13 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — O YouTube toca no Navegador
+
+- O embed oficial do YouTube (`/embed/dQw4w9WgXcQ`) toca no Kitsune, no QEMU: o JavaScript do Google roda no `jsrun`, o
+  player recebe os segmentos WebM VP9/Opus do `googlevideo.com`, o MSE e o `mediadec` decodificam, as imagens mudam na tela
+  e o AC'97 grava 65,4 s de som (`tools/perf/scen/w60-youtube.sh`, `VIDEO=<id>`). Outros vídeos testados devolveram
+  "O conteúdo não está disponível" do próprio servidor (depende do vídeo e do IP de saída da sandbox). Ver `tls-browser.md` §16.
+
 ## 2026-10 — O YouTube no Navegador: o player embutido até o pedido do vídeo (etapa 6, em andamento)
 
 O player embutido do YouTube (página real, com o `base.js` de 1,9 MB) carrega e roda no Navegador, no QEMU, até
