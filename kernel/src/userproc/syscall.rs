@@ -105,6 +105,10 @@ pub extern "C" fn syscall_entry(rsp: u64) -> u64 {
         abi::SYS_WIN_OPEN..=abi::SYS_WIN_TITLE => file_call(r, rsp, slot),
         abi::SYS_SPAWN..=abi::SYS_PROC_KILL => file_call(r, rsp, slot),
         abi::SYS_PAGE_RECV..=abi::SYS_PAGE_SEND => page_call(r, rsp, slot),
+        abi::SYS_GETRANDOM => {
+            r.rax = sys_getrandom(slot, a, b) as u64;
+            rsp
+        }
         _ => {
             r.rax = ENOSYS as u64;
             rsp
@@ -136,6 +140,29 @@ pub(super) fn sys_brk(slot: usize, want: u64) -> u64 {
         p.pages += 1;
     }
     p.heap_end
+}
+
+/// `getrandom(ptr, len)`: `len` bytes (at most `MAX_RANDOM`) from the kernel generator into the
+/// process's memory. Returns `len` or `-errno`.
+fn sys_getrandom(slot: usize, ptr: u64, len: u64) -> i64 {
+    let len = len as usize;
+    if len > abi::MAX_RANDOM {
+        return EINVAL;
+    }
+    let mut buf = alloc::vec![0u8; len];
+    crate::rng::fill(&mut buf);
+    let procs = PROCS.lock();
+    let Some(asp) = procs
+        .iter()
+        .find(|p| p.slot == slot)
+        .and_then(|p| p.aspace.as_ref())
+    else {
+        return EINVAL;
+    };
+    match asp.poke(ptr, &buf) {
+        Ok(()) => len as i64,
+        Err(_) => EFAULT,
+    }
 }
 
 pub(super) fn sys_write(slot: usize, fd: u64, ptr: u64, len: u64) -> i64 {

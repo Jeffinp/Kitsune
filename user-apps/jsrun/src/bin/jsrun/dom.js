@@ -985,7 +985,7 @@
       this.readyState = 'loading';
       this._quirks = false;
       this._active = null;
-      this._cookies = new Map();
+      this._cookieText = '';
       this.currentScript = null;
       this.referrer = '';
       this.characterSet = 'UTF-8';
@@ -1020,11 +1020,21 @@
     get images() { return this.getElementsByTagName('img'); }
     get links() { return this.querySelectorAll('a[href]'); }
     get scripts() { return this.getElementsByTagName('script'); }
-    get cookie() { return [...this._cookies].map(([k, v]) => k + '=' + v).join('; '); }
+    // The browser's cookie jar decides (Domain, Path, Secure, HttpOnly, SameSite, limits): a write
+    // goes to it ("C" + text) and its answer replaces the value; meanwhile a read sees the write.
+    get cookie() { return this._cookieText; }
     set cookie(v) {
-      const first = String(v).split(';')[0];
+      v = String(v);
+      send('C' + v);
+      const first = v.split(';')[0];
       const i = first.indexOf('=');
-      if (i > 0) this._cookies.set(first.slice(0, i).trim(), first.slice(i + 1).trim());
+      if (i <= 0 || /;\s*httponly\s*(;|$)/i.test(v)) return;
+      const name = first.slice(0, i).trim();
+      const exp = /;\s*expires\s*=([^;]*)/i.exec(v);
+      const gone = /;\s*max-age\s*=\s*(-|0+\s*(;|$))/i.test(v) || (exp && Date.parse(exp[1]) < Date.now());
+      const list = this._cookieText ? this._cookieText.split('; ').filter((p) => p.split('=')[0] !== name) : [];
+      if (!gone) list.push(name + '=' + first.slice(i + 1).trim());
+      this._cookieText = list.join('; ');
     }
     hasFocus() { return true; }
     getElementById(id) {
@@ -1275,6 +1285,7 @@
     global.innerWidth = global.outerWidth = screen.width = screen.availWidth = m.w | 0;
     global.innerHeight = global.outerHeight = screen.height = screen.availHeight = m.h | 0;
     document._quirks = !!m.quirks;
+    document._cookieText = String(m.cookie || '');
     build(document, m.dom || []);
     dirty = false;
     for (const [name, code] of m.scripts || []) {
@@ -1407,7 +1418,6 @@
     prompt(msg) { console.log('prompt: ' + msg); return null; },
     open(u) { if (u) location.href = u; return null; },
     postMessage() {},
-    fetch() { return Promise.reject(new TypeError('fetch is not supported yet')); },
     atob(s) {
       const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
       s = String(s).replace(/[\s=]/g, '');
