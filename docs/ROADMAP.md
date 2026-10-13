@@ -184,8 +184,24 @@ abaixo, e nenhuma existe ainda. Ordem proposta, cada etapa com aceite próprio:
    `IntersectionObserver`, Canvas, WebAudio, DRM não, mas vários recursos de segurança). Aceite: abrir um vídeo e vê-lo
    e ouvi-lo por um minuto. **Preparo feito (2026-10):** Workers, os três observers, custom elements e shadow DOM
    (o YouTube usa Web Components), `history.pushState` (a navegação do YouTube é uma SPA), `localStorage`,
-   `matchMedia`, `getComputedStyle`, medidas de layout e `Intl` existem (§14 do `tls-browser.md`). **Falta:** módulos
-   ES, canvas, WebAudio, `<video>`/MSE (outra frente), `WebSocket`, e testar o código do próprio YouTube.
+   `matchMedia`, `getComputedStyle`, medidas de layout e `Intl` existem (§14 do `tls-browser.md`).
+   **Bring-up do player embutido (2026-10), até o pedido do vídeo; o vídeo não tocou nesta sandbox.** Com a página de
+   embed real (`/embed/aqz-KE-bpKQ`, aberta por um link: sem `Referer` o YouTube dá "Error 153" em qualquer
+   navegador), no QEMU (`w60-youtube.sh`): HTML, os 15 scripts (o `base.js` de 1,9 MB carrega em 7,4 s sob TCG depois
+   do `malloc` novo do `jsrun`; eram 62 s), os scripts que a página insere (módulos e o BotGuard, que gera o token de
+   integridade), `youtubei/v1/player` (200), o `<video>` com `MediaSource` e os pedidos SABR ao `googlevideo.com`
+   com PO token. O servidor então recusa ("Vídeo indisponível"): a URL de mídia é amarrada ao IP de quem pediu o
+   player, e nesta sandbox o YouTube vê um IPv6 interno do Google e o `googlevideo` um IPv4 público que muda por
+   conexão (provado nos dumps; igual no V8 e no QuickJS). **Não provado:** segmentos do YouTube no `SourceBuffer`,
+   quadros e som (o MSE em si foi provado no W58). O que foi corrigido para chegar lá: `<script>` na árvore e
+   `currentScript`, scripts inseridos por script (com o modo `script` do `fetcher`), `Referer` na navegação e
+   `document.referrer`, scripts de até 4 MiB (10 MiB por página) entregues um por mensagem, 60 s para carregar um
+   script, `isTypeSupported` com `width`/`height`/`framerate` (até 480p30), `Image`, `mediaCapabilities`,
+   `mediaSession`, `<noscript>` escondido, `User-Agent` único, 96 MiB de JS. Sonda no hospedeiro:
+   `tools/yt-probe.js` (o processo de página de verdade, compilado para o hospedeiro). Ver `tls-browser.md` §16.
+   **Falta:** provar a reprodução num IP comum (o computador do dono: `http://10.0.2.2:8479/yt` com
+   `tools/w24-site.py`), `<iframe>` (embed dentro de outro site), a `/watch` (1,25 MB de HTML, módulo de 9,7 MB, ~15
+   MB de JS: cache de bytecode, mais memória), módulos ES, canvas, WebAudio, `WebSocket`.
 
 Sem a etapa 1 nada do resto roda; a ordem acima é a mínima. Enquanto isso o navegador continua ganhando o que páginas
 sem JavaScript pedem (itens do §10 do `tls-browser.md`).

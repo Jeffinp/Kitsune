@@ -4,6 +4,32 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — O YouTube no Navegador: o player embutido até o pedido do vídeo (etapa 6, em andamento)
+
+O player embutido do YouTube (página real, com o `base.js` de 1,9 MB) carrega e roda no Navegador, no QEMU, até
+pedir o vídeo ao `googlevideo.com`. Nesta sandbox o servidor recusa o vídeo (a URL de mídia é amarrada a um IP que a
+rede da sandbox não mantém: `tls-browser.md` §16.4); a reprodução do YouTube **ainda não foi vista**. Projeto e
+diário de bordo em `docs/design/tls-browser.md` §16.
+
+- **Scripts como nos navegadores**: o `<script>` fica na árvore (vazio), com `document.currentScript`; um `<script>`
+  inserido por script roda (inline na hora; `src` buscado pelo navegador no modo `script` do `fetcher`, que só
+  entrega resposta JavaScript e nunca ao código da página), com `load`/`error` (`scripts.js`, `cors::Mode::Script`).
+- **Scripts grandes**: até 4 MiB por script e 10 MiB por página (eram 1 e 4 MiB); o `init` não leva mais o código, os
+  scripts vão um por mensagem, crus, conforme o processo consome; carregar um script tem 60 s (eventos e timers
+  continuam com 3 s); script lento aparece no log.
+- **`malloc` por classes de tamanho no `jsrun`**: o QuickJS ficou ~8x mais rápido para compilar sob TCG (o `base.js`
+  do YouTube: 62,2 s → 7,4 s). 96 MiB de JS e heap de até 128 MiB; o tamanho do heap dos processos vai ao log.
+- **`Referer`** em links, formulários e `location.href` (`strict-origin-when-cross-origin`, mantido na recarga) e
+  `document.referrer`: o embed do YouTube sem ele mostra "Error 153". O `User-Agent` HTTP passou a ser o mesmo do
+  `navigator.userAgent` (`Mozilla/5.0 (X11; Kitsune x86_64) Kitsune/x`).
+- **APIs**: `Image`, `Option`, `canvas.getContext` (`null`), `navigator.mediaCapabilities`, `navigator.mediaSession`,
+  `CDATASection`, `ProcessingInstruction`; `MediaSource.isTypeSupported` respeita `width`/`height`/`framerate` (até
+  854x480 a 30 fps, o que o VP9 em software acompanha); `fetch` recusa modos fora do padrão; `<noscript>` não é
+  desenhado; o parser de fragmentos não se perde com `İ` antes de um `</script>`.
+- **Ferramentas**: `tools/yt-probe.js` + `tools/jsrun-host.c` (o processo de página real compilado para o
+  hospedeiro, com o Node fazendo o navegador e a rede de verdade); cenário `tools/perf/scen/w60-youtube.sh` (veredito
+  por etapa); página `/yt` em `tools/w24-site.py`.
+
 ## 2026-10 — O DOM para frameworks: Preact e Vue de verdade (etapa 2 do YouTube)
 
 O JavaScript das páginas ganhou o que React/Preact/Vue e, depois, o player do YouTube usam. Projeto em

@@ -568,9 +568,9 @@ eventos. O mesmo binário `jsrun` faz as duas coisas (`--page` é o modo do nave
 | Peça | Onde | O quê |
 |---|---|---|
 | Coleta dos scripts | `kitsune_core::web::dom` (`parse_html_full`) | o parser guarda os `<script>` clássicos (sem `type` ou com tipo JavaScript; `module` e JSON ficam de fora), inline e `src`, em ordem; até 64 por documento e 2 MiB de texto inline |
-| Busca dos externos | `web::script::ScriptSet`, `kernel/src/fetch` (`KIND_SCRIPT`), `bringup::pump_browser` | como as folhas: um por vez pelo `fetcher`, depois das folhas e antes das imagens; até 48 scripts e 4 MiB por página, cada um até 1 MiB (um script cortado é descartado) |
+| Busca dos externos | `web::script::ScriptSet`, `kernel/src/fetch` (`KIND_SCRIPT`), `bringup::pump_browser` | como as folhas: um por vez pelo `fetcher`, depois das folhas e antes das imagens; até 48 scripts e 10 MiB por página, cada um até 4 MiB (um script cortado ou que não descompacta é descartado; antes do §16 eram 4 MiB e 1 MiB) |
 | Ids dos elementos | `Element::uid`, `number_elements` | cada elemento ganha um número em ordem de documento; é por ele que um clique acha o elemento no processo e que o documento devolvido mantém a identidade |
-| Mensagens | `web::script::{init_message, click_message, parse_message}` | navegador → processo: JSON (`init` com a árvore, a URL, o idioma, o viewport e os scripts; `click` com o id, a posição e um número de sequência). Processo → navegador: um byte de tipo e o resto (`D` + HTML do documento com os ids em `data-kjs`, `A` + veredito de um clique, `N` + endereço) |
+| Mensagens | `web::script::{init_message, click_message, parse_message}` | navegador → processo: JSON (`init` com a árvore, a URL, o idioma, o `Referer`, o viewport e quantos scripts vêm; depois um `script` por mensagem, `{"t":"script","name":...,"el":N}` + nova linha + o código cru, entregues conforme o processo os consome; `click` com o id, a posição e um número de sequência). Processo → navegador: um byte de tipo e o resto (`D` + HTML do documento com os ids em `data-kjs`, `A` + veredito de um clique, `N` + endereço) |
 | Ligação no kernel | `kernel/src/userproc/page.rs`, chamadas 56 (`page_recv`) e 57 (`page_send`) | duas filas por processo (até 8 MiB e 256 mensagens esperando; mensagem de até 4 MiB). Só um processo iniciado com `spawn_page` tem a ligação; os outros recebem `ENOSYS` |
 | Laço do processo | `user-apps/jsrun/src/page.c` | espera uma mensagem ou o próximo timer, roda as tarefas que venceram (cada uma com orçamento próprio), os jobs de promise depois de cada uma, e envia o documento se mudou (no máximo a cada ~40 ms de tarefas) |
 | DOM, eventos, timers | `user-apps/jsrun/src/bin/jsrun/dom.js` | ver §12.2 |
@@ -596,7 +596,11 @@ próprio que nunca é enviado.
 handler do QuickJS a interrompe (erro não capturável, relatado como `Uncaught InternalError: interrupted` e
 `jsrun: ... ran for too long and was stopped`), o timer que a iniciou é cancelado e a página continua viva. O
 processo é preemptado como qualquer outro, então nem durante esses 3 s o desktop para (provado no W52: o cursor e o
-hover seguem desenhados durante um `for(;;){}`). Memória: a do `jsrun` (48 MiB de JS, 64 MiB de heap). No máximo 8
+hover seguem desenhados durante um `for(;;){}`). **Carregar um script** (compilar e rodar o nível de cima) tem
+**60 s** (`LOAD_MS`; §16): o QuickJS compila o arquivo inteiro de uma vez e um bundle grande leva segundos sob
+emulação; o mesmo interrupt handler continua valendo, só o prazo é outro, e o resto da tarefa volta aos 3 s. Um
+script que leva mais de 250 ms aparece no log (`jsrun: URL (N bytes) ran in M ms`). Memória: a do `jsrun` (96 MiB de
+JS, heap de até 128 MiB, que só cresce com o uso; `proc: 'jsrun' pid N heap M MiB` no log a cada 16 MiB). No máximo 8
 processos no sistema: sem vaga, a página fica sem JavaScript (o log diz).
 
 ### 12.2 O que os scripts encontram
@@ -622,9 +626,14 @@ A rede (`fetch`, `XMLHttpRequest`, cookies, CORS, `TextEncoder`, `Blob`, `crypto
 o foco, o mouse, as medidas de layout, os observers, `<template>`, custom elements e shadow DOM, `localStorage`
 persistente, `history.pushState`, `Intl`, Web Workers e o resto que os frameworks usam estão no §14.
 
-**Ainda não**: módulos (`type=module`, `import`), canvas, `<link>` acrescentado por script depois do
-início (as imagens novas são buscadas; folhas novas não). Os scripts rodam todos depois do documento inteiro (como
-`defer`), não no meio do parse; `document.write` acrescenta ao fim. O documento volta inteiro a cada mudança: barato
+Desde o §16: os elementos `<script>` ficam no documento (vazios), com `document.currentScript` enquanto cada um roda,
+e um `<script>` que um script insere **roda** (`scripts.js`: o inline na hora, dentro da chamada que o inseriu; o
+com `src` é buscado pelo navegador no modo `script` e roda como tarefa própria, seguido de `load` ou `error`; os de
+`innerHTML` não rodam, como no padrão).
+
+**Ainda não**: módulos (`type=module`, `import`), canvas (`getContext` dá `null`), `<link>` acrescentado por script
+depois do início (as imagens novas são buscadas; folhas novas não). Os scripts do documento rodam todos depois do
+documento inteiro (como `defer`), não no meio do parse; `document.write` acrescenta ao fim. O documento volta inteiro a cada mudança: barato
 em páginas pequenas, caro numa SPA grande (cada envio é um parse e um layout). Os scripts só começam na aba ativa.
 
 ### 12.3 Provas
@@ -750,7 +759,7 @@ como `ReadableStream`** (`getReader().read()` em pedaços, `for await`, `tee`, `
 espaço, `size` e `sort`. `atob`/`btoa`, `queueMicrotask` e `performance.now` já existiam.
 
 Limites: `XMLHttpRequest` síncrono roda assíncrono (avisa no console); corpo de pedido em stream não; resposta até 64
-MiB (o processo tem 48 MiB de JS para tudo); `gzip`/`deflate` não é pedido (`Accept-Encoding: identity`), e se vier é
+MiB (o processo tem 96 MiB de JS para tudo); `gzip`/`deflate` não é pedido (`Accept-Encoding: identity`), e se vier é
 descompactado inteiro no fim; `crypto.subtle` não existe; **`WebSocket` não foi feito** (pendente: `ws://` e `wss://`
 sobre a mesma pilha, com o `Upgrade` e o enquadramento no `fetcher`). Um download grande de um script ocupa o
 `fetcher` até acabar (folhas e imagens esperam).
@@ -816,6 +825,8 @@ cópia do navegador leva de um elemento) e `hooks.created` (classe do elemento, 
 | `history.js` | `history.pushState`/`replaceState`/`back`/`forward`/`go`/`state`/`length`, `popstate`, `hashchange`, `location` (`hash`, `search`, `pathname`... que navegam) |
 | `intl.js` | um `Intl` pequeno (pt-BR e en): `DateTimeFormat`, `NumberFormat`, `PluralRules`, `Collator`, `RelativeTimeFormat`, `ListFormat`, `Segmenter`, e os `toLocale*String`/`localeCompare` |
 | `webapis.js` | `window.open` (nova aba), `postMessage` na mesma janela, `MessageChannel`, `BroadcastChannel` (só a página), `a.pathname` e afins, `href`/`src` absolutos, `navigator` (`clipboard`, `permissions`, `serviceWorker`, `storage`...), e os que recusam sem quebrar: `Notification` (negada), service workers (rejeitados), `WebSocket` (falha como servidor inalcançável) |
+| `scripts.js` | `<script>` inserido por script (inline na hora, `src` pelo navegador no modo `script`), `load`/`error`, propriedades de `HTMLScriptElement` (§16) |
+| `compat.js` (o último) | `Image`, `Option`, `canvas.getContext` (`null`), `mediaCapabilities`, `mediaSession`, `CDATASection`, `ProcessingInstruction` (§16) |
 | `msgcodec.js`, `workers.js` | o clone estruturado em texto (`Date`, `RegExp`, `Map`, `Set`, `ArrayBuffer`, arrays tipados, `Blob`/`File`, `Error`, referências repetidas) e `Worker` do lado da página (§14.5) |
 | `workerscope.js` | o escopo global do worker (prelúdio do `jsrun --worker`: `dom.js` só pelos timers e pelo laço, `net.js`, `intl.js`, `msgcodec.js` e ele) |
 
@@ -930,7 +941,8 @@ script pode preencher), sem `:hover`/`:focus` nos seletores do script. O documen
 navegador a cada lote de mudanças (§12.2). Os botões continuam sendo desenhados como controles do navegador (sem o
 fundo e a borda do CSS da página). `mousedown`/`mouseup` chegam juntos com o `click` (o navegador manda o clique ao
 apertar o botão: não há arrastar com o mouse para a página), e só o botão esquerdo clica (o direito é o
-`contextmenu`). `document.referrer` é vazio.
+`contextmenu`). `document.referrer` é o `Referer` da navegação (um link, formulário ou `location.href` de outra
+página; vazio para um endereço digitado; §16).
 
 ### 14.7 Provas
 
@@ -1022,7 +1034,7 @@ o resto `''`.
 **Media Source Extensions:** `MediaSource` (`readyState` `closed`/`open`/`ended`, `duration`, `addSourceBuffer`
 (até 4), `removeSourceBuffer`, `endOfStream()` (a duração passa a ser o fim do que está guardado) e
 `endOfStream('decode'|'network')`, `sourceBuffers`/`activeSourceBuffers`, `setLiveSeekableRange`,
-`isTypeSupported` (só WebM VP9/Opus), `sourceopen`/`sourceended`/`sourceclose`), `SourceBuffer` (`appendBuffer`
+`isTypeSupported` (só WebM VP9/Opus; com `width`/`height`/`framerate`, como o YouTube sonda, até 854x480 a 30 fps: §16), `sourceopen`/`sourceended`/`sourceclose`), `SourceBuffer` (`appendBuffer`
 assíncrono com `updating`, `updatestart`/`update`/`updateend`/`error`/`abort`, em pedaços de 1 MiB, cada um
 confirmado pelo decodificador com o que a fonte guarda; `appendBufferAsync`; `buffered` por fonte (o do elemento é a
 interseção); `remove`; `abort`; `timestampOffset`; `mode` (`segments`; `sequence` aceito sem efeito);
@@ -1090,3 +1102,115 @@ download segue em ordem até lá), mais de 2 players por página, e o `sequence`
   decodifica mais devagar que o tempo real sob TCG (~5–7 quadros/s mostrados): 10 s de vídeo tocaram em ~30 s, com
   esperas.
 * `flower.webm` do MDN (VP8 + Vorbis): `no VP9 or Opus track`, o elemento recebe `MEDIA_ERR_SRC_NOT_SUPPORTED` (4).
+
+## 16. O YouTube no Navegador: o player embutido (bring-up)
+
+Etapa 6 do item 11 do [`ROADMAP`](../ROADMAP.md): juntar as peças dos §12–15 com o YouTube de verdade. Alvo: a
+página de embed `https://www.youtube.com/embed/aqz-KE-bpKQ` (Big Buck Bunny; ~140 KB de HTML, 15 scripts, entre eles
+o `ytembeds` de 0,57 MB e o `base.js` do player de 1,9 MB) e, se desse, a `/watch`.
+
+### 16.1 Até onde chegou (resumo honesto)
+
+No QEMU (BIOS, 256 MiB, TCG, `tools/perf/scen/w60-youtube.sh`): o HTML do embed carrega, os 15 scripts rodam (o
+`base.js` em 7,4 s), os scripts que o player insere carregam e rodam (módulos do `ytembeds`, o interpretador do
+BotGuard de `www.google.com/js/th/`, que gera o token de integridade em `jnn-pa.googleapis.com`), o player monta e
+pede `youtubei/v1/player` (200, 33 KB, `status: OK`), cria o `<video>` com `MediaSource` (o navegador abre o player e
+o processo `mediadec`) e faz os pedidos de mídia `POST .../videoplayback` ao `googlevideo.com` (SABR: protocolo UMP,
+com o PO token cunhado pelo BotGuard no corpo). **O vídeo não toca neste ambiente**: o `googlevideo` responde com um
+redirecionamento e depois com `RELOAD_PLAYER_RESPONSE`, o player pede o `player` de novo e recebe `UNPLAYABLE`
+("Vídeo indisponível / This content isn't available"), que ele desenha na tela. **A causa é a rede da sandbox, não o
+navegador** (§16.4): o mesmo acontece, idêntico, rodando os mesmos scripts no V8 (Node) e no QuickJS do hospedeiro.
+Por isso ficam **sem prova**: os bytes de mídia do YouTube chegando ao `SourceBuffer`, quadros na tela e som. O
+caminho do MSE em si (WebM VP9/Opus em DASH, dois `SourceBuffer`s, som pelo AC'97) foi provado no W58 (§15).
+
+### 16.2 Método: a sonda no hospedeiro
+
+`tools/yt-probe.js` (Node 22) faz o papel do navegador para o **processo de página de verdade**: `tools/jsrun-host.c`
+compila o QuickJS, o `glue.c` e o `page.c` do `jsrun` para o hospedeiro (o `jsrun-host`, ~40 s com `clang`), com as
+chamadas 56/57 trocadas por mensagens com tamanho em `stdin`/`stdout`. A sonda baixa a página e os scripts (curl,
+pelo proxy da sandbox ou, com `--direct CA.pem`, pelo caminho que o QEMU usa), monta o `init` como o navegador
+(inclusive os `<script>` vazios na árvore), entrega os scripts um por mensagem, atende o `F` (fetch/XHR) com uma
+fila de um pedido por vez, um pote de cookies e as regras de CORS (com pré-voo), atende o `V`/`v` do MSE com um
+decodificador falso que lê os tempos do WebM, manda um retrato de layout com caixas e imprime o console, os erros,
+os scripts lentos, os pedidos e um resumo. `--engine node` roda o prelúdio num `vm` do V8 (outro motor: separa bug
+do QuickJS de bug do prelúdio), `--spy` registra o que a página pergunta sobre suporte de mídia, `--play` clica no
+player, `--referer` manda um `Referer`. Os pedidos do player e da mídia ficam em `--cache` (`dump-N.*`) para ler.
+Nada do YouTube vai para o repositório.
+
+```bash
+node tools/yt-probe.js "https://www.youtube.com/embed/aqz-KE-bpKQ?autoplay=1" --referer http://203.0.113.5:8479/ --secs 40
+```
+
+### 16.3 Diário de bordo: o que o YouTube pediu e foi feito
+
+| # | Sintoma (sonda ou QEMU) | Causa | Correção |
+|---|---|---|---|
+| 1 | O embed mostra "Error 153 / Video player configuration error" (a resposta do servidor já vem com `previewPlayabilityStatus: ERROR`) | o YouTube exige um `Referer` no embed (identifica o site que o embute); aberto pela barra de endereço não há, **em nenhum navegador** | a navegação por link, formulário ou `location.href` manda `Referer` (`strict-origin-when-cross-origin`, mantido na recarga; `Browser::referrer`, `fetch::try_post`), e a página o vê em `document.referrer`; a página `/yt` de `tools/w24-site.py` leva ao embed |
+| 2 | `Uncaught Error: na` no `ytembeds` | o código procura o próprio `<script id=base-js>` (e `script[nonce]` para o nonce) e o Kitsune tirava os `<script>` da árvore | o parser mantém o elemento `<script>` (vazio, `display:none`, com o índice em `ScriptRef::elem`) e a página ganha `document.currentScript` |
+| 3 | `base.js` (1,9 MB) recusado | limite de 1 MiB por script e 4 MiB por página, e todos os scripts dentro do `init` (JSON de até 4 MiB) | 4 MiB por script e 10 MiB por página; os scripts vão um por mensagem, código cru (sem escapar nem `JSON.parse` de megabytes), conforme o processo consome (`JsProc::scripts_left`); um script comprimido que não descompacta não roda |
+| 4 | o player pede `/player` com um PO token "frio" e o `googlevideo` recarrega | o BotGuard nunca rodava: o `ytembeds` insere `<script src=//www.google.com/js/th/...>` e módulos seus, e o Kitsune não executava scripts inseridos | `scripts.js`: `<script>` inserido roda (inline na hora; `src` buscado pelo navegador no modo `script`); `cors::Mode::Script` no `fetcher`: sem CORS, mas só uma resposta com `Content-Type` JavaScript é entregue (como o ORB dos navegadores), e nunca ao código da página; `fetch()` recusa modos fora do padrão |
+| 5 | `ReferenceError: 'Image' is not defined` num módulo | faltava o construtor | `compat.js`: `Image`, `Option`, `canvas.getContext` (devolve `null`: sem canvas ainda), `navigator.mediaCapabilities.decodingInfo`, `navigator.mediaSession`/`MediaMetadata`, `CDATASection`/`ProcessingInstruction` (a `/watch`) |
+| 6 | o player perguntaria por 4K | `isTypeSupported` ignorava `width`/`height`/`framerate`; o player do YouTube sonda (`width=99999` deve ser recusado para ele confiar nos outros) | `isTypeSupported` respeita os parâmetros: até 854x480 a 30 fps (o que o VP9 em software acompanha mesmo sob TCG); `decodingInfo` usa o mesmo limite para `smooth` |
+| 7 | `User-Agent` HTTP `Kitsune/0.1.0` e `navigator.userAgent` `Mozilla/5.0 (X11; Kitsune x86_64) Kitsune/0.1.0` | dois nomes | um só, honesto, nos dois (`http1::HTTP_USER_AGENT`) |
+| 8 | no QEMU o `base.js` levou **62,2 s** (0,47 s nativo) e foi interrompido | o `malloc` do lado C do `jsrun` era o alocador first-fit em lista ligada do SDK; com a rotatividade do QuickJS cada `malloc` percorria uma lista longa | `heap.rs`: classes de tamanho de 16 bytes até 1 KiB (lista livre por classe, pedaços de 256 KiB); o `base.js` passou a **7,4 s**, o `ytembeds` de 6,2 s a 1,9 s, um módulo de 1 MB de 15,8 s a 2,3 s |
+| 9 | carregar o `base.js` passa dos 3 s por tarefa mesmo assim | o QuickJS compila o arquivo inteiro de uma vez | carregar um script tem 60 s (`LOAD_MS` no `page.c`); eventos e timers continuam com 3 s; o interrupt handler é o mesmo |
+| 10 | a mensagem "Ocorreu um erro... ative o JavaScript" debaixo do player | `<noscript>` era desenhado | `<noscript>` é `display:none` (o navegador roda scripts) |
+| 11 | ~38 MB de memória do processo depois de carregar o embed (hospedeiro, `VmHWM`) | perto dos 48 MiB de JS | 96 MiB de JS e heap de até 128 MiB para o `jsrun` (só cresce com o uso) |
+| 12 | (a `/watch`) scripts inline seguintes quebrados com `SyntaxError: '<'` | o parser de fragmentos achava o fim do `<script>` em `html.toLowerCase()`, que muda de tamanho com `İ` e deslocava os índices | busca com regex sem diferenciar maiúsculas a partir da posição |
+
+Nada mais faltou ao player do embed: com essas correções os scripts rodam sem nenhuma exceção não capturada, na
+sonda e no QEMU.
+
+### 16.4 O bloqueio deste ambiente
+
+* **Endereço IP.** As URLs de mídia do `googlevideo.com` são assinadas com o IP de quem pediu o `player`
+  (`ip=`). Nesta sandbox o `www.youtube.com` vê o cliente por um endereço IPv6 **interno** (`fda3:e722:...`,
+  `remoteHost` no próprio pedido do player: a sandbox roda dentro da rede do Google) e o `googlevideo.com` vê um
+  IPv4 público (`mip=34.72.45.172`, `ipbypass=yes` no redirecionamento SABR), que além disso muda a cada conexão
+  (três pedidos seguidos a um serviço de eco de IP deram três IPs). O servidor redireciona, depois pede ao player
+  que recarregue, e a resposta recarregada é `UNPLAYABLE` (o relatório do próprio player:
+  `error=staleconfig::reason.reloadPlayerEvent`, depois `auth::r.Vídeo indisponível`). Igual pelo proxy HTTP da
+  sandbox e pelo caminho direto que o QEMU usa, igual no QuickJS e no V8. Num computador comum (um IP só), essa
+  verificação passa.
+* **HTTPS reassinado.** O tráfego do QEMU passa por um gateway que reassina o HTTPS (`sandbox-egress-gateway
+  Egress Gateway CA`). Para a prova, a imagem foi gerada com essa raiz a mais (`EXTRA_PEM` de
+  `tools/gen-trust-store.sh`, só para desenvolvimento, **nunca commitado**). No computador do dono a cadeia do
+  Google (`GTS Root R1`/`R4`, que estão entre as 46 raízes) valida sem nada a mais.
+* **A `/watch`** dá `429` (página de captcha do Google) pelo proxy HTTP da sandbox; pelo caminho direto responde
+  `200`. Os limites dela estão em §16.6.
+
+### 16.5 Medidas (QEMU TCG, sem KVM, BIOS, 256 MiB, virtio-net)
+
+| O quê | Valor |
+|---|---|
+| Carga dos scripts do embed (compilar + nível de cima) | `ytembeds` 0,57 MB: 1,9 s; `base.js` 1,9 MB: 7,4 s; módulo de 1,1 MB inserido depois: 2,3 s; BotGuard 63 KB: 0,3 s (antes do novo `malloc`: 6,2 s, 62,2 s e 15,8 s). Nativo (hospedeiro, `jsrun-host`): 0,08–0,13 s, 0,35–0,47 s, 0,12 s |
+| Rede | `youtubei/v1/player` 33 KB em 96 ms; módulo de 1 MB a 5,2 MB/s; 8 conexões e 7 handshakes TLS para ~20 pedidos |
+| Memória | hospedeiro: ~40 MB de pico do processo de página (`VmHWM`, binário incluso) |
+
+### 16.6 O que falta e os limites conhecidos
+
+* **Tocar o vídeo do YouTube** não foi provado (§16.4). Falta ver, num lugar com um IP só: os segmentos SABR (UMP)
+  que o JavaScript do player decodifica e apenda no `SourceBuffer`, o `mediadec` com os itags 243/244 (VP9) e 251
+  (Opus), o relógio pelo som e o fps. O cenário `w60-youtube.sh` já mede tudo isso por etapa (bytes apendados,
+  `playing`, imagens mudando, som na gravação).
+* **`<iframe>`** não tem documento dentro: um site que embute o player numa página não funciona; o embed só abre
+  como página de topo, vindo de um link (por causa do Error 153, digitar o endereço não serve).
+* **A `/watch`** (sonda, caminho direto): 1,25 MB de HTML (o navegador corta páginas em 1 MiB), 52 scripts e
+  5,6 MB no carregamento mais um módulo de 9,7 MB que o app insere (acima dos 4 MiB por script do navegador; na
+  sonda ele estoura os 96 MiB de JS); o Polymer/webcomponents roda em parte. Sob TCG, compilar ~15 MB de JavaScript
+  levaria mais de um minuto. Fica para depois: cache de bytecode, páginas maiores que 1 MiB, mais memória.
+* Teto de 480p pelo `isTypeSupported` (com KVM ou em hardware real o decodificador faria 720p, §15.5); o `Referer` de
+  um redirecionamento entre origens não é recortado para a origem; a história (voltar/avançar) não guarda o
+  `Referer`.
+
+### 16.7 Provas
+
+| O quê | Evidência |
+|---|---|
+| `<script>` na árvore e `ScriptRef::elem`, `PageScript`, `init` com `wait` + `script_message`, `Mode::Script` e `is_javascript_type`, `Referer` de links/formulários/recarga, `<noscript>` escondido | `cargo test -p kitsune_core` (`script::tests`, `html_tests`, `net::tests`, `cors::tests`, `browser::referrer_tests`, `layout_tests::styles`) |
+| O prelúdio com os scripts do YouTube, no QuickJS de verdade e no V8 | `node tools/yt-probe.js ...` (§16.2): 0 exceções, `player` 200, BotGuard, pedidos SABR com PO token |
+| Nada quebrou no prelúdio | `node tools/js-dom-check.js`, `js-net-check.js`, `js-media-check.js` |
+| Tudo junto no QEMU | `tools/perf/scen/w60-youtube.sh`: PASS em 8 etapas (HTML, `base.js`, scripts entregues, scripts rodaram, scripts inseridos, `player`, `videoplayback`, `<video>` com player) e FAIL honesto em 4 (bytes no `SourceBuffer`, `playing`, imagens, som), pelo motivo do §16.4 |
+
+Para tentar no computador do dono (Windows, WHPX, IP residencial): `python tools/w24-site.py 8479` no Windows e, no
+Navegador do Kitsune, `http://10.0.2.2:8479/yt` (a rede padrão do QEMU), depois o link (ou `?go=1`).

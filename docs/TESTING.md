@@ -634,6 +634,32 @@ Projeto em [`design/midia.md`](design/midia.md). Três camadas:
    bytes são os mesmos), depois `--serve-test`, um arquivo cortado e um corrompido (terminam sozinhos, o sistema segue),
    `--info`, `--rgb 1280x720` e `--show` (captura `d-show.png`). Veredito em `OUT/verdict.txt`, com os fps de cada
    tamanho.
+### YouTube: o player embutido (W60)
+
+Projeto e diário em [`design/tls-browser.md`](design/tls-browser.md) §16. Hospedeiro, sem QEMU (rede de verdade):
+
+```bash
+node tools/yt-probe.js "https://www.youtube.com/embed/aqz-KE-bpKQ?autoplay=1" --referer http://203.0.113.5:8479/ --secs 40
+#   --engine node (V8 em vez do QuickJS), --spy (isTypeSupported/canPlayType/decodingInfo), --play (clica no player),
+#   --direct CA.pem (sem o proxy HTTP: o caminho do QEMU), --cache DIR (scripts e dumps do player/googlevideo)
+```
+
+A sonda compila `tools/jsrun-host.c` + o QuickJS e o `page.c` do `jsrun` para o hospedeiro (precisa de `clang`) e
+faz o papel do navegador (§16.2); imprime o console, os erros, os scripts lentos, os pedidos e um resumo. QEMU:
+
+```bash
+setsid nohup python3 tools/w24-site.py 8479 > /tmp/site-yt.log 2>&1 &     # a página /yt, que segue o link do embed
+OUT=/tmp/w60; QEMU_MEM=256M QEMU_NIC=virtio-net-pci PORT=8479 \
+QEMU_NETDEV="user,id=n0,net=203.0.113.0/24,host=203.0.113.5,dhcpstart=203.0.113.15,dns=203.0.113.3" \
+QEMU_EXTRA="-audiodev wav,id=snd0,path=$OUT-audio.wav,out.frequency=48000 -device AC97,audiodev=snd0" \
+bash tools/perf/run.sh IMG bios $OUT 1100 tools/perf/scen/w60-youtube.sh            # veredito em $OUT/verdict.txt
+```
+
+O veredito diz etapa por etapa até onde chegou (HTML, `base.js`, scripts, scripts inseridos, `player`,
+`videoplayback`, `<video>`, bytes no `SourceBuffer`, `playing`, imagens mudando, som na gravação) e junta os pedidos,
+o console e as linhas de mídia do serial. Numa rede que reassina o HTTPS a imagem precisa da raiz do gateway
+(`EXTRA_PEM` de `tools/gen-trust-store.sh`, nunca commitado).
+
 ### DOM para frameworks (W59): Preact, Vue e Workers
 
 Host: `cargo test -p kitsune_core script:: same_document html_tests` (mensagens de entrada, retrato do layout,

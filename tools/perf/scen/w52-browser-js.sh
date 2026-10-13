@@ -63,7 +63,7 @@ flush_snaps
   need() { if grep -aq -- "$1" "$OUT/js-out.txt"; then echo "PASS $2"; else echo "MISS $2"; ok=0; fi; }
   needlog() { if grep -aq -- "$1" "$OUT/serial.log"; then echo "PASS $2"; else echo "MISS $2"; ok=0; fi; }
   needlog "js: http://203.0.113.5:${PORT:-8079}/js/app.js -> " "external script fetched"
-  needlog "browser: 2 script(s) handed to pid" "script process started"
+  needlog "browser: 2 script(s), [0-9]* KiB, handed to pid" "script process started"
   need "^js: app.js start, ua=Mozilla/5.0 host=203.0.113.5:${PORT:-8079} path=/js" "location and navigator"
   need "^js: inline sees app = object readyState loading" "scripts run in order"
   need "^js: DOMContentLoaded, items before: 0" "DOMContentLoaded"

@@ -178,10 +178,16 @@ Detalhes que importam:
   diferença na entrada de uma função; com o Rust *soft-float* isso nunca aparecia, com o C usando `movaps` na pilha
   dava `#GP`.
 * **Limites.** Pilha de **4 MiB** (`BIG_STACK`; o QuickJS gasta ~1 KiB de pilha C por chamada JS, então cabem ~3700
-  chamadas aninhadas antes do `RangeError`), heap de até **64 MiB** (`BIG_HEAP`), memória do JS limitada a 48 MiB
-  (`JS_SetMemoryLimit`: estourar vira `InternalError: out of memory`, o processo termina com status 1 e o sistema
-  segue). Pilha e heap maiores valem só para a imagem embutida com aquele nome, não para um arquivo `jsrun.elf`
-  qualquer. A pilha é mapeada inteira na criação (1024 quadros).
+  chamadas aninhadas antes do `RangeError`), heap de até **128 MiB** (`BIG_HEAP`; era 64 MiB), memória do JS
+  limitada a 96 MiB (era 48 MiB; o player embutido do YouTube sozinho ocupa ~38 MB; `JS_SetMemoryLimit`: estourar
+  vira `InternalError: out of memory`, o processo termina com status 1 e o sistema segue). O heap só cresce com o
+  uso; o log diz o tamanho a cada 16 MiB (`proc: 'jsrun' pid N heap M MiB`). Pilha e heap maiores valem só para a
+  imagem embutida com aquele nome, não para um arquivo `jsrun.elf` qualquer. A pilha é mapeada inteira na criação
+  (1024 quadros).
+* **`malloc` do lado C** (`src/bin/jsrun/heap.rs`): blocos de até 1 KiB vêm de classes de 16 bytes (lista livre por
+  classe, pedaços de 256 KiB do alocador do SDK), os maiores do alocador do SDK (first-fit em lista ligada). Só com
+  o first-fit, a rotatividade de alocações pequenas do QuickJS fazia cada `malloc` percorrer uma lista longa:
+  compilar o `base.js` do YouTube (1,9 MB) levava 62 s sob TCG, agora 7,4 s (0,47 s nativo; `tls-browser.md` §16).
 * **Recursão.** O QuickJS para a recursão sem fim com `InternalError("stack overflow")` (como o SpiderMonkey); a cola
   faz `InternalError` herdar de `RangeError`, então `e instanceof RangeError` vale como no V8 e o código escrito
   para ele funciona.

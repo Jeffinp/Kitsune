@@ -30,7 +30,7 @@ wait_more() { # wait_more PATTERN COUNT SECONDS: until PATTERN shows more than C
   return 1
 }
 # Where the page is on screen (the browser logs it when the page's scripts start).
-origin() { log "script(s) handed to pid" | tail -1 | sed -E 's/.*page at (-?[0-9]+),(-?[0-9]+) zoom ([0-9]+).*/\1 \2 \3/'; }
+origin() { log "handed to pid" | tail -1 | sed -E 's/.*page at (-?[0-9]+),(-?[0-9]+) (size [0-9]+x[0-9]+ )?zoom ([0-9]+).*/\1 \2 \4/'; }
 # Click the control NAME of the last "PREFIX at ..." line the page printed.
 click_at() {
   local ox oy z cx cy
@@ -147,7 +147,7 @@ flush_snaps
   need "^todo: n=2 left=1 filter=all shown=pao\+\|cafe dom=2" "remove"
   needlog "webstorage: saved" "localStorage written to ~/.webstorage"
   if [ "$(grep -ac "todo: n=2 left=1 filter=all shown=pao+|cafe dom=2 input=\"\" focus=in" "$OUT/js-out.txt")" -ge 1 ] && \
-     [ "$(grep -c "browser: .* script(s) handed to pid" "$OUT/serial.log")" -ge 2 ]; then
+     [ "$(grep -c "browser: .* script(s), .* handed to pid" "$OUT/serial.log")" -ge 2 ]; then
     echo "PASS the list is back after a reload (localStorage)"
   else
     echo "MISS the list is back after a reload (localStorage)"; ok=0
