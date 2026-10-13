@@ -327,7 +327,7 @@ impl<F> Player<F> {
         }
         self.update_state(now_ms, ahead, sink.as_deref());
         // The device and the clock follow the new state at once.
-        if let Some(s) = sink.as_deref_mut() {
+        if let Some(s) = sink {
             self.sync_sink(s);
         }
         self.sync_clock(sound, now_ms, played);
@@ -365,13 +365,14 @@ impl<F> Player<F> {
     /// Show the picture whose time has come. Returns whether the picture changed.
     fn pick(&mut self, t: i64, running: bool) -> bool {
         let mut changed = false;
-        if self.show_next && self.st.marked() {
-            if let Some(q) = self.frames.pop_front() {
-                self.held_video -= q.bytes;
-                self.put_on_screen(q);
-                self.show_next = false;
-                changed = true;
-            }
+        if self.show_next
+            && self.st.marked()
+            && let Some(q) = self.frames.pop_front()
+        {
+            self.held_video -= q.bytes;
+            self.put_on_screen(q);
+            self.show_next = false;
+            changed = true;
         }
         if !running {
             return changed;

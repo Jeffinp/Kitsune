@@ -37,19 +37,21 @@ fn controls_from_the_page() {
         ))
     );
     assert_eq!(
+        c("reset 7 1 -1"),
+        Some((
+            7,
+            Control::Reset {
+                src: 1,
+                offset: u64::MAX
+            }
+        ))
+    );
+    assert_eq!(
         c("tso 7 2 -1000"),
         Some((7, Control::TimestampOffset { src: 2, ns: -1000 }))
     );
-    // Malformed: unknown op, missing numbers, a source out of range, a negative offset.
-    for bad in [
-        "fly 7",
-        "seek 7",
-        "open",
-        "rm 7 9 0 1",
-        "reset 7 0 -1",
-        "seek x 1",
-        "",
-    ] {
+    // Malformed: unknown op, missing numbers, a source out of range.
+    for bad in ["fly 7", "seek 7", "open", "rm 7 9 0 1", "seek x 1", ""] {
         assert_eq!(c(bad), None, "{bad}");
     }
     let long = String::from("play 1 ") + &"9".repeat(300);

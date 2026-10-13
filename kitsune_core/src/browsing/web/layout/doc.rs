@@ -337,7 +337,7 @@ impl Doc {
                     uid,
                     controls,
                     audio,
-                    ..
+                    poster,
                 } => Some(VideoBox {
                     uid,
                     x,
@@ -346,6 +346,7 @@ impl Doc {
                     h,
                     controls,
                     audio,
+                    poster,
                 }),
                 _ => None,
             })

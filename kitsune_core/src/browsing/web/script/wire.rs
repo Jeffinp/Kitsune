@@ -151,6 +151,15 @@ pub enum FromScript<'a> {
     Abort(u32),
     /// `document.cookie = text`.
     SetCookie(&'a str),
+    /// A command for a media element's player (`play()`, `currentTime = t`, ...).
+    Media(crate::browsing::media::wire::Command),
+    /// WebM bytes for source buffer `src` of player `id` (append number `seq`).
+    MediaData {
+        id: u32,
+        src: u8,
+        seq: u32,
+        bytes: &'a [u8],
+    },
     /// Anything else (ignored).
     Unknown,
 }
@@ -193,6 +202,17 @@ pub fn parse_message(m: &[u8]) -> FromScript<'_> {
         b'C' => match core::str::from_utf8(rest) {
             Ok(text) if text.len() <= 8192 => FromScript::SetCookie(text),
             _ => FromScript::Unknown,
+        },
+        b'M' => crate::browsing::media::wire::parse_control(rest)
+            .map_or(FromScript::Unknown, FromScript::Media),
+        b'm' => match crate::browsing::media::wire::parse_data(rest) {
+            Some((id, src, seq, bytes)) => FromScript::MediaData {
+                id,
+                src,
+                seq,
+                bytes,
+            },
+            None => FromScript::Unknown,
         },
         _ => FromScript::Unknown,
     }

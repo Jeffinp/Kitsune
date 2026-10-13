@@ -20,10 +20,11 @@ pub(crate) enum JsAction {
     Submit(usize, usize),
 }
 
-/// The script process of a tab.
+/// The script process of a tab, and the players of its media elements.
 pub(crate) struct JsProc {
     pub pid: u32,
     pub session: Session<JsAction>,
+    pub media: super::media::MediaSet,
 }
 
 impl Drop for JsProc {
@@ -113,6 +114,7 @@ impl Desktop {
         let active_id = b.tabs.active().id;
         super::jsnet::save_cookies();
         let mut redraw = false;
+        let mut media_relayout = false;
         let mut actions: Vec<(u32, JsAction)> = Vec::new();
         let mut title: Option<String> = None;
         let BrowserState { tabs, images, .. } = &mut *b;
@@ -145,7 +147,25 @@ impl Desktop {
                     FromScript::SetCookie(text) => {
                         super::jsnet::on_set_cookie(&t.browser, js.pid, text);
                     }
+                    FromScript::Media(c) => js.media.command(js.pid, c),
+                    FromScript::MediaData {
+                        id,
+                        src,
+                        seq,
+                        bytes,
+                    } => js.media.data(js.pid, id, src, seq, bytes),
                     FromScript::Unknown => {}
+                }
+            }
+            // The players: a tab in the background pauses them.
+            if t.id != active_id {
+                js.media.pause_all();
+            }
+            if !js.media.players.is_empty() {
+                let m = js.media.pump(js.pid, t.page.as_ref(), t.doc.as_mut());
+                if t.id == active_id {
+                    redraw |= m.redraw;
+                    media_relayout |= m.relayout;
                 }
             }
             if let Some(a) = js.session.expire(now_ms()) {
@@ -166,10 +186,16 @@ impl Desktop {
                 }
                 if t.id == active_id {
                     relayout_js(t, images, content);
+                    media_relayout = false;
                 } else {
                     t.layout_w = 0;
                     t.page = None;
                 }
+                redraw = true;
+            } else if media_relayout && t.id == active_id {
+                // A video learnt its size.
+                media_relayout = false;
+                relayout_js(t, images, content);
                 redraw = true;
             }
             if !alive && let Some(mut js) = t.js.take() {
@@ -224,6 +250,16 @@ impl Desktop {
         let Some(b) = self.browser_state_mut(id) else {
             return false;
         };
+        let t = b.tabs.active_mut();
+        let Some(page) = &t.page else {
+            return false;
+        };
+        if let (Some(v), Some(js)) = (page.video_at(qx, qy).copied(), t.js.as_mut())
+            && js.media.click(js.pid, &v, qx, qy, i32::from(t.zoom.max(1)))
+        {
+            b.touch();
+            return false;
+        }
         let t = b.tabs.active_mut();
         let Some(page) = &t.page else {
             return false;
@@ -319,6 +355,7 @@ fn start_js(t: &mut TabData, images: &mut kitsune_core::web::imgcache::ImageCach
     t.js = Some(JsProc {
         pid,
         session: Session::default(),
+        media: Default::default(),
     });
     // The element boxes (and the controls outside forms) appear: lay out as for a new page.
     layout_browser(t, images, content.w, true);

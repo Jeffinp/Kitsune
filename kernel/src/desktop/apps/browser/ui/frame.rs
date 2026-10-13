@@ -47,6 +47,7 @@ impl Desktop {
             self.draw_start_page(c, content, bs, focused);
         } else if let Some(page) = &t.page {
             self.paint_web_page(c, page, content, t.scroll, bs);
+            self.paint_videos(c, page, content, t.scroll, bs);
             if crate::trace::ON && t.trace_t0.get() != 0 {
                 crate::trace::note(
                     "load to first paint",

@@ -186,6 +186,32 @@ pub fn fmt_time(ns: i64) -> String {
     out
 }
 
+/// Where a picture of `vw` x `vh` goes in a box of `bw` x `bh` (`object-fit: contain`, the
+/// default of `<video>`): the largest size with the picture's shape, centred. Relative to the box.
+pub fn contain(bw: i32, bh: i32, vw: u32, vh: u32) -> Area {
+    if bw <= 0 || bh <= 0 || vw == 0 || vh == 0 {
+        return Area {
+            x: 0,
+            y: 0,
+            w: bw.max(0),
+            h: bh.max(0),
+        };
+    }
+    let (bw64, bh64, vw64, vh64) = (i64::from(bw), i64::from(bh), i64::from(vw), i64::from(vh));
+    let (w, h) = if bw64 * vh64 > bh64 * vw64 {
+        // The box is wider than the picture: bars at the sides.
+        (((bh64 * vw64) / vh64).max(1), bh64)
+    } else {
+        (bw64, ((bw64 * vh64) / vw64).max(1))
+    };
+    Area {
+        x: ((bw64 - w) / 2) as i32,
+        y: ((bh64 - h) / 2) as i32,
+        w: w as i32,
+        h: h as i32,
+    }
+}
+
 /// `current / duration` (the duration as `--:--` when unknown).
 pub fn time_text(t: i64, duration: Option<i64>) -> String {
     let mut s = fmt_time(t);

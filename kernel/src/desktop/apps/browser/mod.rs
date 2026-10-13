@@ -14,7 +14,7 @@
 //! - `state`, `model` the window state and its methods
 //! - `fetch`, `page`, `tabs`, `layout` loading, scrolling, tabs and page layout
 //! - `script` the page's JavaScript (a ring 3 process per tab with scripts); `jsnet` its network
-//!   requests (`fetch`, XHR) and cookies
+//!   requests (`fetch`, XHR) and cookies; `media` the players of its `<video>`/`<audio>` elements
 //! - `shield` the ad blocker's side of it: the per-site list on disk, the toggle, the popover's geometry
 //! - `keys`, `mouse`, `hover` input
 //! - `ui` the chrome (toolbar, tab strip, start and error pages, popups); `paint` the page
@@ -24,6 +24,7 @@ mod hover;
 mod jsnet;
 mod keys;
 mod layout;
+mod media;
 mod model;
 mod mouse;
 mod page;

@@ -127,6 +127,8 @@ pub struct VideoBox {
     pub h: i32,
     pub controls: bool,
     pub audio: bool,
+    /// Index into [`Page::images`] of the poster.
+    pub poster: Option<usize>,
 }
 /// One `<img>` of the page: the `src` as written and the text to show when
 /// there is no picture.

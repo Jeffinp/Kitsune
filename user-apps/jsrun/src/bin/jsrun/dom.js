@@ -621,7 +621,12 @@
   mixin(Element.prototype, childMethods);
   class HTMLElement extends Element {}
 
-  function createElement(tag, uid) { return new HTMLElement(tag, uid); }
+  // Elements with their own class (`<video>`, `<audio>`: media.js) register it here by tag name.
+  const elementClasses = new Map();
+  function createElement(tag, uid) {
+    const C = elementClasses.get(String(tag).toLowerCase()) || HTMLElement;
+    return new C(tag, uid);
+  }
 
   // ---- selectors ----
 
@@ -1457,5 +1462,5 @@
   global._ls = null;
   global._on = null;
   addHandlerProps(global);
-  global.__kjs = { onMessage, runOne, nextDelay, flush, interrupted };
+  global.__kjs = { onMessage, runOne, nextDelay, flush, interrupted, elementClasses };
 })(globalThis, globalThis.__kjs_native);

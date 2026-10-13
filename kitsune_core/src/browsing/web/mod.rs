@@ -38,8 +38,8 @@ pub fn fold_for_display(s: &str) -> alloc::string::String {
 }
 pub use layout::{
     Cmd, DECO_STRIKE, DECO_UNDERLINE, Doc, FieldBox, ImgRef, Layout, LinkHit, MAX_CMDS, MAX_HITS,
-    MAX_IMAGES, MAX_LINKS, MAX_TEXT_CHARS, MAX_WORD_CHARS, MAX_ZOOM, MIN_ZOOM, NO_LINK, Page,
-    ZOOM_STEPS, render, render_with, zoom_in, zoom_out,
+    MAX_IMAGES, MAX_LINKS, MAX_TEXT_CHARS, MAX_VIDEOS, MAX_WORD_CHARS, MAX_ZOOM, MIN_ZOOM, NO_LINK,
+    Page, VideoBox, ZOOM_STEPS, render, render_with, zoom_in, zoom_out,
 };
 pub use metrics::{FixedAdvance, Font, TextMetrics};
 

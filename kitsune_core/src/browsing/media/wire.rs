@@ -42,7 +42,7 @@ pub enum Control {
         b: i64,
     },
     /// The next bytes of source `src` are at file offset `offset` (`abort()`, a direct source that
-    /// jumps).
+    /// jumps); `u64::MAX`: a new stream, from its EBML header (a new init segment).
     Reset {
         src: u8,
         offset: u64,
@@ -102,7 +102,8 @@ pub fn parse_control(m: &[u8]) -> Option<Command> {
         },
         "reset" => Control::Reset {
             src: src(num()?)?,
-            offset: u64::try_from(num()?).ok()?,
+            // -1: a new stream from its EBML header (u64::MAX in the decoder's protocol).
+            offset: u64::try_from(num()?).unwrap_or(u64::MAX),
         },
         "tso" => Control::TimestampOffset {
             src: src(num()?)?,

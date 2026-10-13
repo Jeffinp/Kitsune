@@ -49,6 +49,50 @@ fn seeking_and_volume_from_the_click() {
 }
 
 #[test]
+fn the_picture_is_fitted_into_its_box() {
+    // Same shape: the whole box.
+    assert_eq!(
+        contain(640, 360, 1280, 720),
+        Area {
+            x: 0,
+            y: 0,
+            w: 640,
+            h: 360
+        }
+    );
+    // 16:9 in the default 300x150 (2:1): bars at the sides.
+    assert_eq!(
+        contain(300, 150, 640, 360),
+        Area {
+            x: 17,
+            y: 0,
+            w: 266,
+            h: 150
+        }
+    );
+    // 4:3 in a 16:9 box... and a tall box: bars above and below.
+    assert_eq!(
+        contain(200, 400, 640, 360),
+        Area {
+            x: 0,
+            y: 144,
+            w: 200,
+            h: 112
+        }
+    );
+    // Nothing known: the box.
+    assert_eq!(
+        contain(300, 150, 0, 0),
+        Area {
+            x: 0,
+            y: 0,
+            w: 300,
+            h: 150
+        }
+    );
+}
+
+#[test]
 fn time_text() {
     assert_eq!(fmt_time(0), "0:00");
     assert_eq!(fmt_time(3_400_000_000), "0:03");

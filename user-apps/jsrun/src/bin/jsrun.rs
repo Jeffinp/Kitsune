@@ -32,12 +32,15 @@ const MAX_SCRIPT: usize = 16 * 1024 * 1024;
 
 /// The engine's own test, with a NUL after it (QuickJS wants one).
 const SELFTEST: &str = concat!(include_str!("jsrun/selftest.js"), "\0");
-/// The DOM, events and timers of page mode and then its network (`fetch`, XHR...): JavaScript run
-/// before the page's scripts, NUL-ended.
+/// The DOM, events and timers of page mode, then its network (`fetch`, XHR...) and its media
+/// (`<video>`, `<audio>`, Media Source Extensions): JavaScript run before the page's scripts,
+/// NUL-ended.
 const DOM_JS: &str = concat!(
     include_str!("jsrun/dom.js"),
     "\n",
     include_str!("jsrun/net.js"),
+    "\n",
+    include_str!("jsrun/media.js"),
     "\0"
 );
 
