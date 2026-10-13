@@ -6,7 +6,8 @@
 //! | `t` | fields | meaning |
 //! |---|---|---|
 //! | `init` | `url`, `ua`, `lang`, `cookie`, `w`, `h`, `quirks`, `dom`, `scripts` | the document and its scripts, once |
-//! | `click` | `uid`, `x`, `y`, `seq` | a click on element `uid`; `seq` > 0 asks for a verdict on the default action |
+//! | `click` | `uid`, `x`, `y`, `cx`, `cy`, `seq`, `n` | a click on element `uid` at page `(x, y)` (device px) and viewport `(cx, cy)` (CSS px); `seq` > 0 asks for a verdict on the default action |
+//! | `key`, `focus`, `field`, `mouse`, `view`, `pop`, `hist`, `vis`, `store` | see [`super::input`] | |
 //!
 //! `dom` is the tree as nested arrays: an element is `[tag, uid, {attributes}, [children]]`, text is a
 //! string, and whitespace the parser folded between two elements is a `" "` before the second one.
@@ -20,6 +21,7 @@
 //! | `A` | `SEQ 0` or `SEQ 1` | the verdict on click `SEQ`: `1` lets the default action happen |
 //! | `N` | URL | go to this address (`location.href = ...`, `location.reload()`) |
 //! | `F`, `X`, `C` | see [`super::net`] | network requests and `document.cookie` |
+//! | `Q`, `G`, `W`, `S`, `H`, `B`, `O`, `L` | see [`super::input`] | inputs handled, focus, the events wanted, scroll, history, new tab, `localStorage` |
 
 use super::*;
 
@@ -131,9 +133,22 @@ pub fn init_message(doc: &Doc, info: &InitInfo, scripts: &[(String, String)]) ->
     out.into_bytes()
 }
 
-/// A click on element `uid` at page `(x, y)` (CSS pixels); `seq` > 0 asks for a verdict.
-pub fn click_message(uid: u32, x: i32, y: i32, seq: u32) -> Vec<u8> {
-    format!("{{\"t\":\"click\",\"uid\":{uid},\"x\":{x},\"y\":{y},\"seq\":{seq}}}").into_bytes()
+/// Where a click happened: page coordinates in device pixels, viewport coordinates in CSS pixels.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ClickAt {
+    pub x: i32,
+    pub y: i32,
+    pub cx: i32,
+    pub cy: i32,
+}
+
+/// A click on element `uid` (input number `n`); `seq` > 0 asks for a verdict.
+pub fn click_message(uid: u32, at: ClickAt, seq: u32, n: u32) -> Vec<u8> {
+    format!(
+        "{{\"t\":\"click\",\"uid\":{uid},\"x\":{},\"y\":{},\"cx\":{},\"cy\":{},\"seq\":{seq},\"n\":{n}}}",
+        at.x, at.y, at.cx, at.cy
+    )
+    .into_bytes()
 }
 
 /// A message from the script process.
@@ -151,6 +166,22 @@ pub enum FromScript<'a> {
     Abort(u32),
     /// `document.cookie = text`.
     SetCookie(&'a str),
+    /// The inputs up to this number are in the documents that follow (`Q`).
+    Ack(u32),
+    /// A script focused control `uid` (0: no control has the focus) (`G`).
+    Focus(u32),
+    /// The kinds of events the page listens to (`W`).
+    Want(Subs),
+    /// Scroll the page to `(x, y)`, CSS px (`S`).
+    Scroll(i32, i32),
+    /// `history.pushState` (`replace` false) or `replaceState` to this address (`H`).
+    History { replace: bool, url: &'a str },
+    /// `history.go(n)` (`B`).
+    Go(i32),
+    /// `window.open(url)`: a new tab (`O`).
+    Open(&'a str),
+    /// A change to the origin's `localStorage` (`L`).
+    Storage(StorageOp),
     /// Anything else (ignored).
     Unknown,
 }
@@ -194,6 +225,34 @@ pub fn parse_message(m: &[u8]) -> FromScript<'_> {
             Ok(text) if text.len() <= 8192 => FromScript::SetCookie(text),
             _ => FromScript::Unknown,
         },
+        b'Q' | b'G' | b'B' => {
+            let n = core::str::from_utf8(rest).ok().map(str::trim);
+            match (kind, n) {
+                (b'Q', Some(n)) => n.parse().map_or(FromScript::Unknown, FromScript::Ack),
+                (b'G', Some(n)) => n.parse().map_or(FromScript::Unknown, FromScript::Focus),
+                (_, Some(n)) => n
+                    .parse::<i32>()
+                    .ok()
+                    .filter(|n| n.unsigned_abs() <= 64)
+                    .map_or(FromScript::Unknown, FromScript::Go),
+                _ => FromScript::Unknown,
+            }
+        }
+        b'W' => core::str::from_utf8(rest)
+            .ok()
+            .filter(|s| s.len() <= 256)
+            .map_or(FromScript::Unknown, |s| FromScript::Want(Subs::parse(s))),
+        b'S' => parse_scroll(rest).map_or(FromScript::Unknown, |(x, y)| FromScript::Scroll(x, y)),
+        b'H' => parse_history(rest).map_or(FromScript::Unknown, |(replace, url)| {
+            FromScript::History { replace, url }
+        }),
+        b'O' => match core::str::from_utf8(rest) {
+            Ok(url) if !url.trim().is_empty() && url.len() <= 2048 => FromScript::Open(url.trim()),
+            _ => FromScript::Unknown,
+        },
+        b'L' if rest.len() <= 2 * ORIGIN_BYTES => {
+            parse_storage_op(rest).map_or(FromScript::Unknown, FromScript::Storage)
+        }
         _ => FromScript::Unknown,
     }
 }

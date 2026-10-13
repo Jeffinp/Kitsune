@@ -29,16 +29,28 @@ impl Browser {
 
     /// Go to the previous page of the history (no-op at the start).
     pub fn back(&mut self) {
-        if self.can_back() {
-            self.history.cur -= 1;
-            self.replay_current();
-        }
+        self.go(-1);
     }
 
     /// Go to the next page of the history (no-op at the end).
     pub fn forward(&mut self) {
-        if self.can_forward() {
-            self.history.cur += 1;
+        self.go(1);
+    }
+
+    /// Move `n` entries in the history (`history.go(n)`; no-op past either end). An entry of the
+    /// document on screen loads nothing: [`Browser::take_pop`] tells the page.
+    pub fn go(&mut self, n: i32) {
+        let from = self.history.cur;
+        let to = from as i64 + i64::from(n);
+        if n == 0 || to < 0 || to >= self.history.urls.len() as i64 {
+            return;
+        }
+        let to = to as usize;
+        self.history.cur = to;
+        let same = |i: usize| self.history.docs.get(i).copied().unwrap_or(0);
+        if same(from) != 0 && same(from) == same(to) && !self.internal {
+            self.same_doc_move();
+        } else {
             self.replay_current();
         }
     }

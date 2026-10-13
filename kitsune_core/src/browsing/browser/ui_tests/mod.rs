@@ -40,6 +40,7 @@ fn open_internal(b: &mut Browser, url: &str) -> String {
 mod address_bar_selection;
 mod favourites;
 mod internal_pages;
+mod same_document;
 mod suggestions;
 mod tabs_share_window;
 mod title_url_cap;

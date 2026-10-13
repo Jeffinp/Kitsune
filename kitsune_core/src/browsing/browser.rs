@@ -341,10 +341,17 @@ pub const MAX_HISTORY: usize = 64;
 #[derive(Default)]
 struct History {
     urls: alloc::vec::Vec<alloc::vec::Vec<u8>>,
+    /// The document of each entry: entries a page's scripts added (`history.pushState`) share the
+    /// number of the entry they were added from, and moving between them loads nothing.
+    docs: alloc::vec::Vec<u32>,
+    /// The last document number given.
+    doc_seq: u32,
     /// Index of the current entry (meaningful when `urls` is not empty).
     cur: usize,
     /// The next successful load comes from back/forward: do not record it.
     replay: bool,
+    /// Back/forward reached an entry of the same document: its index, for the page (`popstate`).
+    pop: Option<usize>,
 }
 
 /// Most origins the user can allow to continue past a certificate error in one

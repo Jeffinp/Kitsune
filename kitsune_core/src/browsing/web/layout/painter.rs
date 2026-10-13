@@ -138,6 +138,8 @@ pub(crate) struct Painter<'a> {
     pub(crate) track: bool,
     /// The form of the controls outside any `<form>` (pages with scripts only).
     pub(crate) formless: Option<usize>,
+    /// The computed style of the elements laid out (node boxes on).
+    pub(crate) styles: Vec<StyleRec>,
 }
 
 impl Painter<'_> {
@@ -234,6 +236,62 @@ impl Painter<'_> {
                 node,
             });
         }
+    }
+
+    /// Record the computed style of `el` for the page's scripts (node boxes on).
+    pub(crate) fn note_style(&mut self, el: &Element, c: &Computed) {
+        if !self.track || el.uid == 0 || self.styles.len() >= MAX_HITS {
+            return;
+        }
+        let display = match c.display {
+            Disp::None => 0,
+            Disp::Block => 1,
+            Disp::Inline => 2,
+            Disp::InlineBlock => 3,
+            Disp::Flex => 4,
+            Disp::Grid => 5,
+            Disp::Table => 6,
+            Disp::TableRow => 7,
+            Disp::TableCell => 8,
+            Disp::ListItem => 9,
+            Disp::TableRowGroup => 12,
+        };
+        let px = |l: &Len| match l {
+            Len::Px(v) => (*v).clamp(-32768, 32767) as i16,
+            _ => 0,
+        };
+        let rgb = |c: Rgb| u32::from(c.0) << 16 | u32::from(c.1) << 8 | u32::from(c.2);
+        let flags = (if c.bold { STYLE_BOLD } else { 0 })
+            | (if c.italic { STYLE_ITALIC } else { 0 })
+            | (if c.hidden { STYLE_HIDDEN } else { 0 })
+            | (if c.position == Pos::Abs { STYLE_ABS } else { 0 })
+            | (if c.mono { STYLE_MONO } else { 0 })
+            | match c.float {
+                Float::Left => STYLE_FLOAT_LEFT,
+                Float::Right => STYLE_FLOAT_RIGHT,
+                Float::None => 0,
+            };
+        self.styles.push(StyleRec {
+            uid: el.uid,
+            display,
+            flags,
+            color: rgb(c.color),
+            bg: c.bg.map_or(0, |b| 0xff00_0000 | rgb(b)),
+            font_px: c.font_px.clamp(0, 65535) as u16,
+            margin: [
+                px(&c.margin[0]),
+                px(&c.margin[1]),
+                px(&c.margin[2]),
+                px(&c.margin[3]),
+            ],
+            padding: [
+                px(&c.padding[0]),
+                px(&c.padding[1]),
+                px(&c.padding[2]),
+                px(&c.padding[3]),
+            ],
+            border: c.border_w.map(|b| b.clamp(0, 255) as u8),
+        });
     }
 
     pub(crate) fn push_cmd(&mut self, cmd: Cmd) {

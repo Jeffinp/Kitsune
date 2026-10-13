@@ -147,7 +147,58 @@ pub struct Page {
     pub forms: Vec<FormInfo>,
     /// Boxes of the visible controls, in document order.
     pub fields: Vec<FieldBox>,
+    /// With node boxes on ([`Doc::set_track`]): the computed style of every element laid out, for the
+    /// page's scripts (`getComputedStyle`; see `script::boxes_message`). An element may appear more
+    /// than once (the last record counts).
+    pub styles: Vec<StyleRec>,
 }
+/// What the page's scripts read of an element's computed style ([`Page::styles`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct StyleRec {
+    pub uid: u32,
+    /// `display`, as [`STYLE_DISPLAY`] numbers it.
+    pub display: u8,
+    /// `STYLE_*` bits.
+    pub flags: u16,
+    /// `color` as 0xRRGGBB.
+    pub color: u32,
+    /// `background-color` as 0xFFRRGGBB, 0 when none.
+    pub bg: u32,
+    pub font_px: u16,
+    /// Margins, paddings and border widths in CSS px: top, right, bottom, left (0 for a percentage or
+    /// `auto`).
+    pub margin: [i16; 4],
+    pub padding: [i16; 4],
+    pub border: [u8; 4],
+}
+/// [`StyleRec::display`]: the index of the `display` value in this list (the page's scripts hold the
+/// same list).
+pub const STYLE_DISPLAY: [&str; 13] = [
+    "none",
+    "block",
+    "inline",
+    "inline-block",
+    "flex",
+    "grid",
+    "table",
+    "table-row",
+    "table-cell",
+    "list-item",
+    "inline-flex",
+    "contents",
+    "table-row-group",
+];
+pub const STYLE_BOLD: u16 = 1;
+pub const STYLE_ITALIC: u16 = 2;
+/// Hidden on purpose (`visibility: hidden`, `opacity: 0`...).
+pub const STYLE_HIDDEN: u16 = 4;
+/// `position: absolute` or `fixed`.
+pub const STYLE_ABS: u16 = 8;
+pub const STYLE_MONO: u16 = 128;
+/// The element has a box in [`Page::hits`] (set when the snapshot is built).
+pub const STYLE_BOX: u16 = 256;
+pub const STYLE_FLOAT_LEFT: u16 = 512;
+pub const STYLE_FLOAT_RIGHT: u16 = 1024;
 impl Default for Page {
     fn default() -> Self {
         Page {
@@ -159,6 +210,7 @@ impl Default for Page {
             images: Vec::new(),
             forms: Vec::new(),
             fields: Vec::new(),
+            styles: Vec::new(),
         }
     }
 }

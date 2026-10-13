@@ -271,6 +271,7 @@ impl Doc {
             node: 0,
             track: self.track,
             formless: None,
+            styles: Vec::new(),
         };
         let area = Area {
             x: 0,
@@ -292,6 +293,7 @@ impl Doc {
             images: p.images,
             forms: p.forms,
             fields: p.fields,
+            styles: p.styles,
         }
     }
 }

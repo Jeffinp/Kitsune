@@ -80,6 +80,7 @@ fn gather<'a>(p: &mut Painter<'a>, el: &'a Element, c: &Computed) -> Option<Vec<
             Node::Text(_) => return None,
             Node::Element(e) => {
                 let ec = compute(e, p.sheet, c, &p.anc, &mut p.budget);
+                p.note_style(e, &ec);
                 if ec.display == Disp::None {
                     continue;
                 }
@@ -289,6 +290,7 @@ pub(super) fn inline_run<'a>(
             Node::Text(_) => break,
             Node::Element(e) => {
                 let ec = compute(e, p.sheet, parent, &p.anc, &mut p.budget);
+                p.note_style(e, &ec);
                 if ec.display == Disp::None {
                     used = k + 1;
                     continue;

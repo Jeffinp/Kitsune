@@ -25,11 +25,25 @@ impl<A> Default for Session<A> {
 }
 
 impl<A> Session<A> {
-    /// A click on element `uid` at page `(x, y)` at time `now_ms`. With `action` the click waits for
-    /// a verdict (a click before it replaces the one waiting, which is dropped). Returns the message
-    /// for the process.
-    pub fn click(&mut self, uid: u32, x: i32, y: i32, action: Option<A>, now_ms: u64) -> Vec<u8> {
-        let seq = match action {
+    /// A click on element `uid` at `at`, input number `n`, at time `now_ms`. With `action` the click
+    /// waits for a verdict (a click before it replaces the one waiting, which is dropped). Returns the
+    /// message for the process.
+    pub fn click(
+        &mut self,
+        uid: u32,
+        at: ClickAt,
+        n: u32,
+        action: Option<A>,
+        now_ms: u64,
+    ) -> Vec<u8> {
+        let seq = self.wait(action, now_ms);
+        click_message(uid, at, seq, n)
+    }
+
+    /// Keep `action` until the page's verdict (a key, a click); returns the sequence number to send
+    /// (0 without an action).
+    pub fn wait(&mut self, action: Option<A>, now_ms: u64) -> u32 {
+        match action {
             Some(a) => {
                 let seq = self.next_seq;
                 self.next_seq = self.next_seq.wrapping_add(1).max(1);
@@ -37,8 +51,7 @@ impl<A> Session<A> {
                 seq
             }
             None => 0,
-        };
-        click_message(uid, x, y, seq)
+        }
     }
 
     /// The page answered click `seq`: the action to do now, if it is the one waiting and it was

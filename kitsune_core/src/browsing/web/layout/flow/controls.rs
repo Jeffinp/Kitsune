@@ -121,6 +121,7 @@ pub(crate) fn collect_control(p: &mut Painter, el: &Element, c: &Computed) -> bo
         options,
         selected,
         rows,
+        uid: el.uid,
     });
     if kind != FieldKind::Hidden {
         let st = p.style(c);

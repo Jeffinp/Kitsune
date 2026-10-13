@@ -32,6 +32,7 @@ pub(super) fn flow<'a>(
                     p.space = Some(p.font(parent));
                 }
                 let c = compute(el, p.sheet, parent, &p.anc, &mut p.budget);
+                p.note_style(el, &c);
                 if c.float != Float::None && c.display != Disp::None && c.position != Pos::Abs {
                     // A float leaves the flow: the line being built ends, the box goes to the side.
                     y = flush_inline(p, container, area, y, None);

@@ -100,6 +100,8 @@ pub struct FieldInfo {
     pub selected: usize,
     /// Visible lines of a `<textarea>`.
     pub rows: usize,
+    /// [`super::Element::uid`] of the control (0 = unknown): how the page's scripts name it.
+    pub uid: u32,
 }
 /// A `<form>` and its controls.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,6 +133,17 @@ impl FormInfo {
         }
     }
 }
+/// The form and index of the control whose element is `uid` (the page's scripts name controls so).
+pub fn field_by_uid(forms: &[FormInfo], uid: u32) -> Option<(usize, usize)> {
+    if uid == 0 {
+        return None;
+    }
+    forms
+        .iter()
+        .enumerate()
+        .find_map(|(fi, f)| f.fields.iter().position(|x| x.uid == uid).map(|i| (fi, i)))
+}
+
 /// Why a form could not be submitted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FormError {

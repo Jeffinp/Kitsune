@@ -111,6 +111,7 @@ fn collect_level<'a>(
     for n in nodes {
         let Node::Element(e) = n else { continue };
         let ec = compute(e, p.sheet, tc, &p.anc, &mut p.budget);
+        p.note_style(e, &ec);
         match ec.display {
             Disp::TableRowGroup => {
                 p.anc.push(e);
@@ -124,6 +125,7 @@ fn collect_level<'a>(
                 for cn in &e.children {
                     let Node::Element(ce) = cn else { continue };
                     let cc = compute(ce, p.sheet, &ec, &p.anc, &mut p.budget);
+                    p.note_style(ce, &cc);
                     if cc.display != Disp::TableCell || width >= MAX_COLS {
                         continue;
                     }

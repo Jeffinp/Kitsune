@@ -1,6 +1,8 @@
 //! The page's JavaScript, as the browser sees it: which scripts a page has and fetching them
 //! ([`ScriptSet`]), the messages exchanged with the script process ([`init_message`],
-//! [`click_message`], [`parse_message`]) and the clicks waiting for the page's verdict ([`Session`]).
+//! [`click_message`], [`parse_message`]; the user's input in [`input`], the layout snapshot in
+//! [`boxes_message`], `localStorage` in [`WebStorage`]) and the clicks and keys waiting for the page's
+//! verdict ([`Session`]).
 //!
 //! The engine itself runs in a ring 3 process (`user-apps/jsrun`, QuickJS) that holds its own copy of
 //! the DOM: the browser sends it the parsed tree and the script sources once, then events; the process
@@ -16,13 +18,19 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+mod boxes;
 mod collect;
+mod input;
 mod net;
 mod session;
+mod storage;
 mod wire;
+pub use boxes::*;
 pub use collect::*;
+pub use input::*;
 pub use net::*;
 pub use session::*;
+pub use storage::*;
 pub use wire::*;
 
 /// What scripts see as `navigator.userAgent`.
@@ -33,3 +41,5 @@ pub const USER_AGENT: &str = concat!(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_input;

@@ -324,21 +324,31 @@ fn messages_from_the_process_are_checked() {
 #[test]
 fn session_waits_for_the_verdict() {
     let mut s: Session<&str> = Session::default();
-    let m = s.click(4, 10, 20, None, 0);
+    let at = ClickAt {
+        x: 10,
+        y: 20,
+        cx: 5,
+        cy: 6,
+    };
+    let m = s.click(4, at, 7, None, 0);
     assert_eq!(
         m,
-        b"{\"t\":\"click\",\"uid\":4,\"x\":10,\"y\":20,\"seq\":0}"
+        b"{\"t\":\"click\",\"uid\":4,\"x\":10,\"y\":20,\"cx\":5,\"cy\":6,\"seq\":0,\"n\":7}"
     );
     assert!(!s.waiting());
-    let m = s.click(4, 10, 20, Some("follow"), 1000);
-    assert!(core::str::from_utf8(&m).unwrap().ends_with("\"seq\":1}"));
+    let m = s.click(4, at, 8, Some("follow"), 1000);
+    assert!(
+        core::str::from_utf8(&m)
+            .unwrap()
+            .ends_with("\"seq\":1,\"n\":8}")
+    );
     assert!(s.waiting());
     assert_eq!(s.answer(2, true), None, "another click's verdict");
     assert_eq!(s.expire(1000 + ANSWER_TIMEOUT_MS - 1), None);
     assert_eq!(s.answer(1, true), Some("follow"));
     assert!(!s.waiting());
     // Prevented: nothing happens.
-    s.click(4, 0, 0, Some("submit"), 5000);
+    s.click(4, ClickAt::default(), 9, Some("submit"), 5000);
     assert_eq!(s.answer(2, false), None);
     assert!(!s.waiting());
 }
@@ -346,10 +356,10 @@ fn session_waits_for_the_verdict() {
 #[test]
 fn session_gives_up_on_a_silent_page() {
     let mut s: Session<u8> = Session::default();
-    s.click(1, 0, 0, Some(9), 100);
+    s.click(1, ClickAt::default(), 1, Some(9), 100);
     assert_eq!(s.expire(100 + ANSWER_TIMEOUT_MS), Some(9));
     assert_eq!(s.answer(1, true), None, "too late");
-    s.click(1, 0, 0, Some(8), 0);
+    s.click(1, ClickAt::default(), 2, Some(8), 0);
     assert_eq!(s.abandon(), Some(8));
 }
 

@@ -34,6 +34,43 @@ impl FormState {
         }
     }
 
+    /// Put `v` in a text control (cut at its limit): the browser keeps what the person typed while the
+    /// page's scripts have not seen it yet. The caret stays where it was when the text is the same,
+    /// else it goes to the end.
+    pub fn set_text(&mut self, forms: &[FormInfo], form: usize, field: usize, v: &str) {
+        let Some(fi) = forms.get(form).and_then(|f| f.fields.get(field)) else {
+            return;
+        };
+        if !fi.kind.is_text() {
+            return;
+        }
+        let Some(slot) = self.values.get_mut(form).and_then(|r| r.get_mut(field)) else {
+            return;
+        };
+        if slot == v {
+            return;
+        }
+        let mut s = String::from(v);
+        truncate_at_boundary(&mut s, max_len(fi.kind));
+        *slot = s;
+        if self.focus == Some((form, field)) {
+            self.caret = slot.len();
+        }
+    }
+
+    /// Put the caret at byte `at` of the focused control (kept inside its text, on a character).
+    pub fn set_caret(&mut self, at: usize) {
+        let Some((f, i)) = self.focus else {
+            return;
+        };
+        let v = self.value(f, i);
+        let mut at = at.min(v.len());
+        while !v.is_char_boundary(at) {
+            at -= 1;
+        }
+        self.caret = at;
+    }
+
     /// The text of a control (empty for an unknown one).
     pub fn value(&self, form: usize, field: usize) -> &str {
         self.values

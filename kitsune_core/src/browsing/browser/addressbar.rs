@@ -14,25 +14,42 @@ mod bookmarks;
 mod internal;
 mod keys;
 mod navigation;
+mod samedoc;
 mod state;
 
 impl History {
     /// Record a finished navigation to `url`: drops the forward entries, ignores
     /// a reload of the same page and honors a pending back/forward replay.
     pub(super) fn record(&mut self, url: &[u8]) {
+        // Whatever loaded is a new document, even at the same address (a reload, back/forward).
+        self.doc_seq = self.doc_seq.wrapping_add(1);
+        let doc = self.doc_seq;
+        self.docs.resize(self.urls.len(), 0);
         if core::mem::take(&mut self.replay) {
+            if let Some(d) = self.docs.get_mut(self.cur) {
+                *d = doc;
+            }
             return;
         }
         if self.urls.get(self.cur).is_some_and(|u| u == url) {
+            self.docs[self.cur] = doc;
             return;
         }
+        self.push(url, doc);
+    }
+
+    /// A new entry after the current one (the ones after it are dropped).
+    pub(super) fn push(&mut self, url: &[u8], doc: u32) {
         if !self.urls.is_empty() {
             self.urls.truncate(self.cur + 1);
+            self.docs.truncate(self.cur + 1);
         }
         if self.urls.len() == MAX_HISTORY {
             self.urls.remove(0);
+            self.docs.remove(0);
         }
         self.urls.push(url.to_vec());
+        self.docs.push(doc);
         self.cur = self.urls.len() - 1;
     }
 }
