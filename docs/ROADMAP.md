@@ -125,8 +125,17 @@ abaixo, e nenhuma existe ainda. Ordem proposta, cada etapa com aceite próprio:
    `XMLHttpRequest` sobre o `fetcher`, cookies, teclado e texto dos campos visíveis ao script, eventos de mouse além do
    clique, medidas de layout, módulos, e um envio do DOM mais barato que o documento inteiro.
 3. **Rede para o que o YouTube pede:** cookies, HTTP keep-alive/HTTP/2 se o servidor exigir, CORS, WebSocket.
-4. **Mídia:** Media Source Extensions, decodificadores de vídeo (H.264 e VP9 em Rust puro, em software: a CPU em
-   software de 1080p não dá; 360p/480p é a meta realista) e de áudio (AAC e Opus), `<video>`/`<audio>`, sincronia.
+4. **Mídia. Decodificação feita (2026-10).** O YouTube serve WebM com VP9 (itags 243/244/247) e Opus (251), então
+   H.264 e AAC não são necessários. `run mediadec arquivo.webm` (anel 3) decodifica: demuxer WebM/Matroska
+   incremental em Rust (`kitsune_core::webm`, entrada em pedaços como os fragmentos DASH, busca por cluster, fuzzado),
+   **libvpx v1.15.2** só com o decodificador VP9 e **libopus 1.5.2** em ponto fixo (C, BSD-3-Clause, compilados como o
+   QuickJS), saída I420 → RGBA em inteiros (BT.601/709, escala) e PCM s16 estéreo 48 kHz com pre-skip e
+   `DiscardPadding` aplicados; `--md5`, `--pcm`, `--show` (toca numa janela) e um servidor de mensagens
+   (`mediadec --serve`, sobre as chamadas 56/57 do `jsrun --page`, sem chamadas novas) para o player. Provado: 90/90
+   quadros com MD5 **idêntico** ao libvpx do ffmpeg em 320x180, 640x360 e 1280x720, áudio com a contagem exata de
+   amostras e SNR 74,5 dB contra o ffmpeg, no hospedeiro e no QEMU (`w57-mediadec.sh`). Velocidade (SSE2 nas
+   transformadas, filtro de laço e convolução): 360p a ~46 fps e 720p a ~13 fps sob emulação TCG, ~1200 e ~330 fps
+   nativo (a meta era 360p a 30 fps nativo). Ver `docs/design/midia.md`. **Falta:** Media Source Extensions, `<video>`/`<audio>`, sincronia (e o som, etapa 5).
 5. **Som. Feito (2026-10).** Driver **AC'97** (`-device AC97`; o `run.ps1` liga com `-audiodev dsound`), por polling,
    ~128 ms à frente; **mixer** no kernel com até 16 fluxos (4 por processo), reamostragem linear de 8–96 kHz para 48 kHz,
    volume por fluxo e do sistema, mudo, soma com saturação e o **relógio "tocado"** de cada fluxo (o que o player de vídeo

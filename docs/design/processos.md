@@ -16,7 +16,7 @@ interface pequena de chamadas de sistema. É o primeiro passo da fase 3 de
 | Processos | `kernel/src/userproc.rs` | tabela de processos, `spawn_elf`, `kill`, `reap`, saída capturada (64 KiB) |
 | Escalonador | `kernel/src/sched.rs` | cada thread tem `cr3` e `rsp0`; a troca de contexto carrega os dois (`activate`); `spawn_user` reaproveita a vaga de uma thread de usuário já recolhida (16 vagas) |
 | Chamadas de sistema | `int 0x80` (gate DPL 3), `kernel/src/switch.s` | mesma máquina da troca de contexto: salva os registradores, o Rust devolve a pilha a retomar (a mesma, ou a de outra thread quando a chamada bloqueia ou encerra) |
-| SDK e programas | `user-apps/` | `kitsune-user` (chamadas, `print!`, `entry!`), `linker.ld` (uma página por tipo de memória) e os programas `hello`, `spin`, `crash`, `probe`, `kterm` e `jsrun` |
+| SDK e programas | `user-apps/` | `kitsune-user` (chamadas, `print!`, `entry!`), `linker.ld` (uma página por tipo de memória) e os programas `hello`, `spin`, `crash`, `probe`, `kterm`, `jsrun` e `mediadec` |
 | Terminal | `run PROGRAMA|ARQUIVO.elf` | inicia o programa, mostra o que ele escreve, devolve o status; Ctrl+C o encerra; `ps` e `kill` enxergam os processos (pids a partir de 5000) |
 
 ## Chamadas de sistema
@@ -31,7 +31,7 @@ interface pequena de chamadas de sistema. É o primeiro passo da fase 3 de
 | 3 | `getpid()` | |
 | 4 | `sleep_ms(ms)` | até um minuto, bloqueia a thread sem gastar tempo |
 | 5 | `uptime_ms()` | |
-| 6 | `brk(fim)` | cresce o heap (a partir de `0x1000_0000`, até 8 MiB; 64 MiB para o `jsrun` embutido) com páginas zeradas; devolve o fim do heap, inalterado se recusado |
+| 6 | `brk(fim)` | cresce o heap (a partir de `0x1000_0000`, até 8 MiB; 64 MiB para o `jsrun` e 128 MiB para o `mediadec` embutidos) com páginas zeradas; devolve o fim do heap, inalterado se recusado |
 | 7 | `time()` | segundos desde 1970 no relógio de parede, já no fuso escolhido |
 | 8 | `language()` | idioma da interface (0 português, 1 inglês) |
 | 9 | `unix_ms()` | milissegundos desde 1970 em **UTC** (corrigidos pelo SNTP quando há rede; o relógio local sem correção se não; 0 sem relógio). É o `Date.now()` do `jsrun`; `time()` menos ele dá o fuso |
@@ -54,7 +54,7 @@ interface pequena de chamadas de sistema. É o primeiro passo da fase 3 de
 | 52 | `spawn(req, len)` | inicia um filho (programa embutido ou imagem ELF, argumentos, pasta, entrada padrão; até 1 MiB; `pack_spawn`); devolve o pid. Age com a mesma `Cred` do pai |
 | 53 | `proc_poll(pid, ptr, cap)` | move até `cap` bytes da saída do filho e diz se ele ainda roda (`pack_poll`: bytes, estado, status) |
 | 54 | `proc_kill(pid)` | para um filho |
-| 56 | `page_recv(ptr, cap, timeout_ms)` | só o processo de script de uma página do Navegador (`spawn_page`): a próxima mensagem do navegador; devolve o tamanho, 0 se nada veio no prazo (0 só olha, `u64::MAX` espera sem limite), `E2BIG` se não cabe (a mensagem é descartada); os outros processos recebem `ENOSYS` |
+| 56 | `page_recv(ptr, cap, timeout_ms)` | só o processo de script de uma página do Navegador (`spawn_page`) ou o servidor de mídia (`spawn_media`, ver [midia.md](midia.md)): a próxima mensagem do navegador; devolve o tamanho, 0 se nada veio no prazo (0 só olha, `u64::MAX` espera sem limite), `E2BIG` se não cabe (a mensagem é descartada); os outros processos recebem `ENOSYS` |
 | 57 | `page_send(ptr, len)` | idem, uma mensagem para o navegador (até 4 MiB); `EAGAIN` com 8 MiB esperando |
 | 60 | `audio_open(taxa, canais, formato)` | abre um fluxo de som s16le, mono ou estéreo, de 8 a 96 kHz; devolve o id (`ENODEV` sem placa, `EMFILE` com 4 abertos) |
 | 61 | `audio_write(id, ptr, len)` | põe amostras na fila do fluxo (até 256 KiB); **não bloqueia**: devolve os bytes aceitos, `EAGAIN` com a fila cheia |
@@ -221,6 +221,18 @@ estão no [`tls-browser.md`](tls-browser.md) §12; prova no cenário `w52-browse
 
 **Ainda não.** `Intl` (datas e números localizados), módulos (`import`), `fetch`/`XMLHttpRequest`. Sem `test262`.
 Fora do modo página não há `setTimeout` nem DOM.
+
+## Mídia em anel 3 (`mediadec`)
+
+`run mediadec arquivo.webm` decodifica WebM (vídeo VP9, áudio Opus: o que o YouTube serve) num processo de anel 3,
+com o mesmo esquema do `jsrun`: C de terceiros vendorizado sem mudança (**libvpx v1.15.2**, só o decodificador VP9, e
+**libopus 1.5.2** em ponto fixo, ambos BSD-3-Clause) compilado pelo `build.rs` com clang freestanding e SSE2, sobre uma
+libc mínima própria (`csrc/libc`: `setjmp`/`longjmp` para o caminho de erro do libvpx, `qsort`, `snprintf`), o
+`malloc` do SDK e só inteiros e ponteiros na fronteira com o Rust. O demuxer é o `kitsune_core::webm`. Pilha de 1 MiB
+(`BIG_STACK`: o libopus põe seus buffers na pilha), heap de até 128 MiB (`BIG_HEAP`; um 720p usa ~40 MiB). Também é
+um **servidor de mensagens** para o player futuro (`mediadec --serve`, iniciado por `userproc::spawn_media`, sobre as
+mesmas chamadas 56/57 do `jsrun --page`, sem chamada nova). Projeto, protocolo, provas (MD5 de todos os quadros
+idêntico ao ffmpeg, no hospedeiro e no QEMU, cenário `w57-mediadec.sh`) e velocidade em [`midia.md`](midia.md).
 
 ## O que foi provado em QEMU (cenário W43)
 

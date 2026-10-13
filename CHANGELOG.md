@@ -28,6 +28,26 @@ O sistema tem som. Projeto em `docs/design/audio.md`.
   **0,500**; ≥ 99,95 % da energia na frequência certa em todos; relógio do fluxo contra o `uptime` com inclinação
   **0,998 e 1,017** (duas execuções, 6 leituras em ~1 s cada); nenhuma falha de buffer nem atraso do `audiod`; o cenário também fotografa Ajustes → Som. `w56-audio-nodev.sh`: sem placa, `tone` responde "não há dispositivo de som" e
   o sistema segue. **Não testado**: `dsound` no Windows (WHPX) e hardware real.
+## 2026-10 — Mídia: WebM com VP9 e Opus em anel 3 (etapa 4 do YouTube, decodificação)
+
+- **`run mediadec arquivo.webm`** decodifica o formato que o YouTube serve (VP9 itags 243/244/247, Opus 251) num
+  processo de anel 3: duração, trilhas, resolução, fps; `--md5` (por quadro, como o `ffmpeg -f framemd5`, e do áudio),
+  `--pcm`, `--rgb LxA`, `--frames N`, `--info` e `--show` (toca o vídeo numa janela).
+- **Contêiner:** `kitsune_core::webm`, demuxer EBML/Matroska incremental em Rust (bytes em pedaços como os fragmentos
+  DASH; segmentos e clusters de tamanho desconhecido; `SimpleBlock`/`BlockGroup` com `DiscardPadding`; `Cues` e busca
+  por cluster; `OpusHead`), com limites para entrada hostil, 14 testes e o alvo de fuzz `webm_demux`. `format::md5`.
+- **Decodificadores:** libvpx v1.15.2 (só o VP9) e Opus 1.5.2 em ponto fixo, BSD-3-Clause, vendorizados sem mudança
+  em `user-apps/mediadec/vendor` (~2,9 MB) e compilados como o QuickJS (clang freestanding, SSE2) sobre uma libc
+  mínima (`setjmp`/`longjmp`, `qsort`, `snprintf`). Transformadas e filtro de laço com os intrínsecos SSE2 do libvpx,
+  convolução de 8 taps em SSE2 própria (bit a bit igual ao C). Saída I420 → RGBA em inteiros (BT.601/709, escala) e
+  PCM s16 estéreo 48 kHz com pre-skip e `DiscardPadding` aplicados.
+- **Servidor de mensagens** para o player: `mediadec --serve` (`userproc::spawn_media`) sobre as chamadas 56/57 do
+  `jsrun --page`, **sem chamada nova**; protocolo em `docs/design/midia.md`.
+- Kernel: `mediadec` embutido, pilha de 1 MiB e heap de até 128 MiB.
+- **Provas:** 320x180, 640x360 e 1280x720 com **90/90 quadros de MD5 idêntico ao libvpx do ffmpeg**, no hospedeiro
+  (`tools/media/check-host.sh`, o mesmo C e o mesmo pipeline) e no QEMU (`w57-mediadec.sh`); áudio com a contagem exata
+  de amostras, SNR 74,5 dB contra o ffmpeg e os mesmos bytes no guest e no hospedeiro; arquivos cortado e corrompido sem
+  queda. Velocidade sob TCG: 360p 45,7 fps, 720p 13,0 fps; nativo ~1100–1300 e ~300–360 fps.
 
 ## 2026-10 — Navegador: CPU e congelamentos em páginas reais
 

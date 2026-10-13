@@ -110,6 +110,9 @@ const USER_CRATES: &[(&str, &[&str])] = &[
     // The JavaScript engine (`run jsrun script.js`): QuickJS and its small C library, built by the
     // crate's own build.rs with clang (`user-apps/jsrun`).
     ("jsrun", &["jsrun"]),
+    // WebM decoding (`run mediadec file.webm`, and the message server of a player): libvpx's VP9
+    // decoder and libopus in C, built by the crate's build.rs (`user-apps/mediadec`).
+    ("mediadec", &["mediadec"]),
 ];
 
 /// Build every crate of [`USER_CRATES`] for bare metal with the user linker script and write
@@ -158,8 +161,9 @@ fn build_user_programs(out: &Path) {
         }
         println!("cargo:rerun-if-changed=../user-apps/{krate}/src");
         println!("cargo:rerun-if-changed=../user-apps/{krate}/Cargo.toml");
-        // A crate with C inside (jsrun) has its own build script, C library and vendored sources.
-        for extra in ["build.rs", "libc", "vendor"] {
+        // A crate with C inside (jsrun, mediadec) has its own build script, C library and vendored
+        // sources.
+        for extra in ["build.rs", "libc", "vendor", "csrc", "csources.rs"] {
             if root.join(krate).join(extra).exists() {
                 println!("cargo:rerun-if-changed=../user-apps/{krate}/{extra}");
             }

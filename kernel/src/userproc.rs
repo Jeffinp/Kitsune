@@ -21,7 +21,7 @@
 //! | 48–51 | `win_open`, `win_present`, `win_event`, `win_title` | one window on the desktop, see `kitsune_userabi` and `crate::wasm::manager::native` | |
 //! | 32–42 | `open`, `close`, `read`, `write`, `seek`, `stat`, `readdir`, `mkdir`, `remove`, `rename`, `getargs` | files and arguments, see `kitsune_userabi` and [`crate::userfs`] | |
 //! | 52–54 | `spawn`, `proc_poll`, `proc_kill` | child processes | |
-//! | 56–57 | `page_recv`, `page_send` | only the script process of a browser page, see `page.rs` |
+//! | 56–57 | `page_recv`, `page_send` | only the script process of a browser page or a media server (`spawn_page`, `spawn_media`), see `page.rs` | |
 //! | 60–65 | `audio_open`, `audio_write`, `audio_status`, `audio_close`, `audio_ctl`, `audio_wait` | sound streams, see `audio.rs` and `crate::audio` | |
 //!
 //! Every pointer is translated through the process's own page tables before the kernel touches
@@ -53,6 +53,8 @@ mod syscall;
 use audio::*;
 use files::*;
 pub use host::*;
+#[allow(unused_imports)] // spawn_media: the caller (the browser's player) is the next step
+pub use page::spawn_media;
 use page::*;
 pub use page::{page_post, page_take, spawn_page};
 pub(crate) use queue::*;
@@ -64,8 +66,9 @@ const STACK_PAGES: u64 = 16;
 const HOST_STACK_PAGES: u64 = 256;
 /// Embedded programs that recurse deeply get a larger stack, in pages: the shell engine's parser and
 /// executor (512 KiB) and the JavaScript engine (4 MiB: QuickJS uses ~1 KiB of C stack per JavaScript
-/// call, so this allows ~3800 nested calls).
-const BIG_STACK: &[(&str, u64)] = &[("kterm", 128), ("jsrun", 1024)];
+/// call, so this allows ~3800 nested calls), and the media decoder (1 MiB: libopus keeps its scratch
+/// buffers on the stack as C99 arrays).
+const BIG_STACK: &[(&str, u64)] = &[("kterm", 128), ("jsrun", 1024), ("mediadec", 256)];
 /// The stack's top: the last page of the user range, with the guard page (unmapped) below the stack.
 const STACK_TOP: u64 = USER_END - PAGE_SIZE;
 /// What an ELF may occupy: the first gigabyte (so the small code model reaches everything).
@@ -77,8 +80,10 @@ const MAX_WRITE: usize = 4096;
 /// Where a process's heap starts, and the most it may grow to.
 const HEAP_BASE: u64 = 0x1000_0000;
 const MAX_HEAP: u64 = 8 * 1024 * 1024;
-/// Embedded programs allowed a larger heap: the JavaScript engine (scripts and their objects).
-const BIG_HEAP: &[(&str, u64)] = &[("jsrun", 64 * 1024 * 1024)];
+/// Embedded programs allowed a larger heap: the JavaScript engine (scripts and their objects) and the
+/// media decoder (VP9 keeps up to 8 reference pictures and a few in flight: ~10 MiB at 640x360, ~40
+/// MiB at 1280x720, more at 1920x1080, the largest it accepts). The heap only grows as it is used.
+const BIG_HEAP: &[(&str, u64)] = &[("jsrun", 64 * 1024 * 1024), ("mediadec", 128 * 1024 * 1024)];
 /// The most a WebAssembly host may use (guest memory included).
 const MAX_HOST_HEAP: u64 = 96 * 1024 * 1024;
 /// Most uncollected output kept per process.

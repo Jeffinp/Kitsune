@@ -216,7 +216,7 @@ a seguir, em ordem, com critério de aceite para cada item, está em [`docs/ROAD
 - **Drivers para hardware real**: placa de rede de PC (`e1000`, `rtl8139`), e o primeiro boot num computador
   físico com medição de quadro.
 - **Aceleração gráfica** por GPU, depois de enviar à tela só o que mudou.
-- **Isolamento por processo** (ring 3): programas ELF e apps WebAssembly v2 já rodam isolados (os ELF com arquivos, argumentos, pipe, janela, um Terminal próprio `kterm` e um motor de JavaScript `jsrun` com o QuickJS, que também roda o JavaScript das páginas do Navegador, um processo por aba, nos direitos de quem os iniciou); falta o desktop, os serviços e a rede para processos genéricos.
+- **Isolamento por processo** (ring 3): programas ELF e apps WebAssembly v2 já rodam isolados (os ELF com arquivos, argumentos, pipe, janela, um Terminal próprio `kterm` e um motor de JavaScript `jsrun` com o QuickJS, que também roda o JavaScript das páginas do Navegador, um processo por aba, e um decodificador de vídeo WebM `mediadec` com VP9 e Opus, nos direitos de quem os iniciou); falta o desktop, os serviços e a rede para processos genéricos.
 - **Reiniciar e limpar threads de serviço** que falham; *fuel* retomável para apps WebAssembly.
 - **HTTPS completo**: revogação, HSTS; no navegador, reuso de conexão (POST, `<select>`, `<textarea>`, GIF e JPEG, inclusive progressivo, já funcionam).
 

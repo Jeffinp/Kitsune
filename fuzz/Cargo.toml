@@ -172,3 +172,10 @@ path = "fuzz_targets/userabi.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "webm_demux"
+path = "fuzz_targets/webm_demux.rs"
+test = false
+doc = false
+bench = false

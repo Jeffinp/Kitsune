@@ -1,0 +1,20 @@
+# The host checker of `mediadec`: the same C (libvpx VP9, libopus fixed point, the colour
+# conversion) built with the host's clang, the same Rust pipeline (`#[path]` into
+# user-apps/mediadec) and the WebM demuxer of kitsune_core, compared with ffmpeg's references.
+# `cargo run --release --manifest-path tools/media/mediacheck/Cargo.toml -- FILE.webm ...`
+# (tools/media/check-host.sh runs it on the test files). See docs/design/midia.md.
+[package]
+name = "mediacheck"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+kitsune_core = { path = "../../../kitsune_core" }
+
+[profile.release]
+opt-level = 3
+debug = 1
+
+# Detached from the repository workspace.
+[workspace]
