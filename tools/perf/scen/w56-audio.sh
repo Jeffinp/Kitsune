@@ -11,7 +11,8 @@
 # volume; a tone with the stream clock printed (`--clock`); a beep. The verdict ($OUT/verdict.txt)
 # measures each sound in the capture (frequency by FFT, duration, level, purity, silence after it) with
 # tools/perf/audio-check.py, checks that the clock follows the system clock, and that no player
-# reported an underrun.
+# reported an underrun. The scenario quits QEMU itself before the verdict (QEMU writes the WAV header
+# on exit), so the picture is a-terminal.png, not screen.png.
 source "$(dirname "$0")/../lib.sh"
 count() { grep -ac -- "$1" "$OUT/serial.log" 2>/dev/null || true; }
 wait_n() { # wait_n PATTERN N SECONDS: until serial.log has N lines with the pattern
@@ -38,6 +39,13 @@ cmd "tone 330 1500 --clock";                  wait_n "$DONE" 8 60; sleep 1
 cmd "beep";                                   wait_n "$DONE" 9 60
 sleep 3
 shot a-terminal
+# QEMU completes the WAV (its header) only when it quits: quit now, wait for the monitor to go away.
+mon quit
+for ((i = 0; i < 40; i++)); do
+  echo "info status" | socat - "UNIX-CONNECT:${MON_SOCK:-$(cat "$OUT/mon.path")}" >/dev/null 2>&1 || break
+  sleep 0.5
+done
+sleep 1
 
 CAP=$(printf '%s\n' "${QEMU_EXTRA:-}" | sed -n 's/.*path=\([^, ]*\).*/\1/p')
 {

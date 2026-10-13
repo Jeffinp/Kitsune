@@ -191,7 +191,11 @@ fn clock_survives_gaps_and_late_streams() {
     m.write(1, id, &le(&[5; 300])).unwrap();
     mix_n(&mut m, 1_000); // 300 frames of the stream, then silence
     let st = m.status(1, id).unwrap();
-    assert_eq!((st.consumed, st.underruns), (300, 0), "ending is not an underrun");
+    assert_eq!(
+        (st.consumed, st.underruns),
+        (300, 0),
+        "ending is not an underrun"
+    );
     m.set_device_played(1_150);
     assert_eq!(m.status(1, id).unwrap().played, 150);
     m.set_device_played(1_600);

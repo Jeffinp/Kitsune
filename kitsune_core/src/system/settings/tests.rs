@@ -454,3 +454,36 @@ fn ad_block_is_on_by_default_and_round_trips() {
     assert!(Settings::parse(b"adblock=\n").ad_block);
     assert_eq!(Settings::parse(&Settings::new().to_text()), Settings::new());
 }
+
+#[test]
+fn volume_and_mute_round_trip() {
+    let d = Settings::new();
+    assert_eq!((d.volume, d.muted), (VOLUME_DEFAULT, false));
+    let text = String::from_utf8(d.to_text()).unwrap();
+    assert!(
+        !text.contains("volume") && !text.contains("mute"),
+        "defaults are not written"
+    );
+    let mut s = Settings::new();
+    s.volume = 35;
+    s.muted = true;
+    let text = s.to_text();
+    assert!(
+        String::from_utf8(text.clone())
+            .unwrap()
+            .contains("volume=35\nmute=1\n")
+    );
+    assert_eq!(Settings::parse(&text), s);
+    for bad in [
+        &b"volume=101\n"[..],
+        b"volume=-1\n",
+        b"volume=x\n",
+        b"volume=\n",
+    ] {
+        assert_eq!(Settings::parse(bad).volume, VOLUME_DEFAULT, "{bad:?}");
+    }
+    assert_eq!(Settings::parse(b"volume=0\n").volume, 0);
+    assert!(Settings::parse(b"mute=on\n").muted);
+    assert!(!Settings::parse(b"mute=1\nmute=0\n").muted);
+    assert!(!Settings::parse(b"mute=maybe\n").muted);
+}

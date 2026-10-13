@@ -22,6 +22,8 @@
 //! terminal_font=17
 //! editor_font=13
 //! adblock=1
+//! volume=80
+//! mute=1
 //! ```
 //!
 //! `language` is a tag of [`Lang`] (`pt-BR`, `en`; `pt` and `en-US` read the same). `clock` is `24`,
@@ -29,6 +31,9 @@
 //!
 //! `adblock` is the browser's ad and tracker blocker (`1`, the default, or `0`); the sites where the person
 //! turned it off are a separate list, `~/.shields` (`/home/<nome>/.shields`) (see `browsing::shields`).
+//!
+//! `volume` is the system (master) volume in percent and `mute` silences everything (`1`); both are written
+//! only when they differ from the default ([`VOLUME_DEFAULT`], not muted).
 //!
 //! `auto_lock` (minutes without input before the screen locks; 0 or absent = never; only for an account with a password).
 //! `terminal_font` and `editor_font` (text size in pixels, [`FONT_MIN`] to [`FONT_MAX`]) are written
@@ -57,6 +62,8 @@ pub use choices::*;
 pub use text::*;
 pub use timezones::*;
 
+/// The system volume of a fresh install, in percent (the mixer's unity gain).
+pub const VOLUME_DEFAULT: u8 = 100;
 /// Version written by [`Settings::to_text`].
 pub const VERSION: u32 = 1;
 /// Longest wallpaper file path (bytes).
@@ -109,6 +116,9 @@ pub struct Settings {
     pub auto_lock_min: u8,
     /// The browser blocks ads and trackers (a site can still turn it off for itself).
     pub ad_block: bool,
+    /// The system (master) volume, 0..=100 percent, and mute.
+    pub volume: u8,
+    pub muted: bool,
 }
 impl Default for Settings {
     /// The defaults: dynamic wallpaper, indigo accent, 24-hour clock, Brasilia time
@@ -139,6 +149,8 @@ impl Settings {
             editor_font: FONT_DEFAULT,
             auto_lock_min: 0,
             ad_block: true,
+            volume: VOLUME_DEFAULT,
+            muted: false,
         }
     }
 

@@ -45,6 +45,10 @@ pub enum Glyph {
     Shield,
     /// A shield crossed out: the ad blocker is off.
     ShieldOff,
+    /// A loudspeaker with two sound waves: sound.
+    Speaker,
+    /// A loudspeaker with a cross: muted.
+    SpeakerOff,
 }
 
 /// Draw `g` at `px` x `px` in straight ARGB colour `c`.
@@ -325,6 +329,27 @@ pub fn glyph(g: Glyph, px: usize, c: u32) -> Surface {
                 stroke(&mut s, &[(6, 8), (7, 9), (10, 6)], 1);
             } else {
                 stroke(&mut s, &[(4, 3), (12, 13)], 2);
+            }
+        }
+        Glyph::Speaker | Glyph::SpeakerOff => {
+            // The body and the cone, filled.
+            let mut body = Path::new();
+            body.move_to(u(2), u(6));
+            body.line_to(u(5), u(6));
+            body.line_to(u(9), u(3));
+            body.line_to(u(9), u(13));
+            body.line_to(u(5), u(10));
+            body.line_to(u(2), u(10));
+            body.close();
+            s.fill_path(&body, Paint::Solid(c));
+            if g == Glyph::Speaker {
+                let near = quad_points(pt(11, 6), pt(12, 8), pt(11, 10), 8);
+                s.fill_path(&stroke_path(&near, w(1) + 64, true), Paint::Solid(c));
+                let far = quad_points(pt(12, 4), pt(14, 8), pt(12, 12), 10);
+                s.fill_path(&stroke_path(&far, w(1) + 64, true), Paint::Solid(c));
+            } else {
+                stroke(&mut s, &[(11, 6), (14, 10)], 1);
+                stroke(&mut s, &[(14, 6), (11, 10)], 1);
             }
         }
         Glyph::Home => {

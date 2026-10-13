@@ -131,6 +131,16 @@ impl Settings {
                 b"0" | b"off" => self.ad_block = false,
                 _ => {}
             },
+            b"volume" => {
+                if let Some(n) = parse_u32(val).filter(|&n| n <= 100) {
+                    self.volume = n as u8;
+                }
+            }
+            b"mute" => match val {
+                b"1" | b"on" => self.muted = true,
+                b"0" | b"off" => self.muted = false,
+                _ => {}
+            },
             // `version` and anything unknown: nothing to do (forward compatible).
             _ => {}
         }
@@ -184,6 +194,12 @@ impl Settings {
         }
         if self.auto_lock_min != 0 {
             push_kv(&mut out, b"auto_lock", self.auto_lock_min as u32);
+        }
+        if self.volume != VOLUME_DEFAULT {
+            push_kv(&mut out, b"volume", self.volume as u32);
+        }
+        if self.muted {
+            push_kv(&mut out, b"mute", 1);
         }
 
         out

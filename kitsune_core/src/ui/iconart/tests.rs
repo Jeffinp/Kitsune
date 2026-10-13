@@ -170,6 +170,8 @@ fn glyphs_draw_ink_in_the_colour_asked() {
         Glyph::Home,
         Glyph::Shield,
         Glyph::ShieldOff,
+        Glyph::Speaker,
+        Glyph::SpeakerOff,
     ] {
         for px in [12usize, 16, 20] {
             let s = glyph(g, px, rgb(0xFF0000));
@@ -263,6 +265,8 @@ fn dump_icons() {
         Glyph::Home,
         Glyph::Shield,
         Glyph::ShieldOff,
+        Glyph::Speaker,
+        Glyph::SpeakerOff,
     ];
     for (i, g) in gl.iter().enumerate() {
         put(
