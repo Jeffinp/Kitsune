@@ -296,10 +296,10 @@ fn slab_classes_fit_every_small_request() {
 #[test]
 fn slab_classes_are_16_aligned_and_fill_a_slab() {
     for (c, &size) in SLAB_CLASSES.iter().enumerate() {
-        assert_eq!(size % 16, 0);
+        assert!(size.is_multiple_of(16));
         assert!(slab_blocks(c) >= 31, "class {c} holds {}", slab_blocks(c));
         assert!(SLAB_HEADER + slab_blocks(c) * size <= SLAB_SIZE);
     }
     assert!(SLAB_CLASSES.windows(2).all(|w| w[0] < w[1]));
-    assert!(SLAB_SIZE.is_power_of_two() && SLAB_HEADER % 16 == 0);
+    assert!(SLAB_SIZE.is_power_of_two() && SLAB_HEADER.is_multiple_of(16));
 }
