@@ -512,6 +512,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
                 clock_tick,
             },
         );
+        // A video picture in this frame reached the screen now.
+        desktop::note_present();
         if out.worked {
             trace::input_done(input_irq_tsc);
             if first_frame {

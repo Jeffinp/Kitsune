@@ -206,6 +206,7 @@ impl Desktop {
 }
 
 mod apps;
+pub(crate) use apps::browser::note_present;
 mod compositor;
 mod frame;
 mod input;

@@ -15,6 +15,7 @@
 //! run out (`waiting`).
 
 use super::clock::{AudioSink, Clock, frames_ns, ns_frames};
+use super::pacing::SmoothClock;
 use super::proto::Header;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -74,6 +75,8 @@ pub struct Player<F> {
     /// The device takes sound (else the sound is dropped and the system clock runs).
     audio_out: bool,
     clock: Clock,
+    /// The sound clock smoothed on the system's fine time (what the pictures follow).
+    smooth: SmoothClock,
     /// The media time last computed by [`Player::step`].
     position: i64,
     frames: VecDeque<Queued<F>>,
@@ -117,6 +120,7 @@ impl<F> Player<F> {
             flow,
             audio_out,
             clock: Clock::default(),
+            smooth: SmoothClock::default(),
             position: 0,
             frames: VecDeque::new(),
             shown: None,
@@ -174,6 +178,14 @@ impl<F> Player<F> {
 
     pub fn queued_frames(&self) -> usize {
         self.frames.len()
+    }
+
+    /// How long until the next queued picture is due (ns, 0 = now), while the clock runs.
+    pub fn next_due_ns(&self) -> Option<i64> {
+        if !self.st.running() {
+            return None;
+        }
+        self.frames.front().map(|q| (q.pts - self.position).max(0))
     }
 
     /// Does the clock follow the sound?
@@ -332,7 +344,15 @@ impl<F> Player<F> {
 
     /// Feed the sound, move the clock, pick the picture, update the state. `sink` is the device
     /// stream (`None` without sound). Returns whether the picture on screen changed.
-    pub fn step(&mut self, now_ms: u64, mut sink: Option<&mut dyn AudioSink>) -> bool {
+    pub fn step(&mut self, now_ms: u64, sink: Option<&mut dyn AudioSink>) -> bool {
+        self.step_us(now_ms.saturating_mul(1000), sink)
+    }
+
+    /// [`Player::step`] with the system time in µs: with sound, the pictures follow the sound
+    /// clock smoothed on it ([`SmoothClock`]), so they come out evenly spaced between the device's
+    /// position reports.
+    pub fn step_us(&mut self, now_us: u64, mut sink: Option<&mut dyn AudioSink>) -> bool {
+        let now_ms = now_us / 1000;
         let sound = self.sound() && sink.is_some();
         if let Some(s) = sink.as_deref_mut() {
             self.sync_sink(s);
@@ -343,7 +363,13 @@ impl<F> Player<F> {
         let played = sink.as_deref().map_or(0, |s| s.played());
         let ahead = self.audio_ahead(sink.as_deref());
         self.sync_clock(sound, now_ms, played);
-        let t = self.clock.now(now_ms, played);
+        let coarse = self.clock.now(now_ms, played);
+        let t = if self.clock.on_audio() && self.st.running() && self.st.seeking.is_none() {
+            self.smooth.now(coarse, now_us)
+        } else {
+            self.smooth.reset();
+            coarse
+        };
         let changed = self.pick(t);
         if self.st.seeking.is_none() {
             self.position = t;

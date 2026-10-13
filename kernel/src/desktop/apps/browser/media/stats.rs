@@ -5,6 +5,7 @@
 //! as it goes.
 
 use super::*;
+use kitsune_core::media::pacing::Spread;
 use kitsune_core::media::player::Event;
 
 /// The longest stretch in one line.
@@ -22,6 +23,7 @@ pub(super) struct Mark {
 
 impl MediaPlayer {
     fn start_mark(&mut self) {
+        self.pace.window.clear();
         self.mark = Some(Mark {
             ticks: crate::interrupts::ticks(),
             busy: crate::sched::busy_ticks(),
@@ -56,7 +58,13 @@ impl MediaPlayer {
                         self.player.position() / 1_000_000
                     );
                 }
-                Event::Pause | Event::Ended | Event::Waiting => {
+                Event::Seeking | Event::Pause => {
+                    self.pace.reset();
+                    if *e == Event::Pause {
+                        self.report(e.name());
+                    }
+                }
+                Event::Ended | Event::Waiting => {
                     self.report(e.name());
                     if *e == Event::Ended {
                         crate::klog!(Info, "media: element {} ended", self.uid);
@@ -101,10 +109,13 @@ impl MediaPlayer {
         let dropped = self.player.dropped.saturating_sub(m.dropped);
         let dec_dropped = self.dec_dropped.saturating_sub(m.dec_dropped);
         let media_ms = (self.player.position() - m.position).max(0) / 1_000_000;
+        let iv = Spread::of(&mut self.pace.window);
+        self.pace.window.clear();
         crate::klog!(
             Info,
             "media: element {} played {} ms of media in {} ms ({}): {} pictures shown ({} fps), {} dropped ({} by the decoder); \
-             CPU decoder {}%, compositor {}%, page {}%, all {}%; clock {} ({})",
+             CPU decoder {}%, compositor {}%, page {}%, all {}%; clock {} ({}); \
+             on screen every {}.{} ms (sd {}.{}, p95 {}, max {})",
             self.uid,
             media_ms,
             ms,
@@ -125,7 +136,13 @@ impl MediaPlayer {
             (media_ms as u64 * 1000)
                 .checked_div(ms)
                 .unwrap_or(0)
-                .min(9999)
+                .min(9999),
+            iv.mean / 1000,
+            iv.mean % 1000 / 100,
+            iv.sd / 1000,
+            iv.sd % 1000 / 100,
+            iv.p95 / 1000,
+            iv.max / 1000
         );
     }
 }

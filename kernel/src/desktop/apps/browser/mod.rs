@@ -40,6 +40,7 @@ mod state;
 mod tabs;
 mod ui;
 
+pub(crate) use media::note_present;
 pub(crate) use model::SecurityTone;
 pub(crate) use paint::PaintCache;
 pub(crate) use state::*;

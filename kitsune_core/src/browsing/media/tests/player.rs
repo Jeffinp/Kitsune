@@ -1,4 +1,5 @@
 use crate::browsing::media::clock::{AudioSink, Clock, frames_ns, ns_frames};
+use crate::browsing::media::pacing::MAX_LEAD_NS;
 use crate::browsing::media::player::*;
 use crate::browsing::media::proto::Header;
 use alloc::vec;
@@ -7,7 +8,7 @@ use alloc::vec::Vec;
 const MS: i64 = 1_000_000;
 
 /// A sound device stream: a queue of `cap` frames, played `latency` frames after being consumed.
-struct Sink {
+pub(super) struct Sink {
     queued: u64,
     cap: u64,
     consumed: u64,
@@ -20,7 +21,7 @@ struct Sink {
 }
 
 impl Sink {
-    fn new() -> Sink {
+    pub(super) fn new() -> Sink {
         Sink {
             queued: 0,
             cap: 48_000,
@@ -34,7 +35,7 @@ impl Sink {
     }
 
     /// The device runs for `frames` frames.
-    fn run(&mut self, frames: u64) {
+    pub(super) fn run(&mut self, frames: u64) {
         if !self.paused {
             let k = frames.min(self.queued);
             self.queued -= k;
@@ -74,7 +75,7 @@ impl AudioSink for Sink {
     }
 }
 
-fn header(video: bool, audio: bool) -> Header {
+pub(super) fn header(video: bool, audio: bool) -> Header {
     Header {
         duration_ns: 3_000_000_000,
         width: 640,
@@ -101,7 +102,7 @@ fn names(p: &mut Player<u32>) -> Vec<&'static str> {
 }
 
 /// Video 30 fps frames numbered by their index, and 20 ms sound packets, for `ms` from `from_ms`.
-fn feed(p: &mut Player<u32>, from_ms: i64, ms: i64) {
+pub(super) fn feed(p: &mut Player<u32>, from_ms: i64, ms: i64) {
     let mut t = from_ms;
     let mut next_frame = (from_ms * 30 + 999) / 1000;
     while t < from_ms + ms {
@@ -154,11 +155,12 @@ fn the_picture_follows_the_sound_clock() {
     p.step(10, Some(&mut s));
     assert_eq!(p.position(), 100 * MS);
     assert_eq!(p.shown(), Some(&3));
-    // The device is late by 200 ms: the clock is what was heard, not what was written.
+    // The device is late by 200 ms: the clock is what was heard, not what was written (the smooth
+    // clock the pictures follow may run on at most `MAX_LEAD_NS` past the last report).
     s.latency = 9600;
     s.run(9600);
     p.step(20, Some(&mut s));
-    assert_eq!(p.position(), 100 * MS);
+    assert!(p.position() >= 100 * MS && p.position() <= 100 * MS + MAX_LEAD_NS);
     assert_eq!(p.shown(), Some(&3));
     // Then the picture jumps ahead and the late ones are dropped.
     s.latency = 0;

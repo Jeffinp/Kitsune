@@ -22,11 +22,13 @@ use kitsune_core::media::wire::{self, Command, Control};
 
 mod controls;
 mod direct;
+mod pace;
 mod paint;
 mod priority;
 mod speed;
 mod stats;
 pub(crate) use direct::NetCtx;
+pub(crate) use pace::note_present;
 pub(crate) use paint::video_covers;
 pub(crate) use speed::{pump_speed, tell_budget};
 
@@ -87,6 +89,8 @@ pub(crate) struct MediaPlayer {
     dec_dropped: u32,
     /// What each source holds (the decoder's last answer), for `priority.rs`.
     ranges: Vec<Vec<(i64, i64)>>,
+    /// When its pictures reached the screen (`pace.rs`).
+    pace: pace::Pace,
 }
 
 impl Drop for MediaPlayer {
@@ -314,6 +318,7 @@ impl MediaSet {
             direct: None,
             ranges: Vec::new(),
             dec_dropped: 0,
+            pace: pace::Pace::default(),
         };
         p.post(proto::msg(
             proto::IN_FLOW,
@@ -363,6 +368,7 @@ impl MediaSet {
             alive
         });
         for p in &mut self.players {
+            p.pace.collect();
             p.flush_backlog();
             p.pump_direct(net);
             for _ in 0..MAX_TAKE {
@@ -378,6 +384,9 @@ impl MediaSet {
                 .player
                 .step(now, sink.as_mut().map(|s| s as &mut dyn AudioSink));
             out.redraw |= changed;
+            if changed && let Some(pts) = p.player.shown_pts() {
+                p.pace.picked(pts, p.player.position(), pace::now_us());
+            }
             // A seek (the page's, the controls', play() after the end, `loop`) goes to the decoder.
             if let Some((epoch, t)) = p.player.take_seek() {
                 p.post(proto::msg(
@@ -414,6 +423,7 @@ impl MediaSet {
                         p.backlog.len()
                     );
                 }
+                p.log_frames();
                 p.window();
             }
             // The picture size: the element's box, the video's shape kept.

@@ -14,12 +14,14 @@
 //! * [`clock`] the player's clock and the sound device as the player sees it ([`clock::AudioSink`])
 //! * [`player`] the player and the page-visible state machine with its events
 //! * [`wire`] the messages between the page's script and the browser
+//! * [`pacing`] when the pictures reach the screen (a smooth clock) and how evenly (statistics)
 //! * [`controls`] where the browser-drawn controls sit and what a click on them means
 //!
 //! See `docs/design/midia.md` and `docs/design/tls-browser.md` §14.
 
 pub mod clock;
 pub mod controls;
+pub mod pacing;
 pub mod player;
 pub mod proto;
 pub mod ranges;
