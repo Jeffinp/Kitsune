@@ -33,6 +33,8 @@ pub extern "C" fn worker() -> ! {
             };
             // SAFETY: as for REQ_URL above (written with it, before REQUESTED).
             let body = unsafe { (*REQ_BODY.get()).take() };
+            // SAFETY: as for REQ_BODY (written with the URL, before REQUESTED).
+            let referer = unsafe { (*REQ_REFERER.get()).take() };
             let kind = REQ_KIND.load(Ordering::Relaxed);
             let fit_w = REQ_FIT_W.load(Ordering::Relaxed);
             let app = WHO.load(Ordering::Acquire) != WHO_BROWSER;
@@ -81,7 +83,10 @@ pub extern "C" fn worker() -> ! {
                                 &insecure,
                                 MAX_RESPONSE_BYTES,
                                 None,
-                                body.as_deref(),
+                                Nav {
+                                    body: body.as_deref(),
+                                    referer: referer.as_deref(),
+                                },
                                 cookies::Use::Navigation,
                             ),
                             (true, Some(p)) => fetch_url(
@@ -90,7 +95,7 @@ pub extern "C" fn worker() -> ! {
                                 &[],
                                 MAX_RESPONSE_BYTES,
                                 Some(p),
-                                None,
+                                Nav::default(),
                                 cookies::Use::None,
                             ),
                             // An app request without a policy cannot happen; refuse rather than guess.

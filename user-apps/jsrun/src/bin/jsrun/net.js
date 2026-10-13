@@ -532,6 +532,10 @@
       this.mode = init.mode || (from ? from.mode : 'cors');
       this.credentials = init.credentials || (from ? from.credentials : 'same-origin');
       this.redirect = init.redirect || (from ? from.redirect : 'follow');
+      // Only the modes of the standard (the browser also knows `script`, for loadScript alone).
+      if (!['cors', 'no-cors', 'same-origin', 'navigate'].includes(this.mode)) throw new TypeError("Failed to construct 'Request': invalid mode '" + this.mode + "'");
+      if (!['omit', 'same-origin', 'include'].includes(this.credentials)) throw new TypeError("Failed to construct 'Request': invalid credentials '" + this.credentials + "'");
+      if (!['follow', 'error', 'manual'].includes(this.redirect)) throw new TypeError("Failed to construct 'Request': invalid redirect '" + this.redirect + "'");
       this.cache = init.cache || (from ? from.cache : 'default');
       this.referrer = 'about:client';
       this.referrerPolicy = init.referrerPolicy || '';
@@ -991,6 +995,30 @@
       ? String.fromCharCode(c) : c === 0x20 ? '+' : '%' + c.toString(16).toUpperCase().padStart(2, '0')), '');
   USP.toString = function () { return this._list.map(([k, v]) => formEncode(k) + '=' + formEncode(v)).join('&'); };
   USP.sort = function () { this._list.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)); };
+
+  // A `<script src>` a script added (scripts.js): mode `script` is the browser's "no-cors, but hand
+  // over a JavaScript answer" (kitsune_core::cors: only a JavaScript Content-Type is delivered), with
+  // the cookies of the site. The text goes to `done(code)` (null on failure), never to the page.
+  function loadScript(url, cors, done) {
+    const parts = [];
+    let ok = false;
+    startRequest({ method: 'GET', url, mode: cors ? 'cors' : 'script', credentials: cors === 'use-credentials' || !cors ? 'include' : 'same-origin',
+      redirect: 'follow', headers: [], _raw: null }, {
+      head(m) { ok = m.status >= 200 && m.status < 300; },
+      data(buffer) { if (ok) parts.push(new Uint8Array(buffer)); },
+      end() {
+        if (!ok) { done(null); return; }
+        let n = 0;
+        for (const p of parts) n += p.length;
+        const all = new Uint8Array(n);
+        n = 0;
+        for (const p of parts) { all.set(p, n); n += p.length; }
+        done(utf8Decode(all, false, false)[0]);
+      },
+      error() { done(null); },
+    });
+  }
+  kjs.net = { loadScript };
 
   for (const [k, v] of Object.entries({
     fetch, Headers, Request, Response, ReadableStream, ReadableStreamDefaultController, AbortController,

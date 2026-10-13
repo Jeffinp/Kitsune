@@ -27,6 +27,41 @@ pub enum Mode {
     Cors,
     NoCors,
     SameOrigin,
+    /// A `<script src>` a page's script inserted, loaded by the page process itself (`fetch` never
+    /// makes one): like `no-cors` (no CORS check, simple requests only), but the body of a
+    /// JavaScript answer ([`is_javascript_type`]) is handed over so the process can run it, never to
+    /// the page's code. Any other answer from another origin is refused (what browsers do for
+    /// scripts with Opaque Response Blocking: HTML, JSON or images are not readable this way).
+    Script,
+}
+
+/// Is `content_type` (a `Content-Type` value) a JavaScript MIME type? (The essence before any `;`,
+/// case-insensitive, from the HTML standard's list.)
+pub fn is_javascript_type(content_type: &[u8]) -> bool {
+    let essence = content_type
+        .split(|&b| b == b';')
+        .next()
+        .unwrap_or(b"")
+        .trim_ascii();
+    const TYPES: [&[u8]; 16] = [
+        b"application/ecmascript",
+        b"application/javascript",
+        b"application/x-ecmascript",
+        b"application/x-javascript",
+        b"text/ecmascript",
+        b"text/javascript",
+        b"text/javascript1.0",
+        b"text/javascript1.1",
+        b"text/javascript1.2",
+        b"text/javascript1.3",
+        b"text/javascript1.4",
+        b"text/javascript1.5",
+        b"text/jscript",
+        b"text/livescript",
+        b"text/x-ecmascript",
+        b"text/x-javascript",
+    ];
+    TYPES.iter().any(|t| essence.eq_ignore_ascii_case(t))
 }
 
 /// A request's credentials mode (`fetch(url, { credentials })`).

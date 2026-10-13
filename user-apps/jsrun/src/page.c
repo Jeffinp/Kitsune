@@ -12,7 +12,10 @@
  *
  * A task that runs longer than TASK_MS is interrupted (QuickJS's interrupt handler: an uncatchable
  * error), reported, and the timer that started it is cancelled; the process and the page go on. The
- * process is preempted like any other, so even a stuck task never stalls the desktop.
+ * process is preempted like any other, so even a stuck task never stalls the desktop. Loading a script
+ * (compiling it and running its top level) gets LOAD_MS instead: QuickJS compiles every function of a
+ * file up front, and a big bundle (YouTube's player, 1.9 MB) takes ~0.5 s native, ~10 s under QEMU
+ * without KVM. The interrupt handler stays the same, so a script stuck in a loop still stops.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -28,12 +31,16 @@ extern long kjs_getrandom(void *buf, size_t len);
 
 #define MAX_MSG (4u * 1024 * 1024) /* kitsune_userabi::MAX_PAGE_MSG */
 #define TASK_MS 3000               /* the longest one task may run */
+#define LOAD_MS 60000              /* the longest one script may take to load (compile + top level) */
 #define BATCH_MS 40                /* tasks run back to back before the document is sent */
 #define ENOSYS_ (-38)
 #define EAGAIN_ (-11)
 #define DATA_TAG 1     /* a binary message: body bytes of a network answer */
 #define DRAIN_MAX 64   /* messages taken back to back before the tasks run */
 #define DRAIN_MS 20
+#ifndef SLOW_SCRIPT_MS
+#define SLOW_SCRIPT_MS 250 /* a script that runs this long is logged */
+#endif
 
 static uint64_t deadline;
 static int stopped;
@@ -134,9 +141,10 @@ static JSValue js_random(JSContext *ctx, JSValueConst this_val, int argc, JSValu
     return v;
 }
 
-/* __kjs_native.evalScript(code, name): run a page script as global code. An error it throws is
+/* __kjs_native.evalScript(code, name, load): run a page script as global code. An error it throws is
    reported here (the page goes on, as in a browser) and the result is false; a task stopped for
-   running too long is passed on to the loop. */
+   running too long is passed on to the loop. `load` (a script of the page loading, not a timer's
+   string) gives it LOAD_MS from now; the task's own budget comes back after it. */
 static JSValue js_eval_script(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     (void)this_val;
@@ -147,7 +155,19 @@ static JSValue js_eval_script(JSContext *ctx, JSValueConst this_val, int argc, J
     if (!code)
         return JS_EXCEPTION;
     const char *name = JS_ToCString(ctx, argv[1]);
+    uint64_t t0 = kjs_uptime_ms();
+    uint64_t saved = deadline;
+    int load = argc > 2 && JS_ToBool(ctx, argv[2]) > 0;
+    if (load && t0 + LOAD_MS > deadline)
+        deadline = t0 + LOAD_MS;
     JSValue r = JS_Eval(ctx, code, n, name ? name : "<script>", JS_EVAL_TYPE_GLOBAL);
+    uint64_t took = kjs_uptime_ms() - t0;
+    if (load && !stopped)
+        deadline = saved > kjs_uptime_ms() ? saved : kjs_uptime_ms() + TASK_MS / 10;
+    /* A slow script is worth a line in the log (a page's big bundles: parse and first run). */
+    if (took >= SLOW_SCRIPT_MS)
+        fprintf(stderr, "jsrun: %.120s (%zu bytes) ran in %llu ms\n", name ? name : "<script>", n,
+                (unsigned long long)took);
     JS_FreeCString(ctx, code);
     if (name)
         JS_FreeCString(ctx, name);
@@ -163,7 +183,7 @@ static JSValue js_eval_script(JSContext *ctx, JSValueConst this_val, int argc, J
 
 static const JSCFunctionListEntry native_funcs[] = {
     JS_CFUNC_DEF("send", 1, js_send),
-    JS_CFUNC_DEF("evalScript", 2, js_eval_script),
+    JS_CFUNC_DEF("evalScript", 3, js_eval_script),
     JS_CFUNC_DEF("sendBytes", 2, js_send_bytes),
     JS_CFUNC_DEF("random", 1, js_random),
 };

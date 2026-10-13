@@ -2,6 +2,14 @@
 
 use super::*;
 
+/// What a navigation sends besides the address: the form data of a POST and the `Referer` (the
+/// page a link or a form was on). Empty for everything else.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Nav<'a> {
+    pub body: Option<&'a [u8]>,
+    pub referer: Option<&'a str>,
+}
+
 /// Resolve a URL and fetch it (HTTP or HTTPS), following up to
 /// [`kitsune_core::redirect::MAX_REDIRECTS`] redirects. Returns the final page,
 /// or why the navigation failed. Redirect policy (scheme kept, https -> http
@@ -12,7 +20,7 @@ pub(super) fn fetch_url(
     insecure_host: &[u8],
     cap: usize,
     app: Option<&AppPolicy>,
-    body: Option<&[u8]>,
+    nav: Nav,
     jar: cookies::Use,
 ) -> FetchResult {
     use kitsune_core::browser::{append_capped, header_value, parse_url, status_code};
@@ -20,7 +28,7 @@ pub(super) fn fetch_url(
     let mut cur: Vec<u8> = url.to_vec();
     let mut chain: Option<Redirects> = None;
     // The form data of a POST: kept through 307/308, dropped (the next hop is a GET) otherwise.
-    let mut body = body;
+    let mut body = nav.body;
 
     loop {
         // An app's request, and each redirect hop it is sent on to, passes the same gate:
@@ -77,6 +85,12 @@ pub(super) fn fetch_url(
         }
         if !cookie.is_empty() {
             headers.push(("Cookie", &cookie));
+        }
+        // The page a link or a form was on (never sent from https to http, redirects included).
+        if let Some(r) = nav.referer
+            && !(r.starts_with("https:") && !u.https)
+        {
+            headers.push(("Referer", r));
         }
         let mut data = Vec::new();
         let mut truncated = false;
@@ -175,7 +189,7 @@ pub(super) fn fetch_sheet(
         insecure_host,
         cap,
         None,
-        None,
+        Nav::default(),
         cookies::Use::Subresource,
     )
     .ok()?;
@@ -190,7 +204,18 @@ pub(super) fn fetch_sheet(
         serial_println!("js: {} is larger than {} bytes", name, cap);
         return None;
     }
-    let body = kitsune_core::browser::page_body_partial(&r.data, r.truncated).body;
+    let body = if kind == KIND_SCRIPT {
+        // A script that does not decode is not run (no explanatory page in its place).
+        match kitsune_core::browser::body_bytes(&r.data) {
+            Ok(b) => b,
+            Err(e) => {
+                serial_println!("js: {} could not be decoded ({:?})", name, e);
+                return None;
+            }
+        }
+    } else {
+        kitsune_core::browser::page_body_partial(&r.data, r.truncated).body
+    };
     serial_println!("{}: {} -> {} bytes", what, name, body.len());
     Some(body)
 }
@@ -207,7 +232,7 @@ pub(super) fn fetch_image(
         insecure_host,
         imgcache::MAX_IMAGE_BYTES + 8 * 1024,
         None,
-        None,
+        Nav::default(),
         cookies::Use::Subresource,
     ) {
         Ok(r) => r,

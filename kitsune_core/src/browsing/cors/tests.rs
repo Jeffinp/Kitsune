@@ -192,3 +192,27 @@ fn credentials_modes() {
     assert!(!Credentials::SameOrigin.send(false));
     assert!(Credentials::Include.send(false));
 }
+
+#[test]
+fn javascript_types_for_inserted_scripts() {
+    for ok in [
+        &b"text/javascript"[..],
+        b"application/javascript; charset=utf-8",
+        b" Text/JavaScript ",
+        b"application/x-javascript",
+        b"text/ecmascript",
+    ] {
+        assert!(is_javascript_type(ok), "{:?}", ok);
+    }
+    for no in [
+        &b""[..],
+        b"text/html",
+        b"application/json",
+        b"text/plain",
+        b"image/png",
+        b"application/javascriptx",
+        b"text/javascript-x",
+    ] {
+        assert!(!is_javascript_type(no), "{:?}", no);
+    }
+}

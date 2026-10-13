@@ -11,6 +11,7 @@ impl Browser {
             status: Status::Idle,
             pending: false,
             post: None,
+            referrer: None,
             nav: [0; URL_CAP],
             nav_len: 0,
             home: true,
@@ -69,8 +70,11 @@ impl Browser {
             return;
         }
         let nav = self.nav[..self.nav_len].to_vec();
+        // The page is asked for as it was: with the same `Referer` (as browsers do on a reload).
+        let from = self.referrer.take();
         self.set_url(&nav);
         self.submit();
+        self.referrer = from;
     }
 
     /// "Tentar novamente" on an error page: the same navigation again.

@@ -27,14 +27,15 @@ fn captures_style_css_and_skips_script() {
     let (nodes, css) =
         parse_html(b"<style>p { color: red; }</style><script>var x=1<2;</script><p>hi</p>");
     assert!(css.contains("color: red"));
-    // Only the <p> survives as an element (script/style produce no nodes).
-    assert_eq!(
-        nodes
-            .iter()
-            .filter(|n| matches!(n, Node::Element(_)))
-            .count(),
-        1
-    );
+    // <style> produces no node; <script> stays as an empty element (scripts look themselves up).
+    let tags: Vec<(&str, usize)> = nodes
+        .iter()
+        .filter_map(|n| match n {
+            Node::Element(e) => Some((e.tag.as_str(), e.children.len())),
+            Node::Text(_) => None,
+        })
+        .collect();
+    assert_eq!(tags, [("script", 0), ("p", 1)]);
 }
 
 #[test]

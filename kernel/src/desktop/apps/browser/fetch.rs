@@ -175,6 +175,15 @@ impl Desktop {
         t.browser.post_body().map(<[u8]>::to_vec)
     }
 
+    /// The `Referer` of the navigation just taken (a link or a form of the page it came from).
+    pub fn browser_referer(&mut self) -> Option<alloc::string::String> {
+        let id = self.browser_id()?;
+        let b = self.browser_state_mut(id)?;
+        let tid = b.req_tab?;
+        let (_, t) = b.tab_by_id(tid)?;
+        t.browser.referrer().map(alloc::string::String::from)
+    }
+
     /// Show a fetched raw HTTP response in the tab that asked for it. `conn` says how the
     /// final connection was authenticated, `truncated` that the response hit the size cap and
     /// `cert` summarises the server certificate (https only). Dropped when the tab was closed

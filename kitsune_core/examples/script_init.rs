@@ -1,4 +1,5 @@
-//! Print the `init` message the browser would send to the script process for a page:
+//! Print the `init` message the browser would send to the script process for a page (the scripts
+//! follow it in messages of their own, not printed):
 //! `script_init PAGE.html URL [NAME=FILE.js ...]` (the external scripts, by the name the page uses).
 //! For trying the page mode of `jsrun` on the host; see docs/design/tls-browser.md (§12).
 use kitsune_core::web::Doc;
@@ -28,10 +29,11 @@ fn main() {
             url,
             lang: "pt-BR",
             cookie: "",
+            referrer: "",
             width: 800,
             height: 600,
         },
-        &scripts,
+        scripts.len(),
     );
     std::io::stdout().write_all(&m).unwrap();
 }

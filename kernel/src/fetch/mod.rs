@@ -101,6 +101,8 @@ static REQ_URL: RacyCell<[u8; URL_CAP]> = RacyCell::new([0; URL_CAP]);
 static REQ_LEN: RacyCell<usize> = RacyCell::new(0);
 /// Body of the page request when it is a POST (written with the URL).
 static REQ_BODY: RacyCell<Option<Vec<u8>>> = RacyCell::new(None);
+/// `Referer` of the page request (a link or a form of the page shown; written with the URL).
+static REQ_REFERER: RacyCell<Option<String>> = RacyCell::new(None);
 /// Host the user explicitly allowed past a certificate error (empty = none). It
 /// applies to that host only, on every hop of the navigation.
 static REQ_INSECURE: RacyCell<[u8; INSECURE_CAP]> = RacyCell::new([0; INSECURE_CAP]);
@@ -115,8 +117,11 @@ const KIND_IMAGE: u8 = 1;
 const KIND_SHEET: u8 = 2;
 /// One script of a page (the body comes back as bytes, in the same slot as a sheet's).
 const KIND_SCRIPT: u8 = 3;
-/// Largest script taken (bytes, headers included).
-const SCRIPT_CAP: usize = MAX_RESPONSE_BYTES;
+/// Largest script taken (bytes as they arrive, headers included; compressed ones are decoded up to
+/// `kitsune_core::format::gzip::MAX_DECODED_BYTES`, 4 MiB). Big apps ship bundles of megabytes:
+/// YouTube's player is 1.9 MB (~0.5 MB gzipped); one script also has to fit in one message to the
+/// script process (4 MiB, `kitsune_core::web::script::MAX_ONE_SCRIPT`).
+const SCRIPT_CAP: usize = 4 * 1024 * 1024;
 /// Column width the downloaded picture is scaled to (image requests).
 static REQ_FIT_W: AtomicUsize = AtomicUsize::new(0);
 /// Outcome of the last image request (decoded on the fetcher thread, so the UI never waits).

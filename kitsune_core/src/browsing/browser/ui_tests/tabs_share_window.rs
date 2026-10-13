@@ -107,7 +107,7 @@ fn the_request_asks_for_the_language_of_the_interface() {
     assert!(pt.contains("\r\nAccept-Language: pt-BR,pt;q=0.9,en;q=0.8\r\n"));
     assert!(pt.ends_with("Connection: close\r\n\r\n"));
     assert!(pt.contains(concat!(
-        "\r\nUser-Agent: Kitsune/",
+        "\r\nUser-Agent: Mozilla/5.0 (X11; Kitsune x86_64) Kitsune/",
         env!("CARGO_PKG_VERSION"),
         "\r\n"
     )));

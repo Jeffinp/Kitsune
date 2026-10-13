@@ -116,6 +116,8 @@ impl Browser {
         }
         self.sugg_sel = None;
         self.sugg_dismissed = true;
+        // Only a link or a form of the page sets one again (`open_link`, `open_post`, after this).
+        self.referrer = None;
         if is_internal_input(input.trim_ascii()) {
             let url = input.trim_ascii().to_vec();
             self.open_internal(&url);

@@ -35,11 +35,8 @@ pub use storage::*;
 pub use wire::*;
 pub use worker::*;
 
-/// What scripts see as `navigator.userAgent`.
-pub const USER_AGENT: &str = concat!(
-    "Mozilla/5.0 (X11; Kitsune x86_64) Kitsune/",
-    env!("CARGO_PKG_VERSION")
-);
+/// What scripts see as `navigator.userAgent` (the `User-Agent` of every request, too).
+pub const USER_AGENT: &str = crate::browsing::http1::HTTP_USER_AGENT;
 
 #[cfg(test)]
 mod tests;

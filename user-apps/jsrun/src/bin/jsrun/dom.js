@@ -494,6 +494,7 @@
     _shallow() {
       const c = createElement(this.localName);
       for (const [k, v] of this._attrs) c._attrs.set(k, v);
+      if (this._kjsStarted) c._kjsStarted = true;
       return c;
     }
     getAttribute(n) { const v = this._attrs.get(String(n).toLowerCase()); return v === undefined ? null : v; }
@@ -910,6 +911,8 @@
         while (j < n && /[-a-zA-Z0-9_:]/.test(html[j])) j++;
         const name = html.slice(i + 1, j).toLowerCase();
         const el = createElement(name);
+        // A script made by the parser (innerHTML) never runs (scripts.js runs the inserted ones).
+        if (name === 'script') el._kjsStarted = true;
         let selfClose = false;
         for (;;) {
           while (j < n && /\s/.test(html[j])) j++;
@@ -1309,6 +1312,7 @@
       const [tag, uid, attrs, kids] = item;
       const el = createElement(tag, uid);
       for (const k of Object.keys(attrs)) el._attrs.set(k, String(attrs[k]));
+      if (tag === 'script') el._kjsStarted = true; // the document's own: run from `scripts`
       el.parentNode = parent;
       parent.childNodes.push(el);
       build(el, kids);
@@ -1324,11 +1328,29 @@
     global.innerHeight = global.outerHeight = screen.height = screen.availHeight = m.h | 0;
     document._quirks = !!m.quirks;
     document._cookieText = String(m.cookie || '');
+    // The page that linked here (the `Referer` the navigation sent), empty for a typed address.
+    document.referrer = String(m.ref || '');
     build(document, m.dom || []);
     dirty = false;
-    for (const [name, code] of m.scripts || []) {
-      tasks.push({ name: 'script ' + name, run: () => evalScript(String(code), String(name)) });
-    }
+    parserScripts = document.getElementsByTagName('script');
+    scriptCount = Array.isArray(m.scripts) ? m.scripts.length : m.wait | 0;
+    for (const [name, code, el] of Array.isArray(m.scripts) ? m.scripts : []) addScript(name, code, el);
+    // Otherwise the browser sends the scripts one per message after the `init` (`wait` of them,
+    // counted in onMessage) and the last one queues the load events.
+    if (Array.isArray(m.scripts) || !(m.wait > 0)) loadTasks();
+  }
+  let parserScripts = [];
+  let scriptsLeft = 0;
+  let scriptCount = 0;
+  // A script of the document as a task; `el` is its element's place among the document's
+  // `<script>` elements (`document.currentScript` while it runs).
+  function addScript(name, code, el) {
+    tasks.push({ name: 'script ' + name, run() {
+      document.currentScript = (el >= 0 && parserScripts[el]) || null;
+      try { evalScript(String(code), String(name), true); } finally { document.currentScript = null; }
+    } });
+  }
+  function loadTasks() {
     tasks.push({ name: 'DOMContentLoaded', run() {
       document.readyState = 'interactive';
       dispatch(document, new Event('readystatechange'));
@@ -1345,7 +1367,7 @@
       if (src && !global.onload) {
         try { new Function('event', src).call(global, ev); } catch (e) { reportError(e); }
       }
-      console.log('jsrun: page ready (' + (m.scripts || []).length + ' scripts)');
+      console.log('jsrun: page ready (' + scriptCount + ' scripts)');
     } });
   }
 
@@ -1376,8 +1398,19 @@
   }
 
   function onMessage(text) {
+    if (text.startsWith('{"t":"script"')) {
+      // `{"t":"script","name":...,"el":N}` and the source after the first newline.
+      const nl = text.indexOf('\n');
+      const h = JSON.parse(nl < 0 ? text : text.slice(0, nl));
+      addScript(h.name, nl < 0 ? '' : text.slice(nl + 1), h.el);
+      if (scriptsLeft > 0 && --scriptsLeft === 0) loadTasks();
+      return;
+    }
     const m = JSON.parse(text);
-    if (m.t === 'init') tasks.push({ name: 'init', run: () => init(m) });
+    if (m.t === 'init') {
+      scriptsLeft = Array.isArray(m.scripts) ? 0 : m.wait | 0;
+      tasks.push({ name: 'init', run: () => init(m) });
+    }
     else if (m.t === 'click') tasks.push({ name: 'click', run: () => click(m) });
   }
 

@@ -68,6 +68,7 @@ pub fn parse_html_full(input: &[u8]) -> Parsed {
         pre_depth: 0,
         scripts: Vec::new(),
         script_bytes: 0,
+        script_elems: 0,
     };
     let mut nodes = p.parse_nodes(&mut Vec::new());
     annotate(&mut nodes, 0);
@@ -107,6 +108,8 @@ struct HtmlParser<'a> {
     scripts: Vec<ScriptRef>,
     /// Bytes of inline script text kept (see [`MAX_INLINE_SCRIPT`]).
     script_bytes: usize,
+    /// `<script>` elements put in the tree so far ([`ScriptRef::elem`]).
+    script_elems: usize,
 }
 impl HtmlParser<'_> {
     fn eof(&self) -> bool {
@@ -209,10 +212,12 @@ impl HtmlParser<'_> {
                     .get("src")
                     .map(|s| decode_attr(s))
                     .filter(|s| !s.trim().is_empty());
+                let elem = self.script_elems;
                 if src.is_some() {
                     self.scripts.push(ScriptRef {
                         src,
                         text: String::new(),
+                        elem,
                     });
                 } else if !raw.trim().is_empty()
                     && self.script_bytes.saturating_add(raw.len()) <= MAX_INLINE_SCRIPT
@@ -221,10 +226,27 @@ impl HtmlParser<'_> {
                     self.scripts.push(ScriptRef {
                         src: None,
                         text: raw,
+                        elem,
                     });
                 }
             }
-            return None;
+            if tag == "style" {
+                return None;
+            }
+            // The `<script>` element stays in the tree, empty (its text is in `scripts`): scripts
+            // look themselves up (`document.currentScript`, `getElementById`, `script[nonce]`). It
+            // is `display: none` and leaves the whitespace before it to the next node, as before.
+            self.pending_ws = ws_before;
+            self.nodes += 1;
+            self.script_elems += 1;
+            return Some(Node::Element(Element {
+                tag,
+                attrs,
+                children: Vec::new(),
+                ws_before: false,
+                sib: Sib::default(),
+                uid: 0,
+            }));
         }
 
         if self_closing || is_void(&tag) {

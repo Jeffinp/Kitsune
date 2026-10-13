@@ -85,12 +85,33 @@ impl Browser {
         };
         match crate::browsing::redirect::resolve_redirect(&base, href) {
             Ok(target) => {
+                let from = self.referrer_to(&target);
                 self.set_url(&target);
                 self.submit();
+                self.referrer = from;
                 true
             }
             Err(_) => false,
         }
+    }
+
+    /// The `Referer` a navigation from the page on screen to `target` sends (policy
+    /// `strict-origin-when-cross-origin`, as for the scripts' requests): none from the browser's own
+    /// pages or from https to http.
+    fn referrer_to(&self, target: &[u8]) -> Option<String> {
+        use crate::browsing::http1::Target;
+        if self.internal || self.home {
+            return None;
+        }
+        let page = Target::parse(core::str::from_utf8(self.nav_url()).ok()?)?;
+        let to = Target::parse(core::str::from_utf8(target).ok()?)?;
+        crate::browsing::cors::referrer(&page, &to)
+    }
+
+    /// The `Referer` of the navigation just taken by [`Browser::take_request`] (`None`: an address
+    /// typed, a bookmark, a reload). The page that comes of it sees it as `document.referrer`.
+    pub fn referrer(&self) -> Option<&str> {
+        self.referrer.as_deref()
     }
 
     /// A form with `method=post` was submitted: resolve `href` like a link and navigate there
@@ -108,9 +129,11 @@ impl Browser {
         };
         match crate::browsing::redirect::resolve_redirect(&base, href) {
             Ok(target) => {
+                let from = self.referrer_to(&target);
                 self.set_url(&target);
                 self.post = Some(body);
                 self.submit();
+                self.referrer = from;
                 true
             }
             Err(_) => false,

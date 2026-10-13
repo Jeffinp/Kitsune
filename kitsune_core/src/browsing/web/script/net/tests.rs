@@ -49,6 +49,15 @@ fn binary_body_and_defaults() {
     assert_eq!((r.method.as_str(), r.body), ("GET", None));
     let r = parse_fetch(&msg("3\nPatch\nhttp://h/\ncors\nomit\nerror\n0\n\n")).unwrap();
     assert_eq!(r.method, "Patch");
+    // A <script src> the page's code added (scripts.js) asks in mode `script`.
+    let r = parse_fetch(&msg(
+        "4\nGET\nhttps://www.google.com/js/th/x.js\nscript\ninclude\nfollow\n0\n\n",
+    ))
+    .unwrap();
+    assert_eq!(
+        (r.mode, r.credentials),
+        (Mode::Script, Credentials::Include)
+    );
 }
 
 #[test]

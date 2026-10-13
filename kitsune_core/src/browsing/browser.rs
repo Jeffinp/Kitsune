@@ -307,6 +307,9 @@ pub struct Browser {
     pending: bool,
     /// Body of the POST being navigated to (`application/x-www-form-urlencoded`); `None` = GET.
     post: Option<Vec<u8>>,
+    /// The `Referer` of the navigation being made (a link or a form of the page on screen); `None`
+    /// for an address typed, a bookmark, a reload or the history. It is also `document.referrer`.
+    referrer: Option<String>,
     nav: [u8; URL_CAP],
     nav_len: usize,
     home: bool, // showing the native start page (no page loaded)
@@ -392,3 +395,6 @@ mod ui_tests;
 
 #[cfg(test)]
 mod body_tests;
+
+#[cfg(test)]
+mod referrer_tests;

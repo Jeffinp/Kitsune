@@ -87,7 +87,7 @@ pub(super) fn run(net: &mut netstack::Net, job: ScriptFetch) {
             return fail(pid, id, CorsError::SameOriginOnly.message());
         }
         if cross
-            && job.req.mode == Mode::NoCors
+            && matches!(job.req.mode, Mode::NoCors | Mode::Script)
             && (!cors::is_simple_method(&method)
                 || headers
                     .iter()
@@ -402,6 +402,15 @@ fn on_head(
         a.error = Some(String::from(e.message()));
         return false;
     }
+    // A script element's answer from another origin: only JavaScript is handed over, without its
+    // headers (cors::Mode::Script).
+    let script_mode = x.cross && job.req.mode == Mode::Script;
+    if script_mode && !cors::is_javascript_type(http1::header(head, b"content-type").unwrap_or(b""))
+    {
+        serial_println!("jsfetch: {} is not JavaScript: not run", x.url.to_url());
+        a.error = Some(String::from("blocked: the answer is not JavaScript"));
+        return false;
+    }
     let manual_redirect = matches!(status, 301 | 302 | 303 | 307 | 308);
     let kind = if manual_redirect && job.req.redirect == Redirect::Manual {
         ResponseType::OpaqueRedirect
@@ -414,7 +423,7 @@ fn on_head(
     };
     let hidden = matches!(kind, ResponseType::Opaque | ResponseType::OpaqueRedirect);
     a.opaque = hidden;
-    let headers = if hidden {
+    let headers = if hidden || script_mode {
         Vec::new()
     } else {
         cors::exposed_headers(head, cors_mode, include)

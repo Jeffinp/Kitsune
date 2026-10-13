@@ -23,8 +23,13 @@ mod request;
 pub use reader::*;
 pub use request::*;
 
-/// The `User-Agent` the fetcher sends (the same as `browser::build_request`).
-pub const HTTP_USER_AGENT: &str = concat!("Kitsune/", env!("CARGO_PKG_VERSION"));
+/// The `User-Agent` the fetcher sends (the same as `browser::build_request`, and what scripts see as
+/// `navigator.userAgent`): one honest name everywhere, in the form sites expect (a bare
+/// `Kitsune/x` made some servers answer differently than to the page's own scripts).
+pub const HTTP_USER_AGENT: &str = concat!(
+    "Mozilla/5.0 (X11; Kitsune x86_64) Kitsune/",
+    env!("CARGO_PKG_VERSION")
+);
 
 /// The largest header block accepted (status line and headers), in bytes.
 pub const MAX_HEAD: usize = 64 * 1024;

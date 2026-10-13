@@ -65,6 +65,7 @@ pub fn parse_fetch(m: &[u8]) -> Option<FetchRequest> {
         b"cors" | b"" => Mode::Cors,
         b"no-cors" => Mode::NoCors,
         b"same-origin" | b"navigate" => Mode::SameOrigin,
+        b"script" => Mode::Script,
         _ => return None,
     };
     let credentials = match line()? {

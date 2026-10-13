@@ -31,6 +31,9 @@ pub struct ScriptRef {
     pub src: Option<String>,
     /// The text of an inline script (empty for an external one).
     pub text: String,
+    /// Its element's place among the `<script>` elements of the tree, in document order (what
+    /// `document.currentScript` is while it runs).
+    pub elem: usize,
 }
 
 /// The attribute that carries an element's [`Element::uid`] in the HTML the script process sends

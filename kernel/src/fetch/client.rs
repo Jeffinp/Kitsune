@@ -41,21 +41,27 @@ pub fn wake_worker() {
 
 /// Queue a fetch for `url` if the worker is idle. Returns `true` if accepted.
 /// `insecure_host` (usually empty) is the one host the user allowed to proceed
-/// despite a certificate error, for this session. `body` makes it a POST (urlencoded form data).
-pub fn try_post(url: &[u8], insecure_host: &[u8], body: Option<&[u8]>) -> bool {
-    post(url, insecure_host, KIND_PAGE, 0, body)
+/// despite a certificate error, for this session. `body` makes it a POST (urlencoded form data);
+/// `referer` is the page a link or a form was on.
+pub fn try_post(
+    url: &[u8],
+    insecure_host: &[u8],
+    body: Option<&[u8]>,
+    referer: Option<&str>,
+) -> bool {
+    post(url, insecure_host, KIND_PAGE, 0, body, referer)
 }
 
 /// Queue the download of one picture for the page being shown; it is decoded and scaled to
 /// `fit_w` pixels wide on the worker. Collect the answer with [`take_image_result`].
 pub fn try_post_image(url: &[u8], insecure_host: &[u8], fit_w: usize) -> bool {
-    post(url, insecure_host, KIND_IMAGE, fit_w, None)
+    post(url, insecure_host, KIND_IMAGE, fit_w, None, None)
 }
 
 /// Queue the download of one style sheet of the page being shown; collect it with
 /// [`take_sheet_result`].
 pub fn try_post_sheet(url: &[u8], insecure_host: &[u8]) -> bool {
-    post(url, insecure_host, KIND_SHEET, 0, None)
+    post(url, insecure_host, KIND_SHEET, 0, None, None)
 }
 
 pub(super) fn post(
@@ -64,6 +70,7 @@ pub(super) fn post(
     kind: u8,
     fit_w: usize,
     body: Option<&[u8]>,
+    referer: Option<&str>,
 ) -> bool {
     if worker_dead() {
         return false;
@@ -109,8 +116,8 @@ pub(super) fn post(
     let n = url.len().min(URL_CAP);
     let m = insecure_host.len().min(INSECURE_CAP);
     // SAFETY: this client holds the slot (CLAIMED, won above), so the worker does not touch
-    // REQ_URL/REQ_LEN/REQ_INSECURE* and no other poster can; the Release store of REQUESTED below
-    // publishes them.
+    // REQ_URL/REQ_LEN/REQ_INSECURE*/REQ_BODY/REQ_REFERER and no other poster can; the Release store
+    // of REQUESTED below publishes them.
     unsafe {
         let buf = &mut *REQ_URL.get();
         buf[..n].copy_from_slice(&url[..n]);
@@ -119,6 +126,7 @@ pub(super) fn post(
         ib[..m].copy_from_slice(&insecure_host[..m]);
         *REQ_INSECURE_LEN.get() = m;
         *REQ_BODY.get() = body.map(<[u8]>::to_vec);
+        *REQ_REFERER.get() = referer.map(String::from);
     }
     REQ_KIND.store(kind, Ordering::Relaxed);
     REQ_FIT_W.store(fit_w, Ordering::Relaxed);
@@ -181,7 +189,7 @@ pub fn take_image_result() -> Option<Result<ImgLoaded, ImgFail>> {
 /// Queue the download of one script of the page being shown; collect it with
 /// [`take_script_result`].
 pub fn try_post_script(url: &[u8], insecure_host: &[u8]) -> bool {
-    post(url, insecure_host, KIND_SCRIPT, 0, None)
+    post(url, insecure_host, KIND_SCRIPT, 0, None, None)
 }
 
 /// If a style sheet request has finished, return its body (`None` = it failed) and reset to idle.

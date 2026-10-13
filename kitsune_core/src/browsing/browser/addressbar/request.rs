@@ -55,7 +55,7 @@ pub fn build_request(
     }
     req.extend_from_slice(
         concat!(
-            "\r\nUser-Agent: Kitsune/",
+            "\r\nUser-Agent: Mozilla/5.0 (X11; Kitsune x86_64) Kitsune/",
             env!("CARGO_PKG_VERSION"),
             "\r\nAccept: text/html, image/png, image/bmp, */*;q=0.1\r\nAccept-Language: "
         )

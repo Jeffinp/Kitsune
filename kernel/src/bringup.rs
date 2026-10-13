@@ -129,7 +129,13 @@ pub fn pump_browser(desk: &mut Desktop, redraw: &mut bool) {
             let mut host = [0u8; 96];
             let hlen = desk.browser_insecure_host(&mut host);
             let body = desk.browser_post_body();
-            fetch::try_post(&url[..len], &host[..hlen], body.as_deref());
+            let referer = desk.browser_referer();
+            fetch::try_post(
+                &url[..len],
+                &host[..hlen],
+                body.as_deref(),
+                referer.as_deref(),
+            );
         } else if let Some(len) = desk.browser_next_sheet(&mut url) {
             // The page's style sheets before its pictures: they decide what the page looks like.
             desk.browser_cookie_context();

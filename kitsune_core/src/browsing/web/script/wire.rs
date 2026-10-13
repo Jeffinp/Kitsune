@@ -5,13 +5,16 @@
 //!
 //! | `t` | fields | meaning |
 //! |---|---|---|
-//! | `init` | `url`, `ua`, `lang`, `cookie`, `w`, `h`, `quirks`, `dom`, `scripts` | the document and its scripts, once |
+//! | `init` | `url`, `ua`, `lang`, `ref`, `cookie`, `w`, `h`, `quirks`, `dom`, `wait` | the document, once; `wait` scripts follow |
+//! | `script` | `name`, `el`, then a newline and the source ([`script_message`]) | one script of the document, in order |
 //! | `click` | `uid`, `x`, `y`, `cx`, `cy`, `seq`, `n` | a click on element `uid` at page `(x, y)` (device px) and viewport `(cx, cy)` (CSS px); `seq` > 0 asks for a verdict on the default action |
 //! | `key`, `focus`, `field`, `mouse`, `view`, `pop`, `hist`, `vis`, `store` | see [`super::input`] | |
 //!
 //! `dom` is the tree as nested arrays: an element is `[tag, uid, {attributes}, [children]]`, text is a
 //! string, and whitespace the parser folded between two elements is a `" "` before the second one.
-//! `scripts` is `[[name, source], ...]` in document order.
+//! The scripts come after the `init`, one message each, in document order: a source goes as it is
+//! (not as a JSON string), so a bundle of megabytes is neither escaped here nor parsed as JSON in the
+//! process. (`jsrun` still takes the older `scripts: [[name, source], ...]` inside the `init`.)
 //!
 //! **Process to browser**: the first byte says what the rest is.
 //!
@@ -35,6 +38,8 @@ pub struct InitInfo<'a> {
     pub height: i32,
     /// `document.cookie` when the page starts.
     pub cookie: &'a str,
+    /// `document.referrer`: the `Referer` the navigation to this page sent (empty: none).
+    pub referrer: &'a str,
 }
 
 /// Append `s` as a JSON string.
@@ -101,15 +106,18 @@ fn tree_json(out: &mut String, nodes: &[Node], depth: usize) {
     out.push(']');
 }
 
-/// The `init` message: the document `doc` shown at `info.url` and its scripts.
-pub fn init_message(doc: &Doc, info: &InitInfo, scripts: &[(String, String)]) -> Vec<u8> {
-    let mut out = String::with_capacity(4096 + scripts.iter().map(|s| s.1.len()).sum::<usize>());
+/// The `init` message: the document `doc` shown at `info.url`, and how many scripts follow it
+/// ([`script_message`], one each).
+pub fn init_message(doc: &Doc, info: &InitInfo, scripts: usize) -> Vec<u8> {
+    let mut out = String::with_capacity(4096);
     out.push_str("{\"t\":\"init\",\"url\":");
     json_str(&mut out, info.url);
     out.push_str(",\"ua\":");
     json_str(&mut out, USER_AGENT);
     out.push_str(",\"lang\":");
     json_str(&mut out, info.lang);
+    out.push_str(",\"ref\":");
+    json_str(&mut out, info.referrer);
     out.push_str(",\"cookie\":");
     json_str(&mut out, info.cookie);
     out.push_str(&format!(
@@ -119,19 +127,27 @@ pub fn init_message(doc: &Doc, info: &InitInfo, scripts: &[(String, String)]) ->
         doc.quirks()
     ));
     tree_json(&mut out, &doc.dom, 0);
-    out.push_str(",\"scripts\":[");
-    for (i, (name, code)) in scripts.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        out.push('[');
-        json_str(&mut out, name);
-        out.push(',');
-        json_str(&mut out, code);
-        out.push(']');
-    }
-    out.push_str("]}");
+    out.push_str(&format!(",\"wait\":{scripts}}}"));
     out.into_bytes()
+}
+
+/// Most bytes of one message to the script process (`kitsune_userabi::MAX_PAGE_MSG`).
+pub const MAX_MESSAGE: usize = 4 * 1024 * 1024;
+
+/// One script of the page, after the `init`: `{"t":"script","name":...,"el":N}`, a newline and the
+/// source as it is. `None` when it would not fit in one message ([`MAX_MESSAGE`]).
+pub fn script_message(s: &PageScript) -> Option<Vec<u8>> {
+    let mut head = String::from("{\"t\":\"script\",\"name\":");
+    json_str(&mut head, &s.name);
+    head.push_str(&format!(",\"el\":{}}}\n", s.elem));
+    let len = head.len() + s.code.len();
+    if len > MAX_MESSAGE {
+        return None;
+    }
+    let mut out = Vec::with_capacity(len);
+    out.extend_from_slice(head.as_bytes());
+    out.extend_from_slice(s.code.as_bytes());
+    Some(out)
 }
 
 /// Where a click happened: page coordinates in device pixels, viewport coordinates in CSS pixels.

@@ -102,7 +102,7 @@
           href.url = String(m.url);
           D.location._url = href.url;
           name = String(m.name || '');
-          if (!native.evalScript(String(m.code), String(m.url))) send('E' + 'Uncaught error in ' + m.url);
+          if (!native.evalScript(String(m.code), String(m.url), true)) send('E' + 'Uncaught error in ' + m.url);
         },
       });
       return;

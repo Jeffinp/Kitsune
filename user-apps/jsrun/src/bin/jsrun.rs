@@ -61,11 +61,15 @@ const DOM_JS: &str = concat!(
     "\n",
     include_str!("jsrun/webapis.js"),
     "\n",
+    include_str!("jsrun/scripts.js"),
+    "\n",
     include_str!("jsrun/msgcodec.js"),
     "\n",
     include_str!("jsrun/workers.js"),
     "\n",
     include_str!("jsrun/media.js"),
+    "\n",
+    include_str!("jsrun/compat.js"),
     "\0"
 );
 /// A worker's prelude: the timers and the task loop of dom.js (its document stays empty and is

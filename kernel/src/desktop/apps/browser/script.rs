@@ -15,7 +15,7 @@ use crate::desktop::*;
 use kitsune_core::web::form::{FieldKind, FormState, field_by_uid};
 use kitsune_core::web::script::{
     ClickAt, FromScript, InitInfo, Inputs, Session, Subs, View, init_message, parse_message,
-    view_message,
+    script_message, view_message,
 };
 
 /// What a click or a key on the page does unless its scripts prevent it, and what the page asks for.
@@ -50,6 +50,28 @@ pub(crate) struct JsProc {
     /// The page's Web Workers (`jsworker.rs`); dropped (killed) with the page.
     pub workers: Vec<super::jsworker::WorkerProc>,
     pub media: super::media::MediaSet,
+    /// The page's scripts not handed over yet (`script` messages, in order): they go as the process
+    /// takes them, so megabytes of scripts never wait in its queue all at once.
+    pub scripts_left: alloc::collections::VecDeque<Vec<u8>>,
+}
+
+impl JsProc {
+    /// Hand over the next scripts while the process's queue takes them.
+    fn post_scripts(&mut self) {
+        while let Some(m) = self.scripts_left.pop_front() {
+            match crate::userproc::page_try_post(self.pid, m) {
+                Ok(()) => {}
+                Err(crate::userproc::PostError::Full(m)) => {
+                    self.scripts_left.push_front(m);
+                    return;
+                }
+                Err(crate::userproc::PostError::Gone) => {
+                    self.scripts_left.clear();
+                    return;
+                }
+            }
+        }
+    }
 }
 
 impl Drop for JsProc {
@@ -156,6 +178,7 @@ impl Desktop {
                 redraw = true;
             }
             let Some(js) = t.js.as_mut() else { continue };
+            js.post_scripts();
             // The last document of the batch is the one that counts.
             let mut doc_msg: Option<Vec<u8>> = None;
             for _ in 0..MAX_PER_FRAME {
@@ -459,6 +482,18 @@ fn start_js(
         "pt-BR"
     };
     let zoom = i32::from(t.zoom.max(1));
+    // The scripts follow the `init` one message each (as the process takes them: `post_scripts`).
+    let total: usize = sources.iter().map(|s| s.code.len()).sum();
+    let scripts_left: alloc::collections::VecDeque<Vec<u8>> = sources
+        .into_iter()
+        .filter_map(|s| {
+            let m = script_message(&s);
+            if m.is_none() {
+                crate::klog!(Warn, "browser: script {} is too large to hand over", s.name);
+            }
+            m
+        })
+        .collect();
     let msg = init_message(
         doc,
         &InitInfo {
@@ -467,8 +502,9 @@ fn start_js(
             width: content.w * 100 / zoom,
             height: content.h * 100 / zoom,
             cookie: &cookie,
+            referrer: t.browser.referrer().unwrap_or(""),
         },
-        &sources,
+        scripts_left.len(),
     );
     let pid = match crate::userproc::spawn_page(crate::desktop::services::accounts::cred()) {
         Ok(pid) => pid,
@@ -488,8 +524,9 @@ fn start_js(
     // Where the page is on screen (the QEMU scenarios turn the page's coordinates into clicks).
     crate::klog!(
         Info,
-        "browser: {} script(s) handed to pid {} (page at {},{} zoom {})",
-        sources.len(),
+        "browser: {} script(s), {} KiB, handed to pid {} (page at {},{} zoom {})",
+        scripts_left.len(),
+        total / 1024,
         pid,
         content.x,
         content.y,
@@ -511,8 +548,12 @@ fn start_js(
         visible: true,
         workers: Vec::new(),
         media: Default::default(),
+        scripts_left,
     });
     super::jsinput::after_init(t);
+    if let Some(js) = t.js.as_mut() {
+        js.post_scripts();
+    }
     // The element boxes (and the controls outside forms) appear: lay out as for a new page.
     layout_browser(t, images, content.w, true);
     let max = t.page.as_ref().map_or(0, |p| (p.height - content.h).max(0));

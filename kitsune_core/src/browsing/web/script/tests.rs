@@ -32,8 +32,26 @@ fn parser_keeps_classic_scripts_in_order() {
         got,
         [(None, "a()"), (Some("/s.js?a=1&b=2"), ""), (None, "b()"),]
     );
-    // Scripts are still not part of the tree.
-    assert_eq!(p.nodes.len(), 1);
+    // Every <script> element is in the tree (empty: the text is in `scripts`), with the <p>.
+    let tags: Vec<&str> = p
+        .nodes
+        .iter()
+        .filter_map(|n| match n {
+            Node::Element(e) => {
+                assert!(e.tag != "script" || e.children.is_empty());
+                Some(e.tag.as_str())
+            }
+            Node::Text(_) => None,
+        })
+        .collect();
+    assert_eq!(
+        tags,
+        [
+            "script", "p", "script", "script", "script", "script", "script"
+        ]
+    );
+    let elems: Vec<usize> = p.scripts.iter().map(|s| s.elem).collect();
+    assert_eq!(elems, [0, 1, 3]);
 }
 
 #[test]
@@ -228,9 +246,12 @@ fn script_set_fetches_externals_and_keeps_order() {
     s.finish(&a, None); // a failed download is skipped
     assert!(s.ready());
     let got = s.take();
-    let names: Vec<&str> = got.iter().map(|g| g.0.as_str()).collect();
+    let names: Vec<&str> = got.iter().map(|g| g.name.as_str()).collect();
     assert_eq!(names, ["inline-1", "inline-2", "http://cdn.test/four.js"]);
-    assert_eq!(got[2].1, "four()");
+    assert_eq!(got[2].code, "four()");
+    // Each knows its <script> element (the failed two.js is element 1).
+    let elems: Vec<usize> = got.iter().map(|g| g.elem).collect();
+    assert_eq!(elems, [0, 2, 3]);
     assert!(!s.ready() && s.take().is_empty(), "scripts run once");
 }
 
@@ -279,17 +300,53 @@ fn init_message_carries_tree_ids_and_scripts() {
             lang: "pt-BR",
             width: 800,
             height: 600,
+            referrer: "http://from/",
         },
-        &[("inline-1".into(), "console.log(\"a\\n\")\n".into())],
+        1,
     );
     let s = core::str::from_utf8(&m).unwrap();
     assert!(s.starts_with("{\"t\":\"init\",\"url\":\"http://h/\",\"ua\":\"Mozilla/5.0"));
+    assert!(s.contains("\"ref\":\"http://from/\""));
     assert!(s.contains("\"w\":800,\"h\":600,\"quirks\":false,\"dom\":[[\"html\",1,{},["));
     assert!(
         s.contains("[\"p\",4,{\"class\":\"a&b\"},[\"x \\\"y\\\"\"]],\" \",[\"i\",5,{},[\"z\"]]"),
         "{s}"
     );
-    assert!(s.ends_with(",\"scripts\":[[\"inline-1\",\"console.log(\\\"a\\\\n\\\")\\n\"]]}"));
+    assert!(s.ends_with(",\"wait\":1}"));
+    // The script goes in its own message, the source as it is after the first newline.
+    let one = PageScript {
+        name: "inline-1".into(),
+        code: "console.log(\"a\\n\")\n".into(),
+        elem: 3,
+    };
+    let m = script_message(&one).unwrap();
+    assert_eq!(
+        m,
+        b"{\"t\":\"script\",\"name\":\"inline-1\",\"el\":3}\nconsole.log(\"a\\n\")\n"
+    );
+    let big = PageScript {
+        name: "big".into(),
+        code: "x".repeat(MAX_MESSAGE),
+        elem: 0,
+    };
+    assert!(script_message(&big).is_none(), "one message at most");
+}
+
+#[test]
+fn script_elements_stay_in_the_tree() {
+    // The page's scripts look themselves up (`document.currentScript`, `getElementById`): the
+    // elements stay, empty, and the whitespace around them is as before.
+    let doc = Doc::parse(
+        b"<p>a <script id=s nonce=n>var x = '<b>';</script> b</p><script src=/x.js></script>",
+    );
+    let Node::Element(html) = &doc.dom[0] else {
+        panic!()
+    };
+    let text = format!("{:?}", html);
+    assert!(text.contains("tag: \"script\""), "{text}");
+    assert_eq!(doc.scripts().len(), 2);
+    assert_eq!((doc.scripts()[0].elem, doc.scripts()[1].elem), (0, 1));
+    assert!(!text.contains("var x"), "the text is not in the tree");
 }
 
 #[test]

@@ -160,7 +160,7 @@ pub(super) fn serve_job(net: &mut netstack::Net) {
                 b"",
                 MAX_RESPONSE_BYTES,
                 None,
-                None,
+                Nav::default(),
                 cookies::Use::None,
             ) {
                 Ok(p) => NetJobResult::Page(p),
