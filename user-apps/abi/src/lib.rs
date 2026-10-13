@@ -2,7 +2,8 @@
 //!
 //! Numbers 0–6 (exit, write, yield, getpid, sleep, uptime, brk) and 16–21 (the WebAssembly host,
 //! `kitsune_core::appabi::remote`) are documented where they are served; this crate owns 32–42 (files
-//! and arguments), 48–51 (a window), 52–54 (child processes) and 56–57 (the browser's script process).
+//! and arguments), 48–51 (a window), 52–54 (child processes), 56–57 (the browser's script process) and
+//! 60–65 (sound, see [`audio`]).
 //! A call is `rax` = number, `rdi`, `rsi`, `rdx`, `r10`, `r8` = arguments, result in `rax`
 //! (negative = `-errno`, see [`errno`]). Pointers are user addresses; the kernel copies through the
 //! process's page tables and never trusts them.
@@ -18,6 +19,9 @@ extern crate alloc;
 
 #[cfg(feature = "alloc")]
 use alloc::{string::String, vec::Vec};
+
+pub mod audio;
+pub use audio::*;
 
 pub const SYS_OPEN: u64 = 32;
 pub const SYS_CLOSE: u64 = 33;
@@ -153,6 +157,8 @@ pub mod errno {
     pub const ENAMETOOLONG: i64 = -36;
     pub const ENOTEMPTY: i64 = -39;
     pub const ENOENT: i64 = -2;
+    /// No such device (no sound card).
+    pub const ENODEV: i64 = -19;
 }
 
 /// What [`SYS_STAT`] writes: 32 bytes, little endian.

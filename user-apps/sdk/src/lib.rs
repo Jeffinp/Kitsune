@@ -18,6 +18,7 @@
 
 use core::fmt;
 
+pub mod audio;
 pub mod fs;
 #[cfg(feature = "heap")]
 mod heap;
