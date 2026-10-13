@@ -18,11 +18,13 @@ extern long kjs_write(int fd, const void *buf, size_t len);
 extern uint64_t kjs_uptime_ms(void);
 
 /* How much the scripts may use. The process stack is 4 MiB (kernel `BIG_STACK`): QuickJS checks against
-   3.75 MiB and the rest is for C code below its checks. The heap may grow to 64 MiB (kernel `BIG_HEAP`). */
+   3.75 MiB and the rest is for C code below its checks. The heap may grow to 128 MiB (kernel `BIG_HEAP`):
+   96 MiB for the scripts (YouTube's embedded player alone holds ~38 MB once loaded, before any media
+   passes through its buffers) and the rest for the C side (messages, the libc's slack). */
 #ifndef JS_STACK_LIMIT
 #define JS_STACK_LIMIT (3840 * 1024)
 #endif
-#define JS_MEMORY_LIMIT (48u * 1024 * 1024)
+#define JS_MEMORY_LIMIT (96u * 1024 * 1024)
 
 void kjs_write_all(int fd, const char *p, size_t n)
 {

@@ -58,9 +58,10 @@
       const v = cfg.video, a = cfg.audio;
       if (!v && !a) return Promise.reject(new TypeError('decodingInfo: no audio or video configuration'));
       let ok = (!v || media(v.contentType)) && (!a || media(a.contentType));
-      // The decoder is software: say a picture over 1080p, or over 30 fps above 480p, is not smooth.
-      const big = v && ((v.width | 0) * (v.height | 0) > 1920 * 1080);
-      const smooth = ok && !(v && (big || ((v.framerate || 30) > 30 && (v.height | 0) > 480)));
+      // The decoder is software: what it keeps up with even under emulation is smooth (the limits of
+      // MediaSource.isTypeSupported's `width`/`height`/`framerate`: 854x480 at 30 fps).
+      const sized = v && MediaSource.isTypeSupported(String(v.contentType) + '; width=' + (v.width | 0) + '; height=' + (v.height | 0) + '; framerate=' + (Math.ceil(v.framerate || 0)));
+      const smooth = ok && (!v || sized);
       if (cfg.keySystemConfiguration) ok = false; // no EME
       return Promise.resolve({ supported: ok, smooth, powerEfficient: false, keySystemAccess: null, configuration: cfg });
     },

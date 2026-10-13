@@ -337,6 +337,24 @@ a:hover{color:red}
         # A page that builds part of itself with JavaScript (/js/app.js and an inline script) and
         # answers clicks: W52.
         return JS_PAGE.encode()
+    if path == "/yt":
+        # W60: a page with a link to YouTube's embedded player. Opened from a link, the embed gets a
+        # Referer (YouTube refuses an embed opened without one: "Error 153"); ?go=1 follows it from a
+        # script (location.href, which sends the Referer too) so the scenario needs no click.
+        v = (q.get("v") or ["aqz-KE-bpKQ"])[0]
+        v = "".join(c for c in v if c.isalnum() or c in "-_")[:16]
+        extra = (q.get("p") or [""])[0]
+        extra = "".join(c for c in extra if c.isalnum() or c in "=&_-")[:64]
+        url = "https://www.youtube.com/embed/" + v + ("?" + extra if extra else "")
+        go = ("<script>setTimeout(function () { console.log('yt-launch: going to " + url + "');"
+              " location.href = '" + url + "'; }, 500);</script>") if q.get("go") else ""
+        return (
+            "<!doctype html><html><head><meta charset=utf-8><title>YouTube no Kitsune</title></head>"
+            "<body style='font-family:sans-serif;margin:24px'><h1>YouTube no Kitsune</h1>"
+            "<p><a id=yt href='" + url + "' style='font-size:22px'>Big Buck Bunny (player do YouTube)</a></p>"
+            "<p>O player embutido do YouTube precisa ser aberto a partir de uma página (o link manda o "
+            "Referer); aberto direto pela barra de endereço ele mostra o erro 153.</p>" + go + "</body></html>"
+        ).encode()
     if path == "/bigcss":
         # A 300 KB sheet (served gzip-compressed): the rule that matters is the last one.
         return (

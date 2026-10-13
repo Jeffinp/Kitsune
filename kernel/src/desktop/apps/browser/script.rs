@@ -524,12 +524,14 @@ fn start_js(
     // Where the page is on screen (the QEMU scenarios turn the page's coordinates into clicks).
     crate::klog!(
         Info,
-        "browser: {} script(s), {} KiB, handed to pid {} (page at {},{} zoom {})",
+        "browser: {} script(s), {} KiB, handed to pid {} (page at {},{} size {}x{} zoom {})",
         scripts_left.len(),
         total / 1024,
         pid,
         content.x,
         content.y,
+        content.w,
+        content.h,
         t.zoom
     );
     doc.set_track(true);

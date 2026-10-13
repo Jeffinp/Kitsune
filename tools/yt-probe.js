@@ -31,6 +31,7 @@ const ENGINE = opt('--engine', 'qjs');
 const VERBOSE = flag('-v');
 const PLAY = flag('--play');
 const NETLOG = flag('--net-log');
+const SPY = flag('--spy');
 const W = +opt('--w', '960');
 const H = +opt('--h', '540');
 const REFERER = opt('--referer', '');
@@ -550,6 +551,8 @@ async function buildInit(html) {
   out('probe: page ' + r.status + ' ' + html.length + ' bytes from ' + pageUrl + ' in ' + r.ms + ' ms; cookies: ' + [...jar.values()].map((c) => c.name).join(','));
   fs.writeFileSync(path.join(CACHE, 'page.html'), html);
   const { dom, scripts } = await buildInit(html);
+  // --spy: a first script that logs what the page asks about media support (not part of the page).
+  if (SPY) scripts.unshift(['spy', Buffer.from("(function(){const w=(o,k,n)=>{const f=o[k];if(!f)return;o[k]=function(...a){const r=f.apply(this,a);console.log('spy: '+n+'('+a.map(x=>typeof x==='object'?JSON.stringify(x):String(x)).join(', ')+') = '+(r&&r.then?'promise':String(r)));if(r&&r.then)r.then(v=>console.log('spy: '+n+' -> '+JSON.stringify(v)));return r;};};w(MediaSource,'isTypeSupported','isTypeSupported');w(HTMLMediaElement.prototype,'canPlayType','canPlayType');w(navigator.mediaCapabilities,'decodingInfo','decodingInfo');})();"), -1]);
   out('probe: ' + scripts.length + ' scripts, ' + scripts.reduce((n, s) => n + s[1].length, 0) + ' bytes');
   eng.message(JSON.stringify({ t: 'init', url: pageUrl, ua: UA, lang: 'en', ref: REFERER, cookie: cookiesFor(pageUrl, true), w: W, h: H, quirks: false, dom, wait: scripts.length }));
   for (const [name, code, el] of scripts) eng.message(Buffer.concat([Buffer.from(JSON.stringify({ t: 'script', name, el }) + '\n'), code]).toString('utf8'));

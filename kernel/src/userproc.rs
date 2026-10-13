@@ -83,7 +83,10 @@ const MAX_HEAP: u64 = 8 * 1024 * 1024;
 /// Embedded programs allowed a larger heap: the JavaScript engine (scripts and their objects) and the
 /// media decoder (VP9 keeps up to 8 reference pictures and a few in flight: ~10 MiB at 640x360, ~40
 /// MiB at 1280x720, more at 1920x1080, the largest it accepts). The heap only grows as it is used.
-const BIG_HEAP: &[(&str, u64)] = &[("jsrun", 64 * 1024 * 1024), ("mediadec", 128 * 1024 * 1024)];
+const BIG_HEAP: &[(&str, u64)] = &[
+    ("jsrun", 128 * 1024 * 1024),
+    ("mediadec", 128 * 1024 * 1024),
+];
 /// The most a WebAssembly host may use (guest memory included).
 const MAX_HOST_HEAP: u64 = 96 * 1024 * 1024;
 /// Most uncollected output kept per process.

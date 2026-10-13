@@ -237,7 +237,16 @@ impl MediaSet {
     /// WebM bytes for source `src` of player `id`.
     pub(crate) fn data(&mut self, js: u32, id: u32, src: u8, seq: u32, bytes: &[u8]) {
         match self.find(id) {
-            Some(p) => p.post(proto::data(src, seq, bytes)),
+            Some(p) => {
+                // MSE appends are few (a segment of seconds each, in pieces of 1 MiB at most):
+                // each one in the log says what reached the decoder.
+                crate::klog!(
+                    Info,
+                    "media: element {id} source {src}: {} bytes appended (piece {seq})",
+                    bytes.len()
+                );
+                p.post(proto::data(src, seq, bytes))
+            }
             None => {
                 let m = wire::buffered_message(id, src, seq, proto::BUF_BROKEN, &[]);
                 crate::userproc::page_post(js, m);
