@@ -151,6 +151,7 @@ impl Picture<'_> {
     }
 
     /// `(vpx_color_space_t, vpx_color_range_t)`: 2 is BT.709, range 1 is full.
+    #[allow(dead_code)] // the host checker compares the colours with the formula
     pub fn color(&self) -> (i32, i32) {
         (self.raw.color_space, self.raw.color_range)
     }

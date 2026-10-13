@@ -48,7 +48,9 @@ Esta etapa entrega o caminho "bytes do arquivo → quadros RGB e PCM" num proces
   17 KiB, do ffmpeg) dá **os mesmos 80 pacotes do `ffprobe`** (tamanho, keyframe, tempo), cabeçalho e cues certos, a
   busca por cue recomeça num keyframe no tempo da cue; fluxos sintéticos com tamanhos desconhecidos, grupos com
   `DiscardPadding`/`ReferenceBlock`/`BlockDuration`, bloco com lacing, dois segmentos seguidos (dois cabeçalhos),
-  `DocType` errado, tamanhos hostis, elemento pulado de 40 MiB e 300 arquivos corrompidos. Fuzz: alvo `webm_demux`.
+  `DocType` errado, tamanhos hostis, elemento pulado de 40 MiB e 300 arquivos corrompidos. Fuzz: alvo `webm_demux`
+  (semente: o `small.webm`), 10 minutos, **2,93 milhões de execuções (~4900/s), nenhuma falha**, 939 arestas de
+  cobertura.
 
 ## Os decodificadores
 
