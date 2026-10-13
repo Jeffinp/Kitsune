@@ -7,6 +7,7 @@
 # log; the verdict is in $OUT/verdict.txt. With TLS_PORT set (tools/w24-site.py PORT --tls TLS_PORT),
 # it then opens https://.../net/speed, clicks "continuar mesmo assim" (self-signed certificate) and
 # records the TLS download rate (two 8 MiB downloads on one kept-alive connection) in $OUT/speed.txt.
+# NET_CHECKS=0 skips the checks of /net; SPEED_HTTP=1 also measures /net/speed over plain http.
 #   tools/w24-site.py 8079 --tls 8443 &
 #   QEMU_MEM=256M QEMU_NETDEV="user,id=n0,net=203.0.113.0/24,host=203.0.113.5,dhcpstart=203.0.113.15,dns=203.0.113.3" \
 #     PORT=8079 TLS_PORT=8443 tools/perf/run.sh <img> bios <out> 900 tools/perf/scen/w55-net-js.sh
@@ -19,12 +20,22 @@ wait_for() { # wait_for PATTERN SECONDS
 }
 wait_first_frame
 dock_icon browser; click; sleep 3
-key ctrl-l; sleep 0.3
-typestr "http://203.0.113.5:$PORT/net"
-key ret
-wait_for "net: done" 420
-sleep 2
-shot a-net
+if [ "${NET_CHECKS:-1}" = 1 ]; then
+  key ctrl-l; sleep 0.3
+  typestr "http://203.0.113.5:$PORT/net"
+  key ret
+  wait_for "net: done" 420
+  sleep 2
+  shot a-net
+fi
+if [ "${SPEED_HTTP:-0}" = 1 ]; then
+  # The same download over plain http, to tell the network from the cipher.
+  key ctrl-l; sleep 0.3
+  typestr "http://203.0.113.5:$PORT/net/speed"
+  key ret
+  wait_for "net: speed done" 420
+  sleep 2
+fi
 if [ -n "${TLS_PORT:-}" ]; then
   key ctrl-l; sleep 0.3
   typestr "https://203.0.113.5:$TLS_PORT/net/speed"
@@ -33,7 +44,7 @@ if [ -n "${TLS_PORT:-}" ]; then
   sleep 4
   shot b-cert
   goto 608 486; click
-  wait_for "net: speed done" 420
+  wait_for "net: speed round 2 https" 420
   sleep 2
   shot c-speed
 fi
@@ -46,7 +57,7 @@ flush_snaps
   ok=1
   need() { if grep -aq -- "$1" "$OUT/js-out.txt"; then echo "PASS $2"; else echo "MISS $2"; ok=0; fi; }
   needlog() { if grep -aq -- "$1" "$OUT/serial.log"; then echo "PASS $2"; else echo "MISS $2"; ok=0; fi; }
-  for name in "fetch json" "set-cookie and document.cookie" "cookies sent (HttpOnly too) and document.cookie write" \
+  [ "${NET_CHECKS:-1}" = 1 ] && for name in "fetch json" "set-cookie and document.cookie" "cookies sent (HttpOnly too) and document.cookie write" \
     "POST json echo with Origin and Referer" "PUT with ArrayBuffer body" "HEAD" "XHR GET json" "XHR POST form" \
     "CORS allowed (Allow-Origin \*)" "CORS refused without the header" "CORS with credentials" \
     "CORS without credentials sends no cookie" "CORS pre-flight for PUT" "no-cors is opaque" "redirect followed" \
@@ -54,13 +65,15 @@ flush_snaps
     "blocked by the ad blocker" "small APIs" "keep-alive (connections reused)"; do
     need "^net: PASS $name" "$name"
   done
-  if grep -aq "^net: FAIL" "$OUT/js-out.txt"; then echo "MISS no check failed"; ok=0; else echo "PASS no check failed"; fi
-  needlog "cookies: stored theme from" "Set-Cookie stored by the fetcher"
-  needlog "cors: blocked http://203.0.113.5:$((PORT - 1))/cors/none" "CORS refusal on the serial log"
-  needlog "cors: pre-flight ok for PUT" "pre-flight logged"
-  needlog "shields: blocked ad fetch" "the ad blocker counted the fetch"
-  needlog "net: reusing connection" "connections reused"
-  needlog "cookies: saved" "cookies written to ~/.cookies"
+  if grep -aq "^net: FAIL\|speed FAIL" "$OUT/js-out.txt"; then echo "MISS no check failed"; ok=0; else echo "PASS no check failed"; fi
+  if [ "${NET_CHECKS:-1}" = 1 ]; then
+    needlog "cookies: stored theme from" "Set-Cookie stored by the fetcher"
+    needlog "cors: blocked http://203.0.113.5:$((PORT - 1))/cors/none" "CORS refusal on the serial log"
+    needlog "cors: pre-flight ok for PUT" "pre-flight logged"
+    needlog "shields: blocked ad fetch" "the ad blocker counted the fetch"
+    needlog "net: reusing connection" "connections reused"
+    needlog "cookies: saved" "cookies written to ~/.cookies"
+  fi
   if [ -n "${TLS_PORT:-}" ]; then
     need "^net: speed round 2 https:" "TLS download measured"
   fi
