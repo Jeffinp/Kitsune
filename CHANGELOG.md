@@ -17,7 +17,7 @@ renomeio mantêm o nome da época.
 - **Pipeline**: folhas e `@import`s bloqueados não entram na fila (`SheetSet::begin_with`/`finish_with`); imagens
   bloqueadas nunca são pedidas e **não ganham caixa** (`ImgState::Blocked`, `ImageCache::block`); `Doc::hide_matching`
   esconde as caixas de anúncio e as conta. A navegação de topo nunca é bloqueada. Detalhes em `tls-browser.md` §11.
-- **Provas**: no host, `browsing::shields::tests` (25 testes, mais os de `settings`, `layout` e `iconart`; 3247 no
+- **Provas**: no host, `browsing::shields::tests` (25 testes, mais os de `settings`, `layout` e `iconart`; 3248 no
   `kitsune_core`); no QEMU (BIOS, `tools/w24-site.py` com a página `/ads`), `w53-shields.sh`: com o filtro ligado a serial diz
   `ads=4 trackers=2 hidden=2 total=8` e o servidor **não** vê `/ads/ad-theme.css`, `/ads/banner-728.png`,
   `/pagead/ad.png`, `/tracking/pixel.png` nem a imagem dentro da caixa escondida (vê só `/ads` e `/g.png`) e o guest nunca
@@ -28,7 +28,12 @@ renomeio mantêm o nome da época.
 - Não feito: remover `utm_*`/`fbclid`, http para https, lista atualizável, bloqueio de scripts (o navegador ainda não os
   carrega; a fonte de scripts deve perguntar `PageShield::check`). Limites em `tls-browser.md` §11.4.
 - Fuzz: `html_img_form` ganhou o estado `Blocked` e `shields_exercise` (endereços, lista de sites, cosmético e folhas
-  com bytes hostis).
+  com bytes hostis): 11 097 execuções em 421 s sem falha restante. Achou **um** bug meu, corrigido com teste e arquivo
+  em `fuzz/regressions/html_img_form/w53-sitelist-dot-site` (o site "." era aceito e sumia ao reler o arquivo), e uma
+  asserção antiga do próprio alvo que não conhecia o POST (corrigida).
+- Observação: o aviso "Não foi possível salvar os favoritos" aparece neste ambiente porque `new_bookmark_store` grava em
+  `/home/.bookmarks`, que uma conta logada não consegue escrever (o certo seria a pasta do usuário, como o
+  `~/.shields` do bloqueador); não corrigido aqui por estar fora do escopo.
 
 ## 2026-10 — Arquivos grandes divididos
 
