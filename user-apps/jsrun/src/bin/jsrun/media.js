@@ -137,7 +137,12 @@
 
   class HTMLMediaElement extends HTMLElement {
     // ---- attributes ----
-    get src() { const v = this.getAttribute('src'); return v === null ? '' : new URL(v, location.href).href; }
+    get src() {
+      const v = this.getAttribute('src');
+      if (v === null) return '';
+      if (/^(blob|data):/i.test(v.trim())) return v.trim();
+      try { return new URL(v, location.href).href; } catch (e) { return v; }
+    }
     set src(v) { this.setAttribute('src', v); }
     setAttribute(n, v) {
       super.setAttribute(n, v);
@@ -281,8 +286,11 @@
         }
       }
       if (url === null || String(url).trim() === '') { s.networkState = 0; return; }
-      let abs;
-      try { abs = new URL(url, location.href).href; } catch (e) { abs = String(url); }
+      let abs = String(url).trim();
+      // A `blob:` address stays as written (it names a MediaSource or a Blob of this page).
+      if (!/^(blob|data):/i.test(abs)) {
+        try { abs = new URL(abs, location.href).href; } catch (e) { /* kept as written */ }
+      }
       s.networkState = 2;
       s.currentSrc = abs;
       later(() => fire(this, 'loadstart'));
