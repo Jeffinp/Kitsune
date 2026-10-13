@@ -32,7 +32,21 @@
       function onHash() { setFilter(route()); }
       addEventListener('hashchange', onHash);
       if (input.current) input.current.focus();
-      return function () { removeEventListener('hashchange', onHash); };
+      // Where the controls are on screen, whenever the list changes size (after the browser laid the
+      // page out): the QEMU scenario clicks there.
+      function where(sel, i) {
+        var el = document.querySelectorAll(sel)[i || 0];
+        if (!el) return '-';
+        var r = el.getBoundingClientRect();
+        return Math.round(r.left + Math.min(r.width / 2, 12)) + ',' + Math.round(r.top + r.height / 2);
+      }
+      var ro = new ResizeObserver(function () {
+        console.log('todo: at input=' + where('.new-todo') + ' toggle2=' + where('.toggle', 1) + ' destroy1=' +
+          where('.destroy', 0) + ' all=' + where('.filters a', 0) + ' active=' + where('.filters a', 1) +
+          ' items=' + document.querySelectorAll('.todo-list li').length);
+      });
+      ro.observe(document.querySelector('.todoapp'));
+      return function () { removeEventListener('hashchange', onHash); ro.disconnect(); };
     }, []);
 
     var left = todos.filter(function (t) { return !t.done; }).length;

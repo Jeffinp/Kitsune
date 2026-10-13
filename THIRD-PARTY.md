@@ -16,3 +16,15 @@ Rust crate dependencies and their licences are checked by `cargo deny check`
 The OFL permits embedding in software and redistributing the (modified, subset)
 font files together with the licence text; the licence file travels with the
 fonts in `assets/fonts/`.
+
+## Material used only by the test tools (not in the image)
+
+The acceptance pages of the browser's DOM (`/preact` and `/vue` of `tools/w24-site.py`, scenario
+`tools/perf/scen/w59-spa.sh`) serve these libraries from `tools/site-assets/`, unmodified, as
+downloaded from <https://cdn.jsdelivr.net/npm/>. They never enter the kernel image.
+
+| Material | Where | Licence | sha256 |
+|---|---|---|---|
+| Preact 10.24.3, by Jason Miller and contributors, <https://github.com/preactjs/preact> (`dist/preact.umd.js`, `hooks/dist/hooks.umd.js`) | `tools/site-assets/preact.umd.js`, `tools/site-assets/hooks.umd.js` | MIT (`tools/site-assets/LICENSE-preact.txt`) | `690684b754dba8c5fa319e0961e4720a8b97157cc532ef8fee98dd1783391df5`, `7525297f9c325afb32a4cd0c91a207d23603195e81dbf5e946f9e1b8017858c4` |
+| htm 3.1.1, by Jason Miller, <https://github.com/developit/htm> (`dist/htm.umd.js`) | `tools/site-assets/htm.umd.js` | Apache License 2.0 (`tools/site-assets/LICENSE-htm.txt`) | `7a31776e04bd4afde0d4308177d26f377716fcf7e4bd70be590746d6aa594f08` |
+| Vue 3.5.13, by Yuxi (Evan) You and contributors, <https://github.com/vuejs/core> (`dist/vue.global.prod.js`) | `tools/site-assets/vue.global.prod.js` | MIT (`tools/site-assets/LICENSE-vue.txt`) | `c459ba7cc8db65c982589fa5d64c7ff478877e8e5b0fd75683207cec6a4e89e8` |

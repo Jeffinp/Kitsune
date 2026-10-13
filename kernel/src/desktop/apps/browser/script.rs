@@ -199,6 +199,12 @@ impl Desktop {
                     FromScript::Scroll(..) => {}
                     FromScript::History { replace, url } => {
                         if t.browser.push_state(url.as_bytes(), replace) {
+                            crate::klog!(
+                                Info,
+                                "browser: the page's address is now {} ({})",
+                                url,
+                                if replace { "replaceState" } else { "pushState" }
+                            );
                             redraw = true;
                         }
                     }
@@ -408,11 +414,15 @@ fn start_js(
         crate::userproc::kill(pid);
         return;
     }
+    // Where the page is on screen (the QEMU scenarios turn the page's coordinates into clicks).
     crate::klog!(
         Info,
-        "browser: {} script(s) handed to pid {}",
+        "browser: {} script(s) handed to pid {} (page at {},{} zoom {})",
         sources.len(),
-        pid
+        pid,
+        content.x,
+        content.y,
+        t.zoom
     );
     doc.set_track(true);
     let view = View::from_device(content.w, content.h, t.scroll, 0, t.zoom);

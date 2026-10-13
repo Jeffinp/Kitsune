@@ -33,7 +33,22 @@
       color: function () { this.report('color'); },
       sent: function () { this.report('sent'); },
     },
-    mounted: function () { this.report('mounted'); },
+    mounted: function () {
+      this.report('mounted');
+      // Where the controls are on screen, whenever the app changes size (after the browser laid the
+      // page out): the QEMU scenario clicks there.
+      function where(sel) {
+        var el = document.querySelector(sel);
+        if (!el) return '-';
+        var r = el.getBoundingClientRect();
+        return Math.round(r.left + Math.min(r.width / 2, 12)) + ',' + Math.round(r.top + r.height / 2);
+      }
+      new ResizeObserver(function () {
+        console.log('vue: at inc=' + where('#inc') + ' name=' + where('#name') + ' fruit=' + where('#fruit') +
+          ' show=' + where('#show') + ' select=' + where('select') + ' msg=' + where('form input') +
+          ' h=' + Math.round(document.getElementById('app').getBoundingClientRect().height));
+      }).observe(document.getElementById('app'));
+    },
   });
   app.config.errorHandler = function (e) { console.log('vue: error ' + e + (e && e.stack ? ' ' + e.stack : '')); };
   app.config.warnHandler = function (m) { console.log('vue: warn ' + m); };
