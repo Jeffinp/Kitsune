@@ -15,9 +15,12 @@ pub struct Doc {
     pub(crate) quirks: bool,
     /// The classic scripts of the document, in order (see [`super::super::script`]).
     pub(crate) scripts: Vec<ScriptRef>,
-    /// The page's own `<style>` text and the text of each external sheet added, so the sheet can be
-    /// built again when a script changes the `<style>` elements.
+    /// The page's own `<style>` text as it came from the network, what the page's scripts added in
+    /// `<style>` elements of their own, and the text of each external sheet added, so the sheet can be
+    /// built again when the scripts change their styles. (`<style>` elements are not part of the
+    /// tree, so the script process never sees the original ones.)
     pub(crate) own_css: String,
+    pub(crate) script_css: String,
     pub(crate) ext_css: Vec<String>,
     /// Every box records its element ([`Doc::set_track`]).
     pub(crate) track: bool,
@@ -102,6 +105,7 @@ impl Doc {
                 .any(|w| w == b"<!doctype"),
             scripts: parsed.scripts,
             own_css: parsed.css,
+            script_css: String::new(),
             ext_css: Vec::new(),
             track: false,
         }
@@ -124,14 +128,17 @@ impl Doc {
     }
 
     /// Take the document the page's script process sent (`html`, every element carrying its id in
-    /// [`super::super::UID_ATTR`]) in place of this one. The external sheets stay; the page's own `<style>` text is
-    /// read again (the sheet is rebuilt only when it changed). Scripts in it are not run again.
+    /// [`super::super::UID_ATTR`]) in place of this one. The external sheets and the page's own
+    /// `<style>` text stay; `<style>` elements in `html` are what the scripts added (the sheet is
+    /// rebuilt only when that changed). Scripts in it are not run again.
     pub fn replace_from_script(&mut self, html: &[u8]) {
         let parsed = parse_html_full(html);
         let mut dom = rooted(parsed.nodes);
         number_elements(&mut dom, &mut 1, true, 0);
-        if parsed.css != self.own_css {
-            let (sheet, ua_rules) = base_sheet(&parsed.css);
+        if parsed.css != self.script_css {
+            let mut css = self.own_css.clone();
+            css.push_str(&parsed.css);
+            let (sheet, ua_rules) = base_sheet(&css);
             self.sheet = sheet;
             self.ua_rules = ua_rules;
             self.ext_rules = 0;
@@ -139,7 +146,7 @@ impl Doc {
             for css in &ext {
                 self.add_sheet(css);
             }
-            self.own_css = parsed.css;
+            self.script_css = parsed.css;
         }
         self.title = find_title(&dom, 0)
             .map(|t| fold_display(&t))

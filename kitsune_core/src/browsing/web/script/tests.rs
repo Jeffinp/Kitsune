@@ -100,6 +100,21 @@ fn replace_from_script_reads_ids_and_keeps_external_sheets() {
 }
 
 #[test]
+fn replace_from_script_keeps_the_pages_own_style() {
+    // The page's <style> is not in the tree the process gets, so its document has none.
+    let mut doc = Doc::parse(b"<style>.x{color:#ff0000}</style><p class=x>a</p>");
+    doc.replace_from_script(
+        b"<html data-kjs=1><body data-kjs=2><p data-kjs=3 class=x>b</p></body></html>",
+    );
+    let page = layout(&doc);
+    let red = page.cmds.iter().any(|c| {
+        matches!(c, crate::browsing::web::Cmd::Text { text, color, .. }
+            if text == "b" && *color == crate::browsing::web::Rgb(255, 0, 0))
+    });
+    assert!(red, "{:?}", page.cmds);
+}
+
+#[test]
 fn replace_from_script_rebuilds_the_sheet_when_style_text_changes() {
     let mut doc = Doc::parse(b"<p>a</p>");
     doc.add_sheet("p{color:#0000ff}");
