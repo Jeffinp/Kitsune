@@ -28,7 +28,7 @@
 //! `12` or `auto` (the default: follow the language, 24 hours in Portuguese and 12 in English).
 //!
 //! `adblock` is the browser's ad and tracker blocker (`1`, the default, or `0`); the sites where the person
-//! turned it off are a separate list, `/home/.shields` (see `browsing::shields`).
+//! turned it off are a separate list, `~/.shields` (`/home/<nome>/.shields`) (see `browsing::shields`).
 //!
 //! `auto_lock` (minutes without input before the screen locks; 0 or absent = never; only for an account with a password).
 //! `terminal_font` and `editor_font` (text size in pixels, [`FONT_MIN`] to [`FONT_MAX`]) are written

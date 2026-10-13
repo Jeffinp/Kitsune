@@ -12,20 +12,22 @@ use kitsune_core::shields::{PageShield, SiteList};
 use kitsune_core::t;
 use kitsune_core::widgets as wg;
 
-/// Where the sites with the blocker off are kept, next to the favourites.
-const PATH: &[u8] = b"/home/.shields";
+/// Where the sites with the blocker off are kept: a hidden file in the signed-in person's home
+/// folder (`/home/<name>/.shields`; plain `/home` is not writable by a signed-in account).
+fn path() -> Vec<u8> {
+    let mut p = crate::desktop::services::accounts::home();
+    p.extend_from_slice(b"/.shields");
+    p
+}
 
 /// Read the saved list (a missing or damaged file is an empty list: the blocker is on everywhere).
 pub(super) fn load_sites() -> SiteList {
-    let text = crate::desktop::services::vfs::read_file(PATH).unwrap_or_default();
+    let text = crate::desktop::services::vfs::read_file(&path()).unwrap_or_default();
     SiteList::parse(&text)
 }
 
 fn save_sites(list: &SiteList) {
-    if !crate::desktop::services::vfs::exists(b"/home") {
-        let _ = crate::desktop::services::vfs::mkdir(b"/home");
-    }
-    if crate::desktop::services::vfs::write_file(PATH, &list.to_text()).is_err() {
+    if crate::desktop::services::vfs::write_file(&path(), &list.to_text()).is_err() {
         crate::notify::notify_key(
             crate::klog::Level::Warn,
             kitsune_core::tk!("notify.shields_unsaved"),
