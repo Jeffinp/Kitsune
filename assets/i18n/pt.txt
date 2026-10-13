@@ -1090,6 +1090,9 @@ settings.net.no_link = Sem sinal
 settings.net.waiting = Procurando endereço
 settings.net.connected = Conectado
 settings.net.connection = Conexão
+settings.net.privacy = Navegador
+settings.net.adblock = Bloqueador de anúncios e rastreadores
+settings.net.adblock_sub = Cada site pode ser liberado pelo escudo na barra de endereço
 settings.net.addresses = Endereços
 settings.net.static = Estático
 settings.net.left = {t} restantes
@@ -1213,6 +1216,17 @@ web.sec.verified_note = A conexão é criptografada e a identidade do site foi c
 web.sec.unverified = Não verificado
 web.sec.unverified_note = Você escolheu continuar com este site nesta sessão. Não digite senhas nem dados pessoais.
 web.sec.http_note = Esta conexão não é criptografada: outras pessoas na rede podem ver o que você envia e recebe.
+# Navegador: bloqueador de anúncios e rastreadores (escudo na barra de endereço)
+web.shield.title = Bloqueador de anúncios
+web.shield.site_switch = Bloquear neste site
+web.shield.ads = Anúncios bloqueados
+web.shield.trackers = Rastreadores bloqueados
+web.shield.hidden = Caixas escondidas
+web.shield.note_on = Anúncios e rastreadores conhecidos não são pedidos à rede e as caixas de anúncio ficam escondidas. Os links nunca são bloqueados.
+web.shield.note_off_site = Desligado para este site: a página abriu sem filtro. Ligue de novo se ela não pedir para desativar.
+web.shield.note_off_global = Desligado nas Configurações (Rede). Ligue lá para bloquear anúncios e rastreadores.
+web.notice.shield_on = Bloqueador ligado neste site
+web.notice.shield_off = Bloqueador desligado neste site
 # Navegador: find bar, context menu, notices
 web.find.placeholder = Buscar na página
 web.find.none = Nenhum
@@ -1439,6 +1453,7 @@ kit.accent_colors = Cores de destaque
 kit.glyphs = Glifos
 # Notificações: toasts the system raises for the person (the log keeps the English text)
 notify.bookmarks_unsaved = Não foi possível salvar os favoritos
+notify.shields_unsaved = Não foi possível salvar a escolha do bloqueador de anúncios
 notify.wallpaper_missing = Papel de parede não encontrado; usando o padrão
 notify.wallpaper_refused = Papel de parede recusado ({why}); usando o padrão
 notify.app_refused = Não foi possível abrir: {why}

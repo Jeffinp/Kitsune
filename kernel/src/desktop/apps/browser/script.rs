@@ -63,7 +63,17 @@ impl Desktop {
         } = &mut *b;
         let t = tabs.active_mut();
         t.page.as_ref()?;
-        let key = t.scripts.next_pending()?;
+        // The ad blocker answers for every script before it is asked for: a blocked one is never
+        // requested and counts as failed (the page goes on without it).
+        let key = loop {
+            let key = t.scripts.next_pending()?;
+            let n0 = t.shield.blocked().len();
+            if t.shield.check(key.as_bytes()).is_none() {
+                break key;
+            }
+            super::shield::log_new(&t.shield, n0, "script");
+            t.scripts.finish(&key, None);
+        };
         let n = key.len().min(out.len());
         out[..n].copy_from_slice(&key.as_bytes()[..n]);
         *script_inflight = Some((t.id, key));

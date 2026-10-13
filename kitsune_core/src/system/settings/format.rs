@@ -126,6 +126,11 @@ impl Settings {
                     self.auto_lock_min = n as u8;
                 }
             }
+            b"adblock" => match val {
+                b"1" | b"on" => self.ad_block = true,
+                b"0" | b"off" => self.ad_block = false,
+                _ => {}
+            },
             // `version` and anything unknown: nothing to do (forward compatible).
             _ => {}
         }
@@ -167,6 +172,7 @@ impl Settings {
         push_kv(&mut out, b"reduce_motion", self.reduce_motion as u32);
         push_kv(&mut out, b"toast_secs", self.toast_secs as u32);
         push_kv(&mut out, b"dock_zoom", self.dock_zoom as u32);
+        push_kv(&mut out, b"adblock", self.ad_block as u32);
         if (self.tz_city as usize) < TIMEZONES.len() {
             push_kv(&mut out, b"tz_city", self.tz_city as u32);
         }
@@ -179,6 +185,7 @@ impl Settings {
         if self.auto_lock_min != 0 {
             push_kv(&mut out, b"auto_lock", self.auto_lock_min as u32);
         }
+
         out
     }
 }

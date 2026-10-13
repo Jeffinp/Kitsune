@@ -168,6 +168,8 @@ fn glyphs_draw_ink_in_the_colour_asked() {
         Glyph::StarFill,
         Glyph::Globe,
         Glyph::Home,
+        Glyph::Shield,
+        Glyph::ShieldOff,
     ] {
         for px in [12usize, 16, 20] {
             let s = glyph(g, px, rgb(0xFF0000));
@@ -259,6 +261,8 @@ fn dump_icons() {
         Glyph::StarFill,
         Glyph::Globe,
         Glyph::Home,
+        Glyph::Shield,
+        Glyph::ShieldOff,
     ];
     for (i, g) in gl.iter().enumerate() {
         put(

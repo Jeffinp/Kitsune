@@ -11,6 +11,7 @@ mod frame;
 mod helpers;
 mod overlay;
 mod popups;
+mod shield;
 mod start;
 mod tabstrip;
 mod toolbar;

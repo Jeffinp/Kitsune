@@ -202,7 +202,12 @@ impl Desktop {
         };
         let content_w = b.chrome(rect).content.w;
         let active_id = b.tabs.active().id;
-        let BrowserState { tabs, images, .. } = &mut *b;
+        let BrowserState {
+            tabs,
+            images,
+            sites,
+            ..
+        } = &mut *b;
         let Some(t) = tabs.iter_mut().find(|t| t.id == tid) else {
             return;
         };
@@ -210,10 +215,19 @@ impl Desktop {
             return;
         }
         let t0 = crate::trace::t();
-        let doc = kitsune_core::web::Doc::parse(&body);
+        let mut doc = kitsune_core::web::Doc::parse(&body);
         stop_js(t);
-        t.sheets.begin(&doc, t.browser.nav_url());
+        // The ad blocker for this page: the sheets it asks for and the boxes it hides.
+        let mut shield = super::shield::page_shield(sites, t.browser.nav_url());
+        if shield.is_on() {
+            let hidden = kitsune_core::shields::hide_ads(&mut doc);
+            shield.add_hidden(hidden);
+        }
+        t.sheets.begin_with(&doc, t.browser.nav_url(), &mut shield);
         t.scripts.begin(&doc, t.browser.nav_url());
+        super::shield::log_new(&shield, 0, "sheet");
+        super::shield::log_tally(&shield);
+        t.shield = shield;
         t.doc = Some(doc);
         crate::trace::note("parse", t0, body.len() as u64);
         t.trace_t0.set(t0);
@@ -261,6 +275,7 @@ impl Desktop {
             t.doc = Some(kitsune_core::web::Doc::parse(&html));
             t.sheets = kitsune_core::web::sheets::SheetSet::default();
             stop_js(t);
+            t.shield = kitsune_core::shields::PageShield::off();
             t.page = None;
             t.cert = None;
             t.sel = None;
@@ -315,6 +330,7 @@ impl Desktop {
                 active = t.id == active_id;
             }
             b.popover = false;
+            b.shield_pop = false;
             b.ctx = None;
             b.notice = None;
         }

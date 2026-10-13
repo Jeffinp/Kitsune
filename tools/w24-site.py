@@ -12,6 +12,13 @@ server):
 Routes: / (index), /type, /lists, /tables, /forms, /result (echoes the query), /images,
 /long, /intl, /styled, /quote, /js (JavaScript: W52), /big?n=2000 (about n nodes), /slow (a 3 s response, to see the
 progress bar), /redirect, /gone (404), /hang (never answers).
+
+/ads is the page for the ad blocker (W53): it asks for a style sheet, three pictures and two tracking
+pixels that the blocker's path rules catch (/ads/..., /pagead/..., /tracking/pixel...), two pictures from
+the reserved .invalid names the rule lists carry for tests (they never resolve, so they only show up
+in the guest's log), and two ad boxes that the cosmetic rules hide (one holds a picture that must then
+not be asked for). With the blocker on the server sees only /ads and /g.png; with it off, all of them.
+Every request is printed on stderr, so `tools/w24-site.py 2> requests.log` is the record to check.
 """
 import struct
 import sys
@@ -166,7 +173,7 @@ def route(path, q):
             "<h1>Site de testes do navegador</h1><p>Páginas para conferir a tipografia, as listas, "
             "as tabelas, os formulários e as imagens.</p>" + "".join(
                 f'<p><a href="{p}">{p}</a></p>'
-                for p in ["/type", "/lists", "/tables", "/forms", "/images", "/long", "/intl", "/styled", "/quote", "/big", "/slow", "/gone"]
+                for p in ["/type", "/lists", "/tables", "/forms", "/images", "/long", "/intl", "/styled", "/quote", "/big", "/slow", "/gone", "/ads"]
             ),
         )
     if path == "/type":
@@ -311,6 +318,24 @@ a:hover{color:red}
             "<link rel=stylesheet href=/big.css></head><body><p class=first>Primeiro</p>"
             "<p class=last>Ultimo: vermelho se a folha chegou inteira.</p></body></html>"
         ).encode()
+    if path == "/ads":
+        # Expected with the blocker on: ads=4 (1 sheet, 3 pictures), trackers=2, hidden=2.
+        return (
+            "<!doctype html><html lang=pt-BR><head><meta charset=utf-8><title>Bloqueador</title>"
+            "<link rel=stylesheet href=/ads/ad-theme.css></head><body>"
+            "<h1>Página de teste do bloqueador</h1>"
+            "<p>O título fica vermelho só se a folha /ads/ad-theme.css (um anúncio) for carregada.</p>"
+            "<p>Imagem do próprio site (sempre aparece):</p><img src=/g.png width=160 height=80 alt=site>"
+            "<p>Anúncio por caminho (/ads/banner):</p><img src=/ads/banner-728.png width=364 height=45 alt=anuncio>"
+            "<p>Anúncio por caminho (/pagead/):</p><img src=/pagead/ad.png width=364 height=45 alt=anuncio>"
+            "<p>Anúncio de rede (host de teste):</p><img src=http://kitsune-ads.invalid/banner.png width=300 height=60 alt=rede>"
+            "<p>Pixels de rastreio:</p><img src='/tracking/pixel.png?id=7' width=1 height=1 alt=''>"
+            "<img src=http://kitsune-tracker.invalid/pixel.gif width=1 height=1 alt=''>"
+            "<div class=ad-banner>Caixa de anúncio escondida"
+            "<img src='/c.png?in-hidden-ad' width=100 height=40 alt=''></div>"
+            "<ins class=adsbygoogle>Outra caixa de anúncio</ins>"
+            f"<p>{LOREM}</p><p>FIM DA PÁGINA</p></body></html>"
+        ).encode()
     if path == "/quote":
         return page("Citações", f"<h1>Citações</h1><blockquote>{LOREM}<blockquote>Aninhada: {LOREM}</blockquote></blockquote>")
     if path == "/big":
@@ -349,6 +374,12 @@ class H(BaseHTTPRequestHandler):
             return self.reply(200, "image/png", png(160, 96, checker))
         if u.path == "/wide.png":
             return self.reply(200, "image/png", png(1400, 200, gradient))
+        if u.path in ("/ads/banner-728.png", "/pagead/ad.png"):
+            return self.reply(200, "image/png", png(364, 45, checker))
+        if u.path == "/tracking/pixel.png":
+            return self.reply(200, "image/png", png(1, 1, lambda x, y: (0, 0, 0)))
+        if u.path == "/ads/ad-theme.css":
+            return self.reply(200, "text/css", b"h1{color:#c0392b}")
         if u.path == "/modern.css":
             css = """
 :root{--brand:#5b3df5;--gap:12px;--radius:10px}

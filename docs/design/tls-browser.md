@@ -455,13 +455,81 @@ larguras diferem um pouco da Inter do sistema; a estrutura é a do motor).
 | Folha externa + flex + grid + float + `@media` no QEMU | `tools/perf/scen/w49-browser-css.sh` (página `/modern` de `tools/w24-site.py`) |
 | Sites reais pela rede de verdade | `tools/perf/scen/w50-real-site.sh` (`CONTINUE=1` onde o proxy do ambiente reassina o HTTPS) |
 
-## 11. Planejado: bloqueador de anúncios nativo
+## 11. Bloqueador de anúncios e rastreadores nativo
 
-Ainda não existe; o plano está no [`ROADMAP`](../ROADMAP.md) (item 10). Resumo: ligado por padrão e **escolhido
-pela pessoa**, por site (para quando um site pedir que o bloqueio seja desativado), com regras aplicadas antes do
-pedido de cada subrecurso e na diagramação. O ponto único para isso é a fila de recursos da página
-(`web::sheets::SheetSet` e `web::imgcache::ImageCache`): ambas passam a perguntar a um filtro (`kitsune_core`, puro
-e testável no host) se o endereço pode ser pedido.
+Item 10 do [`ROADMAP`](../ROADMAP.md), no estilo dos "Escudos" do Brave (só a ideia; nada do código nem da marca).
+**Ligado por padrão e escolhido pela pessoa**: chave global em Ajustes, Rede, "Navegador" (`adblock=1|0` em
+`/etc/kitsune.conf`) e chave **por site** no escudo da barra de endereço (lista em `~/.shields` (`/home/<nome>/.shields`), um site por
+linha, o domínio registrável: desligar em `www.exemplo.com` vale para `exemplo.com` e seus subdomínios). A lógica é
+pura e testada no host: `kitsune_core::shields` (`browsing/shields/`).
+
+### 11.1 O que se decide
+
+| Regra | Arquivo (`shields/data/`) | Como casa |
+|---|---|---|
+| Hosts de anúncios e de rastreadores | `ad_hosts.txt`, `tracker_hosts.txt` | o host da requisição ou qualquer pai dele (nunca o TLD sozinho); só para requisições de **terceiros** (o "site" do pedido difere do da página: últimos dois rótulos, três sob `co.uk`, `com.br`...; IP é o próprio site) |
+| Trechos de caminho | `ad_paths.txt`, `tracker_paths.txt` | subcadeia do caminho e da query, sem distinguir maiúsculas, para qualquer requisição (começam em `/`: `/ads/banner` não casa `/uploads/banner`) |
+| Cosmético | `cosmetic.css` | até 32 seletores genéricos (`.adsbygoogle`, `[id^="div-gpt-ad"]`...) com `display:none !important`, somados às regras do documento (`Doc::hide_matching`) |
+
+Sem alocar por requisição: o host é posto em minúsculas num buffer de pilha e as listas de hosts, **ordenadas**, são
+buscadas em `O(log n)` no próprio texto embutido (`include_str!`); um teste mantém os arquivos ordenados, únicos,
+em minúsculas e sem linhas vazias. A **navegação de topo nunca é bloqueada** (só subrecursos passam por
+`classify`; `data:` e o que não é http(s) nunca são bloqueados). As listas são **próprias do projeto** (ver
+`THIRD-PARTY.md`: nada copiado de EasyList, uBlock, Disconnect etc.); as duas entradas `*.invalid` existem para a
+página de teste.
+
+### 11.2 Onde entra no pipeline
+
+* `PageShield` (um por aba): `on`, o host da página, o `Tally` (`ads`, `trackers`, `hidden`; o número do escudo é a
+  soma) e a lista (até 64) dos endereços bloqueados, que também serve para contar cada endereço uma vez só.
+  Construída em `browser_load` com `PageShield::decide` (chave global ligada e site não liberado).
+* **Folhas**: `SheetSet::begin_with` / `finish_with` não enfileiram folha bloqueada nem `@import` bloqueado.
+* **Imagens**: no registro do layout (`layout_browser`, `register`), cada `src` bloqueado vai para
+  `ImageCache::block` (nunca é pedido, não gasta as 8 vagas da página) e o layout é refeito: `ImgState::Blocked`
+  **não ganha caixa nenhuma** (o `ImgRef` continua na lista para os índices baterem).
+* **Cosmético**: `hide_ads` roda uma vez, ao carregar; o que está dentro de uma caixa escondida não é pedido
+  (o layout nem o vê) e conta uma vez.
+* **Scripts** (a ligação do JavaScript com o navegador): a fonte de scripts deve perguntar o mesmo
+  `PageShield::check(url)` antes de pedir o `.js`.
+* Cada bloqueio vai para a serial (`shields: blocked <ad|tracker> <sheet|image|import> <url>`, `shields: page <host>
+  on=.. ads=.. trackers=.. hidden=.. total=..`, `shields: off|on for <site>`), que é o que o cenário QEMU lê.
+
+### 11.3 Interface
+
+Um **escudo** dentro do campo de endereço, à esquerda da estrela, em páginas http(s) já carregadas: verde com o
+número de itens retirados quando filtra e há algo, cinza quando filtra sem achar nada, cinza riscado quando está
+desligado. O clique abre um balão com a **chave "Bloquear neste site"** (clicar na linha inteira; desligar ou ligar
+**recarrega a página** com ou sem o filtro, para um site que peça a desativação), as três contagens (anúncios,
+rastreadores, caixas escondidas) e uma frase. Com a chave global desligada em Ajustes o escudo aparece riscado e a
+chave do balão fica apagada. Esc, clique fora, troca de aba e página nova fecham o balão. Strings em
+`web.shield.*`, `web.notice.shield_*`, `settings.net.adblock*` (pt e en).
+
+### 11.4 Limites
+
+* O que mudou na chave global só vale para a **próxima** carga. A lista de sites guarda até 64.
+* Não há JavaScript no navegador, então não existe o que bloquear em `fetch`/`XHR`; os subrecursos de hoje são folhas e
+  imagens. Sem `iframe`, fontes da web nem `background-image`.
+* Foram feitos os itens "domínio, caminho e seletor" e o contador. **Não** foram feitos: remover `utm_*`/`fbclid`
+  das URLs, subir http para https, listas atualizáveis e o formato de filtros comum (a lista é um arquivo de dados
+  fixo na imagem). Mais de 64 imagens bloqueadas numa página ficam como caixa cinza sem carregar.
+* O "site" é uma heurística sem a lista de sufixos públicos; sufixos incomuns (`*.pvt.k12.ma.us`) podem contar
+  dois sites de uma mesma organização como um só ou o contrário.
+* Regras de caminho valem também para o próprio site (um anúncio próprio ainda é anúncio); por isso são poucas e
+  específicas.
+
+### 11.5 Provas
+
+| O quê | Evidência |
+|---|---|
+| Listas (ordem, sem duplicata, nenhum TLD), busca binária, hosts e subdomínios, minúsculas/porta/usuário/ponto final, quase-acertos, esquemas, regra de terceiros, caminhos, sites, entradas hostis | `kitsune_core` `browsing::shields::tests` |
+| Contagem uma vez por endereço, log limitado, `decide`, lista de sites (arquivo danificado, limite, ida e volta) | idem |
+| Imagem bloqueada sem caixa e sem pedido, folhas e `@import` não enfileirados, mesmas folhas pedidas com o filtro desligado | idem |
+| Cosmético: caixas escondidas e contadas uma vez, vence o `display` da página, página hostil funda | idem |
+| `adblock=` nos Ajustes (padrão ligado, ida e volta, lixo ignorado), geometria do botão e do balão, glifos `Shield`/`ShieldOff` | `system::settings::tests`, `ui::layout::tests`, `ui::iconart::tests` |
+| Fuzz: `fuzz/fuzz_targets/html_img_form.rs` ganhou `ImgState::Blocked` e `shields_exercise` (endereços, página, lista de sites, cosmético e folhas com bytes hostis) | ver CHANGELOG |
+| QEMU (BIOS), página `/ads` de `tools/w24-site.py`, `tools/perf/scen/w53-shields.sh`: ligado, a serial diz `shields: page 203.0.113.5 on=true ads=4 trackers=2 hidden=2 total=8` e o servidor só vê `/ads` e `/g.png`; pela chave do balão o site é desligado, a página recarrega e o servidor vê as cinco requisições (folha, dois anúncios por caminho, pixel e a imagem da caixa escondida) e o guest tenta os dois hosts `.invalid`; ligado de novo, volta ao mesmo total | `docs/img/browser-shield-on.png`, `browser-shield-off.png`; 21 verificações PASS no `w53-result.txt` |
+| A escolha por site sobrevive a um reinício (`~/.shields`) | `w53-persist-1.sh` e `w53-persist-2.sh` (`FS_IMG` do primeiro) |
+| A chave global de Ajustes abre a página sem filtro | `w53-settings.sh` |
 
 ## 12. JavaScript nas páginas
 

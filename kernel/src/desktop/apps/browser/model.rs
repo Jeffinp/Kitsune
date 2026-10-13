@@ -54,6 +54,7 @@ impl BrowserState {
             self.shield_width(),
             (self.strip_h.value().max(0.0) + 0.5) as i32,
         )
+        .with_blocker(self.blocker_width())
     }
 
     /// The tab strip's entries as `(entry index, tab index)` for the real tabs.

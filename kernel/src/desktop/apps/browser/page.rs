@@ -53,7 +53,7 @@ impl Desktop {
     pub(crate) fn browser_wheel(&mut self, id: WindowId, notches: i32) -> bool {
         // Over an open menu or popover the wheel does nothing to the page.
         if let Some(b) = self.browser_state_mut(id)
-            && (b.ctx.is_some() || b.popover)
+            && (b.ctx.is_some() || b.popover || b.shield_pop)
         {
             return false;
         }
@@ -169,7 +169,12 @@ impl Desktop {
         let Some(doc) = t.doc.as_mut() else {
             return;
         };
-        if t.sheets.finish(doc, &key, text.as_deref()) && tid == active_id {
+        let n0 = t.shield.blocked().len();
+        let changed = t
+            .sheets
+            .finish_with(doc, &key, text.as_deref(), &mut t.shield);
+        super::shield::log_new(&t.shield, n0, "import");
+        if changed && tid == active_id {
             // The styles changed what is shown (and which pictures): lay out as for a new page, but
             // not yet: more sheets and pictures are probably on their way (see `Relayout`).
             t.relayout.request(true);

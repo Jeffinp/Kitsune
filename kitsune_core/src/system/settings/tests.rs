@@ -433,3 +433,24 @@ fn auto_lock_round_trips_and_ignores_nonsense() {
     }
     assert!(AUTO_LOCK_CHOICES.contains(&0) && AUTO_LOCK_CHOICES.contains(&15));
 }
+
+#[test]
+fn ad_block_is_on_by_default_and_round_trips() {
+    assert!(Settings::new().ad_block);
+    assert!(Settings::parse(b"").ad_block);
+    let mut s = Settings::new();
+    s.ad_block = false;
+    let text = s.to_text();
+    assert!(
+        String::from_utf8(text.clone())
+            .unwrap()
+            .contains("adblock=0")
+    );
+    assert!(!Settings::parse(&text).ad_block);
+    assert!(Settings::parse(b"adblock=0\nadblock=on\n").ad_block);
+    assert!(!Settings::parse(b"adblock=off\n").ad_block);
+    // Nonsense keeps the default.
+    assert!(Settings::parse(b"adblock=maybe\n").ad_block);
+    assert!(Settings::parse(b"adblock=\n").ad_block);
+    assert_eq!(Settings::parse(&Settings::new().to_text()), Settings::new());
+}

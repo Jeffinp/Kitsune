@@ -11,7 +11,11 @@ struct RealMetrics(std::cell::RefCell<kitsune_core::fontcache::TextEngine>);
 impl RealMetrics {
     fn load() -> RealMetrics {
         fn leak(f: &str) -> &'static [u8] {
-            Box::leak(std::fs::read(format!("assets/fonts/{f}")).expect("font").into_boxed_slice())
+            Box::leak(
+                std::fs::read(format!("assets/fonts/{f}"))
+                    .expect("font")
+                    .into_boxed_slice(),
+            )
         }
         let e = kitsune_core::fontcache::TextEngine::new([
             leak("Inter-Regular.subset.ttf"),
@@ -77,7 +81,10 @@ fn main() {
             }
         }
     }
-    let real = args.iter().any(|a| a == "--real-font").then(RealMetrics::load);
+    let real = args
+        .iter()
+        .any(|a| a == "--real-font")
+        .then(RealMetrics::load);
     let m: &dyn kitsune_core::web::TextMetrics = match &real {
         Some(r) => r,
         None => &FixedAdvance,

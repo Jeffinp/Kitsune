@@ -45,6 +45,8 @@ pub const MAX_DATA_URI_LEN: usize = 96 * 1024;
 pub const CACHE_BYTES: usize = 6 * 1024 * 1024;
 /// Entries kept (loaded or not).
 pub const MAX_ENTRIES: usize = 24;
+/// Pictures of one page the ad blocker may leave out (a page past it just fetches the rest).
+pub const MAX_BLOCKED: usize = 64;
 /// Background the pictures are flattened over (the page's white-ish).
 pub const PAGE_BG: u32 = 0xFFF7_F9FC;
 
@@ -63,6 +65,8 @@ pub enum ImgState {
     TooBig,
     /// Past [`MAX_PAGE_IMAGES`].
     TooMany,
+    /// The ad blocker left it out: the layout gives it no box at all.
+    Blocked,
 }
 
 impl ImgState {
@@ -70,7 +74,7 @@ impl ImgState {
     /// `None` for pending / ready.
     pub fn message_key(self) -> Option<&'static str> {
         match self {
-            ImgState::Pending | ImgState::Ready { .. } => None,
+            ImgState::Pending | ImgState::Ready { .. } | ImgState::Blocked => None,
             ImgState::Unsupported => Some(tk!("web.img.unsupported")),
             ImgState::Failed => Some(tk!("web.img.failed")),
             ImgState::TooBig => Some(tk!("web.img.too_big")),
@@ -307,6 +311,8 @@ pub struct ImageCache {
     entries: Vec<Entry>,
     /// Keys of the page being shown, in document order (at most [`MAX_PAGE_IMAGES`]).
     page: Vec<String>,
+    /// Keys of the page's pictures the ad blocker left out (at most [`MAX_BLOCKED`]).
+    blocked: Vec<String>,
     tick: Cell<u64>,
 }
 
@@ -321,6 +327,7 @@ impl ImageCache {
         Self {
             entries: Vec::new(),
             page: Vec::new(),
+            blocked: Vec::new(),
             tick: Cell::new(0),
         }
     }
@@ -337,6 +344,20 @@ impl ImageCache {
     /// Start a new page: nothing is wanted yet (loaded images stay cached).
     pub fn begin_page(&mut self) {
         self.page.clear();
+        self.blocked.clear();
+    }
+
+    /// The ad blocker leaves `key` out of the current page: it is never fetched and the layout
+    /// shows no box for it. Returns `false` when [`MAX_BLOCKED`] are already listed.
+    pub fn block(&mut self, key: &str) -> bool {
+        if self.blocked.iter().any(|k| k == key) {
+            return true;
+        }
+        if self.blocked.len() >= MAX_BLOCKED {
+            return false;
+        }
+        self.blocked.push(key.into());
+        true
     }
 
     /// Declare that the current page shows `key` (and, for an inline image, its
@@ -375,6 +396,9 @@ impl ImageCache {
 
     /// What the layout should do with `key`.
     pub fn state(&self, key: &str) -> ImgState {
+        if !self.blocked.is_empty() && self.blocked.iter().any(|k| k == key) {
+            return ImgState::Blocked;
+        }
         match self.find(key) {
             Some(i) => match &self.entries[i].slot {
                 Slot::Pending | Slot::Loading => ImgState::Pending,
@@ -496,6 +520,7 @@ impl ImageCache {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.page.clear();
+        self.blocked.clear();
     }
 
     /// Put an in-flight image back to pending (its answer will not come).

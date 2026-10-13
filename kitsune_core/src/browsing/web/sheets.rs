@@ -8,6 +8,7 @@
 
 use super::Doc;
 use super::imgcache::image_key;
+use crate::browsing::shields::PageShield;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -39,15 +40,21 @@ pub struct SheetSet {
 impl SheetSet {
     /// A new page at `base`: forget the old sheets and queue the ones `doc` asks for.
     pub fn begin(&mut self, doc: &Doc, base: &[u8]) {
+        self.begin_with(doc, base, &mut PageShield::off());
+    }
+
+    /// [`begin`](Self::begin) with the ad blocker: a sheet `shield` blocks is never queued (and is
+    /// counted there).
+    pub fn begin_with(&mut self, doc: &Doc, base: &[u8], shield: &mut PageShield) {
         self.base = base.to_vec();
         self.entries.clear();
         self.bytes = 0;
         for href in doc.linked_sheets() {
-            self.add(&href);
+            self.add(&href, shield);
         }
     }
 
-    fn add(&mut self, href: &str) {
+    fn add(&mut self, href: &str, shield: &mut PageShield) {
         if self.entries.len() >= MAX_SHEETS {
             return;
         }
@@ -55,6 +62,9 @@ impl SheetSet {
             return;
         };
         if key.starts_with("data:") || self.entries.iter().any(|e| e.key == key) {
+            return;
+        }
+        if shield.check(key.as_bytes()).is_some() {
             return;
         }
         self.entries.push(Entry {
@@ -88,6 +98,17 @@ impl SheetSet {
     /// The download of `key` ended: `css` is its text (`None` when it failed). The rules join `doc`
     /// and the sheet's imports are queued. Returns whether `doc` changed.
     pub fn finish(&mut self, doc: &mut Doc, key: &str, css: Option<&str>) -> bool {
+        self.finish_with(doc, key, css, &mut PageShield::off())
+    }
+
+    /// [`finish`](Self::finish) with the ad blocker, which also filters the sheet's own `@import`s.
+    pub fn finish_with(
+        &mut self,
+        doc: &mut Doc,
+        key: &str,
+        css: Option<&str>,
+        shield: &mut PageShield,
+    ) -> bool {
         let Some(e) = self
             .entries
             .iter_mut()
@@ -106,7 +127,7 @@ impl SheetSet {
         let imports = doc.add_sheet(css);
         let page_base = core::mem::replace(&mut self.base, sheet_base);
         for href in &imports {
-            self.add(href);
+            self.add(href, shield);
         }
         self.base = page_base;
         true

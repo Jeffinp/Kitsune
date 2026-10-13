@@ -40,6 +40,7 @@ mod inline;
 mod objects;
 mod text;
 
+mod cosmetic;
 mod doc;
 mod painter;
 pub use doc::*;

@@ -43,6 +43,7 @@ pub(super) const A_SWATCH: u32 = 0x210;
 pub(super) const A_MOTION: u32 = 0x220;
 pub(super) const A_TOASTS: u32 = 0x221;
 pub(super) const A_TOAST_SECS: u32 = 0x222;
+pub(super) const A_ADBLOCK: u32 = 0x223;
 pub(super) const A_WALL: u32 = 0x230;
 pub(super) const A_PATH: u32 = 0x240;
 pub(super) const A_APPLY: u32 = 0x241;
@@ -137,8 +138,8 @@ pub(crate) struct SettingsState {
     pub(super) hover: Cell<u32>,
     /// A slider being dragged (its control id).
     pub(super) drag: u32,
-    /// Switch knobs: reduzir movimento, notificações, 24 horas.
-    pub(super) knobs: [Glide; 3],
+    /// Switch knobs: reduzir movimento, notificações, 24 horas, bloqueador de anúncios.
+    pub(super) knobs: [Glide; 4],
     pub(super) users: UsersForm,
 }
 
@@ -175,6 +176,7 @@ impl SettingsState {
                 Glide::at(if s.reduce_motion { 256 } else { 0 }),
                 Glide::at(if s.toasts { 256 } else { 0 }),
                 Glide::at(if s.clock24 { 256 } else { 0 }),
+                Glide::at(if s.ad_block { 256 } else { 0 }),
             ],
             users: UsersForm::default(),
         };

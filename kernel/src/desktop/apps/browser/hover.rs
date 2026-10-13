@@ -47,6 +47,15 @@ pub(crate) fn browser_hover_at(
         }
         return (BrowserHover::None, None);
     }
+    if b.shield_pop {
+        let g = super::shield::popover_geom(b, &ch, r);
+        if g.row.contains(cx, cy) && b.blocker_mode() != super::shield::BlockerMode::GlobalOff {
+            return (BrowserHover::BlockerSwitch, None);
+        }
+        if g.pop.contains(cx, cy) {
+            return (BrowserHover::None, None);
+        }
+    }
     let n = t.browser.suggestions().len();
     if let Some(i) =
         kitsune_core::layout::browser_suggestion_at(ch.bar, n, cx, cy).filter(|_| n > 0)
@@ -67,6 +76,9 @@ pub(crate) fn browser_hover_at(
     }
     if ch.star.contains(cx, cy) {
         return (BrowserHover::Star, None);
+    }
+    if ch.blocker.w > 0 && ch.blocker.contains(cx, cy) {
+        return (BrowserHover::Blocker, None);
     }
     if ch.shield.w > 0 && ch.shield.contains(cx, cy) {
         return (BrowserHover::Shield, None);

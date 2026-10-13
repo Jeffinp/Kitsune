@@ -129,6 +129,9 @@ pub struct BrowserChrome {
     pub shield: Rect,
     /// The favourite star, inside the right end of the omnibox.
     pub star: Rect,
+    /// The ad blocker's shield and its count, inside the omnibox just left of the star (empty when
+    /// the page has none, see [`BrowserChrome::with_blocker`]).
+    pub blocker: Rect,
     /// The "new tab" button right of the omnibox.
     pub newtab: Rect,
     /// The loading progress track under the omnibox.
@@ -182,11 +185,31 @@ impl BrowserChrome {
             bar,
             shield,
             star,
+            blocker: Rect::new(star.x - 4, bar.y + 4, 0, 24),
             newtab,
             progress,
             strip,
             content,
         }
+    }
+
+    /// The same chrome with the ad blocker's button `w` pixels wide (0: none) placed left of the star.
+    pub fn with_blocker(mut self, w: i32) -> Self {
+        let w = w.clamp(0, (self.bar.w / 3).max(0));
+        self.blocker = Rect::new(self.star.x - 4 - w, self.bar.y + 4, w, 24);
+        self
+    }
+
+    /// Right edge of the address text inside the omnibox: before the blocker's button and the star.
+    pub fn text_right(&self, has_star: bool) -> i32 {
+        let edge = if self.blocker.w > 0 {
+            self.blocker.x - 4
+        } else if has_star {
+            self.star.x - 4
+        } else {
+            self.bar.right() - 12
+        };
+        edge.max(self.text_x() + 8)
     }
 
     /// Left edge of the address text inside the omnibox.
@@ -274,6 +297,14 @@ pub fn browser_suggestion_at(bar: Rect, n: usize, px: i32, py: i32) -> Option<us
 pub fn browser_popover(bar: Rect, win: Rect, h: i32) -> Rect {
     let w = 328.min(win.w - 16).max(120);
     let x = bar.x.clamp(win.x + 8, (win.right() - w - 8).max(win.x + 8));
+    Rect::new(x, bar.bottom() + 8, w, h)
+}
+
+/// The popover under the ad blocker's button `blocker`, `h` tall, kept inside window `win`: its right
+/// edge lines up with the button's.
+pub fn browser_blocker_popover(blocker: Rect, bar: Rect, win: Rect, h: i32) -> Rect {
+    let w = 312.min(win.w - 16).max(120);
+    let x = (blocker.right() - w).clamp(win.x + 8, (win.right() - w - 8).max(win.x + 8));
     Rect::new(x, bar.bottom() + 8, w, h)
 }
 

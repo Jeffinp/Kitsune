@@ -55,6 +55,23 @@ impl Desktop {
             b.popover = false;
             b.glass[1].clear();
         }
+        // The ad blocker's popover: the switch row toggles the site, the button closes it, a click
+        // elsewhere in it does nothing, outside it closes it first.
+        if b.shield_pop {
+            let g = super::shield::popover_geom(b, &ch, rect);
+            let toggle = g.row.contains(px, py);
+            if toggle || g.pop.contains(px, py) || ch.blocker.contains(px, py) {
+                if toggle {
+                    self.browser_toggle_site_shield(id);
+                } else if ch.blocker.contains(px, py) {
+                    b.shield_pop = false;
+                    b.glass[1].clear();
+                }
+                return false;
+            }
+            b.shield_pop = false;
+            b.glass[1].clear();
+        }
         // The suggestion list floats over everything under the omnibox.
         let t = b.tabs.active_mut();
         let n = t.browser.suggestions().len();
@@ -76,7 +93,12 @@ impl Desktop {
             }
         } else if ch.star.contains(px, py) && !t.browser.is_home() {
             self.browser_toggle_bookmark(id);
+        } else if ch.blocker.w > 0 && ch.blocker.contains(px, py) {
+            b.popover = false;
+            b.shield_pop = true;
+            b.glass[1].clear();
         } else if ch.shield.w > 0 && ch.shield.contains(px, py) {
+            b.shield_pop = false;
             b.popover = true;
             b.glass[1].clear();
         } else if ch.bar.contains(px, py) {
@@ -220,6 +242,7 @@ impl Desktop {
         let ch = b.chrome(rect);
         b.touch();
         b.popover = false;
+        b.shield_pop = false;
         if !ch.content.contains(px, py) {
             b.ctx = None;
             return;
@@ -328,7 +351,13 @@ impl Desktop {
         match h {
             H::Back => t.browser.can_back(),
             H::Forward => t.browser.can_forward(),
-            H::Reload | H::NewTab | H::Shield | H::Tab(_) | H::TabClose(_) => true,
+            H::Reload
+            | H::NewTab
+            | H::Shield
+            | H::Blocker
+            | H::BlockerSwitch
+            | H::Tab(_)
+            | H::TabClose(_) => true,
             H::Star => !t.browser.is_home(),
             H::Suggestion(_)
             | H::MenuRow(_)

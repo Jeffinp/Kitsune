@@ -29,10 +29,11 @@ impl Desktop {
         b.notice_flash.hide();
         b.touch();
         // A menu or the popover: Esc closes it, every other key is for nobody.
-        if b.ctx.is_some() || b.popover {
+        if b.ctx.is_some() || b.popover || b.shield_pop {
             if key == Key::Esc {
                 b.ctx = None;
                 b.popover = false;
+                b.shield_pop = false;
                 b.glass[1].clear();
                 b.glass[3].clear();
             }

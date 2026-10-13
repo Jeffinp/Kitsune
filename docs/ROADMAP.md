@@ -13,7 +13,7 @@ ele consegue fazer, depois o polimento. Cada item tem um **critério de aceite v
 | Scheduler | Preemptivo a 250 Hz, threads prontas/bloqueadas, CPU real por thread, compositor ocioso sem acordar à toa |
 | Armazenamento | **OJFS v3**: journal de metadados, dados *copy-on-write*, extents, CRC32, `fsck` no boot, cache de blocos, `FLUSH` no disco, camada VFS única |
 | Rede | `virtio-net` e NE2000, ARP/IPv4/ICMP/DHCP com renovação, DNS com cache, TCP, **TLS 1.3 com cadeia de certificados verificada** (46 raízes), hora por SNTP |
-| Navegador | HTML/CSS, imagens PNG/BMP/PPM, formulários GET, favoritos, busca na página, zoom, gzip/deflate, indicador de conexão segura, JavaScript das páginas (QuickJS num processo de anel 3 por aba, DOM e eventos básicos) |
+| Navegador | HTML/CSS, imagens PNG/BMP/PPM, formulários GET, favoritos, busca na página, zoom, gzip/deflate, indicador de conexão segura, JavaScript das páginas (QuickJS num processo de anel 3 por aba, DOM e eventos básicos), bloqueador de anúncios e rastreadores com chave por site |
 | Apps | Plataforma WebAssembly com manifesto, permissões, cotas de CPU e memória, dados em `/data/<id>`, instalação em `/apps`; Terminal, Editor, Arquivos, Imagens, Tarefas, Registro, Ajustes, Calculadora |
 | Interface | Painel superior, barra de tarefas flutuante, Apps com categorias, Busca, encaixe de janelas, 2 a 4 áreas de trabalho, configurações rápidas, central de notificações, tema claro/escuro, animações com opção de reduzir movimento |
 | Idiomas | Português do Brasil e inglês, trocados ao vivo, com formatos de data e número do idioma |
@@ -78,24 +78,26 @@ SDK documentado e WASI sobre o OJFS; GIF e JPEG, POST, `<textarea>` e `<select>`
 *Aceite:* uma página com GIF e JPEG mostra as imagens; um formulário POST envia e recebe a resposta; um programa em
 Rust compilado para WASI roda no Terminal.
 
-### 10. Bloqueador de anúncios e rastreadores nativo (a fazer, pedido do dono do projeto)
+### 10. Bloqueador de anúncios e rastreadores nativo (feito em 2026-10; extras a fazer)
 
-O navegador deve trazer, de fábrica, um bloqueador de anúncios e rastreadores no estilo dos "Escudos" do Brave (só a
-ideia: nada do código nem da marca do Brave). Decisões já tomadas:
+O navegador traz, de fábrica, um bloqueador no estilo dos "Escudos" do Brave (só a ideia: nada do código nem da
+marca). **Feito:**
 
-- **A pessoa escolhe.** Ligado por padrão, com um botão na barra de endereço (e nas configurações) para desligar
-  **por site**, por sessão ou para sempre. Se um site detectar o bloqueio e pedir para desativar, a pessoa desliga ali
-  e a página recarrega sem o filtro e abre normalmente.
-- **Como:** lista de regras embutida e atualizável (formato de filtros comum, só o subconjunto de bloqueio por domínio,
-  caminho e tipo de recurso), aplicada **antes** do `fetcher` pedir qualquer subrecurso (imagens, folhas, scripts) e na
-  diagramação (elementos escondidos por seletor cosmético). O ganho é menos tráfego, menos memória, menos script de
-  terceiros rodando e páginas mais limpas.
-- **Extras do estilo Brave, em ordem:** bloquear rastreadores de terceiros, remover parâmetros de rastreio das
-  URLs (`utm_*`, `fbclid`...), atualizar http→https quando o site oferece, contador de itens bloqueados na página.
-- **Aceite:** uma página de teste com anúncios e rastreadores locais não pede nenhum deles com o filtro ligado e pede
-  todos com ele desligado; o botão desliga só o site atual; testes no host (`kitsune_core`) das regras e do casamento
-  de URLs, e uma cena no QEMU.
+- **A pessoa escolhe.** Ligado por padrão; chave global em Ajustes, Rede, "Navegador", e **chave por site** no escudo
+  da barra de endereço (lembrada em `~/.shields` (`/home/<nome>/.shields`)), que recarrega a página sem o filtro para o site que pedir a
+  desativação.
+- **Como:** lista própria embutida (hosts de anúncios e de rastreadores, trechos de caminho, seletores cosméticos),
+  casada sem alocar por requisição, aplicada **antes** do `fetcher` pedir folhas, `@import`s e imagens, e na
+  diagramação (imagem bloqueada não ganha caixa; caixas de anúncio escondidas por seletor). A navegação de topo nunca é
+  bloqueada. Contador de itens retirados por aba no escudo.
+- **Aceite:** a página `/ads` de `tools/w24-site.py` não pede nenhum recurso de anúncio ou rastreador com o filtro
+  ligado e pede todos com ele desligado; o botão desliga só o site atual; testes no host e o cenário
+  `tools/perf/scen/w53-shields.sh` no QEMU (ver CHANGELOG para o que foi provado).
 - Ver `docs/design/tls-browser.md` §11.
+
+**A fazer (extras, em ordem):** remover parâmetros de rastreio das URLs (`utm_*`, `fbclid`...), subir http para https
+quando o site oferece, lista atualizável e formato de filtros comum, e o gancho dos scripts quando o navegador rodar
+JavaScript (a fonte de scripts pergunta o mesmo `PageShield::check`).
 
 ### 11. JavaScript e YouTube com vídeo e áudio (pedido do dono do projeto; trabalho de meses, em etapas)
 

@@ -41,6 +41,10 @@ pub enum Glyph {
     Home,
     /// A head and shoulders: accounts.
     User,
+    /// A shield with a check: the ad blocker is on.
+    Shield,
+    /// A shield crossed out: the ad blocker is off.
+    ShieldOff,
 }
 
 /// Draw `g` at `px` x `px` in straight ARGB colour `c`.
@@ -303,6 +307,25 @@ pub fn glyph(g: Glyph, px: usize, c: u32) -> Surface {
             mer.ellipse_hole(u(8), u(8), u(3) - 32, u(7) - 90);
             s.fill_path(&mer, Paint::Solid(c));
             stroke(&mut s, &[(1, 8), (15, 8)], 1);
+        }
+        Glyph::Shield | Glyph::ShieldOff => {
+            let outline = [
+                pt(8, 2),
+                pt(13, 4),
+                pt(13, 8),
+                pt(11, 11),
+                pt(8, 14),
+                pt(5, 11),
+                pt(3, 8),
+                pt(3, 4),
+                pt(8, 2),
+            ];
+            s.fill_path(&stroke_path(&outline, w(2) - 32, true), Paint::Solid(c));
+            if g == Glyph::Shield {
+                stroke(&mut s, &[(6, 8), (7, 9), (10, 6)], 1);
+            } else {
+                stroke(&mut s, &[(4, 3), (12, 13)], 2);
+            }
         }
         Glyph::Home => {
             stroke(&mut s, &[(2, 8), (8, 2), (14, 8)], 2);

@@ -244,6 +244,10 @@ pub(super) fn image_element(p: &mut Painter, el: &Element, c: &Computed) {
         src,
         alt: alt.clone(),
     });
+    // The ad blocker left it out: no box, no gap (the entry stays so indices agree).
+    if state == ImgState::Blocked {
+        return;
+    }
     let (dw, dh) = (p.z(attr_px(el, "width")), p.z(attr_px(el, "height")));
     // A CSS pixel width overrides the attribute.
     let dw = match c.width {
