@@ -94,6 +94,8 @@ pub struct Player<F> {
     audio_end: i64,
     video_end: i64,
     sink_paused: bool,
+    /// A seek the decoder has not been told about yet (epoch, time).
+    seek_out: Option<(u32, i64)>,
     /// The device queue must be emptied (a seek).
     flush_sink: bool,
     volume_set: Option<u8>,
@@ -128,6 +130,7 @@ impl<F> Player<F> {
             audio_end: i64::MIN,
             video_end: i64::MIN,
             sink_paused: false,
+            seek_out: None,
             flush_sink: false,
             volume_set: None,
             ack_video: 0,
@@ -271,7 +274,15 @@ impl<F> Player<F> {
         self.show_next = true;
         self.clock.freeze(t);
         self.position = t;
-        self.st.seek(t)
+        let epoch = self.st.seek(t);
+        self.seek_out = Some((epoch, t));
+        epoch
+    }
+
+    /// The seek to tell the decoder (`IN_SEEK`), if one happened since the last call: the page's,
+    /// the controls', `play()` after the end, or `loop`.
+    pub fn take_seek(&mut self) -> Option<(u32, i64)> {
+        self.seek_out.take()
     }
 
     fn release_audio(&mut self) {

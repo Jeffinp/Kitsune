@@ -45,11 +45,7 @@ impl MediaSet {
             Some(Part::Seek) => {
                 if let Some(d) = p.player.state().duration {
                     let t = l.seek_time(x - b.x, d);
-                    let epoch = p.player.seek(t);
-                    p.post(proto::msg(
-                        proto::IN_SEEK,
-                        &[Field::U32(epoch), Field::I64(t)],
-                    ));
+                    p.player.seek(t);
                 }
             }
             Some(Part::Mute) => {

@@ -23,6 +23,7 @@ use kitsune_core::media::wire::{self, Command, Control};
 mod controls;
 mod paint;
 mod stats;
+pub(crate) use paint::video_covers;
 
 /// Players playing at once in a page (each is a decoder process with up to 128 MiB).
 pub(crate) const MAX_PLAYERS: usize = 2;
@@ -197,11 +198,7 @@ impl MediaSet {
             }
             Control::Pause => p.player.pause(),
             Control::Seek(t) => {
-                let epoch = p.player.seek(t);
-                p.post(proto::msg(
-                    proto::IN_SEEK,
-                    &[Field::U32(epoch), Field::I64(t)],
-                ));
+                p.player.seek(t);
             }
             Control::Volume(v, m) => p.player.set_volume(v, m),
             Control::Loop(on) => p.player.set_loop(on),
@@ -346,6 +343,13 @@ impl MediaSet {
                 .player
                 .step(now, sink.as_mut().map(|s| s as &mut dyn AudioSink));
             out.redraw |= changed;
+            // A seek (the page's, the controls', play() after the end, `loop`) goes to the decoder.
+            if let Some((epoch, t)) = p.player.take_seek() {
+                p.post(proto::msg(
+                    proto::IN_SEEK,
+                    &[Field::U32(epoch), Field::I64(t)],
+                ));
+            }
             let (v, a) = p.player.take_acks();
             if v > 0 || a > 0 {
                 p.post(proto::msg(proto::IN_ACK, &[Field::U32(v), Field::U32(a)]));

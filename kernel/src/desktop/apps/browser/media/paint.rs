@@ -125,6 +125,20 @@ fn triangle(c: &mut Canvas, r: Rect, color: Color) {
     }
 }
 
+/// Is `clip` (screen coordinates) inside the box of one `<video>` of `page`? Then painting the
+/// video is all that is needed there (its box is opaque: black bars and the picture).
+pub(crate) fn video_covers(page: &Page, content: Rect, scroll: i32, clip: Rect) -> bool {
+    page.videos.iter().any(|v| {
+        let r = Rect::new(content.x + v.x, content.y - scroll + v.y, v.w, v.h);
+        !v.audio
+            && clip.w > 0
+            && clip.x >= r.x
+            && clip.y >= r.y
+            && clip.right() <= r.right()
+            && clip.bottom() <= r.bottom()
+    })
+}
+
 impl Desktop {
     /// Paint every video surface of `page` visible in `content` (scrolled by `scroll`).
     pub(crate) fn paint_videos(
