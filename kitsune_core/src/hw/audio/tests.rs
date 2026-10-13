@@ -191,7 +191,7 @@ fn clock_survives_gaps_and_late_streams() {
     m.write(1, id, &le(&[5; 300])).unwrap();
     mix_n(&mut m, 1_000); // 300 frames of the stream, then silence
     let st = m.status(1, id).unwrap();
-    assert_eq!((st.consumed, st.underruns), (300, 1));
+    assert_eq!((st.consumed, st.underruns), (300, 0), "ending is not an underrun");
     m.set_device_played(1_150);
     assert_eq!(m.status(1, id).unwrap().played, 150);
     m.set_device_played(1_600);
@@ -204,8 +204,10 @@ fn clock_survives_gaps_and_late_streams() {
         m.ready(1, 12345, 0),
         "a stream that is gone wakes its waiter"
     );
-    // Paused: no frames taken, no underrun.
+    // More samples after running dry: that was a gap, an underrun.
     m.write(1, id, &le(&[5; 10])).unwrap();
+    assert_eq!(m.status(1, id).unwrap().underruns, 1);
+    // Paused: no frames taken, no underrun.
     m.set_paused(1, id, true).unwrap();
     mix_n(&mut m, 100);
     let st = m.status(1, id).unwrap();

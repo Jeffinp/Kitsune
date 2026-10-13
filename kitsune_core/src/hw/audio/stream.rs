@@ -62,8 +62,11 @@ pub struct Stream {
     volume: u8,
     pub(super) paused: bool,
     pub(super) draining: bool,
-    /// Was producing sound at the last mix (an empty queue then counts as an underrun).
+    /// Was producing sound at the last mix.
     playing: bool,
+    /// Ran dry while playing; it becomes an underrun if more samples come (a gap in the middle),
+    /// not if the stream simply ended.
+    starved: bool,
     underruns: u32,
     consumed: u64,
     written: u64,
@@ -95,6 +98,7 @@ impl Stream {
             paused: false,
             draining: false,
             playing: false,
+            starved: false,
             underruns: 0,
             consumed: 0,
             written: 0,
@@ -113,13 +117,23 @@ impl Stream {
     pub fn write(&mut self, bytes: &[u8]) -> usize {
         let n = self.ring.push_le_bytes(bytes);
         self.written += (n / self.frame_bytes()) as u64;
+        self.note_data(n);
         n
+    }
+
+    /// New samples after the queue ran dry while playing: that was an underrun.
+    fn note_data(&mut self, n: usize) {
+        if n > 0 && self.starved {
+            self.starved = false;
+            self.underruns = self.underruns.saturating_add(1);
+        }
     }
 
     /// Queue samples (`channels` per frame); returns the frames taken.
     pub fn write_samples(&mut self, samples: &[i16]) -> usize {
         let n = self.ring.push_samples(samples);
         self.written += n as u64;
+        self.note_data(n);
         n
     }
 
@@ -147,7 +161,7 @@ impl Stream {
 
     /// Mix this stream into `acc` (stereo sums, Q0) starting at device frame `dev0`: adds up to
     /// `acc.len()` resampled frames with the stream's volume and returns how many it added. A stream
-    /// that runs dry while playing counts an underrun.
+    /// that runs dry while playing and then gets more samples counts an underrun.
     pub fn render(&mut self, acc: &mut [[i32; 2]], dev0: u64) -> usize {
         if self.paused {
             return 0;
@@ -182,7 +196,7 @@ impl Stream {
         }
         if k < acc.len() && !self.draining {
             if self.playing {
-                self.underruns = self.underruns.saturating_add(1);
+                self.starved = true;
             }
             self.playing = false;
         }
@@ -243,6 +257,7 @@ impl Stream {
         self.ring.clear();
         self.pos = 0;
         self.playing = false;
+        self.starved = false;
     }
 
     pub fn status(&self, dev_played: u64) -> StreamStatus {

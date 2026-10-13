@@ -18,6 +18,8 @@
 #                            #   timing-jitter path; by default `-device virtio-rng-pci` is
 #                            #   added when this QEMU build has it, so the kernel logs
 #                            #   "RNG: strong" even under WHPX, where RDRAND is hidden)
+#   .\run.ps1 -NoAudio       # no sound card (by default an AC'97 plays through Windows'
+#                            #   DirectSound: `-audiodev dsound,id=snd0 -device AC97,audiodev=snd0`)
 #   .\run.ps1 -Usb           # build the UEFI image + copy it out for USB flashing
 #                            #   (real hardware boot; does NOT launch QEMU)
 param(
@@ -29,7 +31,8 @@ param(
     [switch]$Native,
     [switch]$Wsl,
     [switch]$Doom,
-    [switch]$NoRng
+    [switch]$NoRng,
+    [switch]$NoAudio
 )
 
 $ErrorActionPreference = 'Stop'
@@ -141,6 +144,21 @@ if (-not $NoRng) {
         $qargs += @('-device', 'virtio-rng-pci')
     } else {
         Write-Host "Este QEMU nao tem virtio-rng-pci; o RNG usara jitter de temporizacao." -ForegroundColor Yellow
+    }
+}
+
+# Sound: an AC'97 card played through DirectSound (docs/design/audio.md). The kernel logs
+# "audio: AC'97 up" and the Terminal's `tone 440 1000`, `play file.wav` and `volume` use it; without the
+# card it logs "audio: no device" and boots the same. Skipped if this QEMU build lacks AC97 or dsound,
+# or with -NoAudio.
+if (-not $NoAudio) {
+    $devs = (& $qemu -device help 2>&1 | Out-String)
+    $drivers = (& $qemu -audiodev help 2>&1 | Out-String)
+    if ($devs -match 'name "AC97"' -and $drivers -match '\bdsound\b') {
+        $qargs += @('-audiodev', 'dsound,id=snd0', '-device', 'AC97,audiodev=snd0')
+        Write-Host "Som: AC'97 via DirectSound" -ForegroundColor DarkGray
+    } else {
+        Write-Host "Este QEMU nao tem AC97 ou dsound; o sistema sobe sem som." -ForegroundColor Yellow
     }
 }
 
