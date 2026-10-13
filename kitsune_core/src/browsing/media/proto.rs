@@ -81,7 +81,9 @@ pub const OUT_CUE: u8 = 0x87;
 pub const OUT_FETCH: u8 = 0x88;
 /// `u32` code ([`ERR_DEMUX`]...), then a UTF-8 text.
 pub const OUT_ERROR: u8 = 0x8F;
-/// `u32` pictures and `u64` pixels decoded from the built-in clip, `u32` milliseconds it took.
+/// `u32` pictures and `u64` pixels decoded from the built-in clip, `u32` milliseconds the second
+/// pass over it took (the first one warms up: under an emulator it also translates the code), `u32`
+/// milliseconds of both.
 pub const OUT_BENCH: u8 = 0x89;
 
 /// [`OUT_FETCH`]: the head arrived.
@@ -162,6 +164,7 @@ pub enum Out<'a> {
         pictures: u32,
         pixels: u64,
         ms: u32,
+        total_ms: u32,
     },
     Fetch {
         id: u32,
@@ -280,6 +283,7 @@ pub fn parse_out(m: &[u8]) -> Option<Out<'_>> {
             pictures: u32_at(b, 0)?,
             pixels: u64_at(b, 4)?,
             ms: u32_at(b, 12)?,
+            total_ms: u32_at(b, 16)?,
         },
         _ => return None,
     })

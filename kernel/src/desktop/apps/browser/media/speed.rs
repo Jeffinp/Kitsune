@@ -5,11 +5,12 @@
 //! The decoder is software (libvpx, one thread) and the machine may be anything from real hardware
 //! to an emulator 20-50 times slower, so the answer is measured with the decoder itself, once: when
 //! the first page with scripts starts, a decoder process (`mediadec --serve`) decodes the small
-//! clip built into it ([`proto::IN_BENCH`]) and says how many pixels that was; the CPU time the
-//! process got meanwhile (its scheduler slot's busy ticks: the page may be compiling its scripts at
-//! the same time) gives pixels per CPU second. A playing video may use [`SHARE_PERCENT`] of that: the
-//! decoder shares the CPU with the compositor, the page's scripts and the sound. The pages hear the
-//! budget as soon as it is known (`wire::budget_message`).
+//! clip built into it twice ([`proto::IN_BENCH`]) and says how many pixels a pass was and how long
+//! the second one took (the first warms up; under an emulator it also translates the code); scaled
+//! by the share of the CPU the process got meanwhile (its scheduler slot's busy ticks: the page may
+//! be compiling its scripts at the same time) that gives pixels per CPU second. A playing video may
+//! use [`SHARE_PERCENT`] of that: the decoder shares the CPU with the compositor, the page's scripts
+//! and the sound. The pages hear the budget as soon as it is known (`wire::budget_message`).
 
 use super::*;
 use crate::allocator::SpinLock;
@@ -84,12 +85,20 @@ pub(crate) fn pump_speed_test() -> Option<u64> {
             pictures,
             pixels,
             ms,
+            total_ms,
         }) = parse_out(&m)
         {
             let busy = crate::sched::busy_ticks().get(slot).copied().unwrap_or(0);
             let cpu_ms = busy.saturating_sub(busy0) * 1000 / u64::from(crate::interrupts::TIMER_HZ);
-            // The CPU the process got; a run too short for the ticks to see takes the wall time.
-            let took = if cpu_ms > 0 { cpu_ms } else { u64::from(ms) };
+            // The timed pass's wall time, times the share of the CPU the process got over the
+            // whole run (the page may be compiling its scripts meanwhile); a run too short for the
+            // ticks to see takes the wall time.
+            let (ms, total) = (u64::from(ms), u64::from(total_ms));
+            let took = if cpu_ms > 0 && total > 0 {
+                ms * cpu_ms.min(total) / total
+            } else {
+                ms
+            };
             let rate = pixels.saturating_mul(1000) / took.max(1);
             let budget = rate / 100 * SHARE_PERCENT;
             crate::klog!(

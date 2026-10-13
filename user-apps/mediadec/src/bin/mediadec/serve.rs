@@ -457,12 +457,22 @@ pub fn serve(link: &mut dyn Link) {
                 if core::mem::take(&mut server.bench_due) {
                     // How fast this machine decodes: the clip, timed (the player also counts the
                     // CPU this process got meanwhile).
+                    // Two passes: the second one is timed (the first warms up the caches and,
+                    // under an emulator, translates the code).
+                    let ms32 = |t: u64| t.min(u64::from(u32::MAX)) as u32;
                     let t0 = link.now_ms();
+                    server.bench();
+                    let t1 = link.now_ms();
                     let (pictures, pixels) = server.bench();
-                    let ms = link.now_ms().saturating_sub(t0).min(u64::from(u32::MAX)) as u32;
+                    let t2 = link.now_ms();
                     let m = proto::msg(
                         proto::OUT_BENCH,
-                        &[Field::U32(pictures), Field::U64(pixels), Field::U32(ms)],
+                        &[
+                            Field::U32(pictures),
+                            Field::U64(pixels),
+                            Field::U32(ms32(t2.saturating_sub(t1))),
+                            Field::U32(ms32(t2.saturating_sub(t0))),
+                        ],
                     );
                     server.post(m, KIND_OTHER);
                 }

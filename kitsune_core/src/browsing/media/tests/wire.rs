@@ -153,14 +153,20 @@ fn decoder_messages_round_trip_and_hostile_ones_are_refused() {
     assert_eq!(parse_out(&big), None);
     let bench = proto::msg(
         proto::OUT_BENCH,
-        &[Field::U32(30), Field::U64(1_728_000), Field::U32(330)],
+        &[
+            Field::U32(30),
+            Field::U64(1_728_000),
+            Field::U32(330),
+            Field::U32(700),
+        ],
     );
     assert_eq!(
         parse_out(&bench),
         Some(Out::Bench {
             pictures: 30,
             pixels: 1_728_000,
-            ms: 330
+            ms: 330,
+            total_ms: 700
         })
     );
     assert_eq!(parse_out(&bench[..bench.len() - 1]), None);
