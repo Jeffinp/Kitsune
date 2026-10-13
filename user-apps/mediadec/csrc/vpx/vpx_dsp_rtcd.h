@@ -68,7 +68,8 @@ void kmd_convolve_avg_sse2(const uint8_t *src, ptrdiff_t src_stride, uint8_t *ds
 #define vpx_convolve_avg kmd_convolve_avg_sse2
 
 void vpx_convolve_copy_c(const uint8_t *src, ptrdiff_t src_stride, uint8_t *dst, ptrdiff_t dst_stride, const InterpKernel *filter, int x0_q4, int x_step_q4, int y0_q4, int y_step_q4, int w, int h);
-#define vpx_convolve_copy vpx_convolve_copy_c
+void kmd_convolve_copy_sse2(const uint8_t *src, ptrdiff_t src_stride, uint8_t *dst, ptrdiff_t dst_stride, const InterpKernel *filter, int x0_q4, int x_step_q4, int y0_q4, int y_step_q4, int w, int h);
+#define vpx_convolve_copy kmd_convolve_copy_sse2
 
 void vpx_d117_predictor_16x16_c(uint8_t *dst, ptrdiff_t stride, const uint8_t *above, const uint8_t *left);
 #define vpx_d117_predictor_16x16 vpx_d117_predictor_16x16_c

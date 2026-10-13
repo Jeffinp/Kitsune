@@ -5,13 +5,16 @@ use super::*;
 
 /// How far the decoded sound may run ahead of the decoded pictures.
 const AUDIO_LEAD_NS: i64 = 1_500_000_000;
-/// A picture that ends this long before the player's clock is not converted nor sent...
-const LATE_NS: i64 = 40_000_000;
+/// A picture that ends this long before the player's clock is not converted nor sent (the decoder
+/// is catching up)... A decoder that keeps pace but a little behind (it started late, or lost a
+/// moment to another process) still shows every picture, a little late: with 40 ms here such a
+/// decoder sent only the one picture every [`LATE_EVERY_MS`] (5 a second) for good.
+const LATE_NS: i64 = 250_000_000;
 /// ...unless no picture went for this long (a decoder slower than the video still shows some).
 const LATE_EVERY_MS: u64 = 200;
 /// A next picture this far behind the player's clock: decoding jumps to the last keyframe already
 /// due, if there is one (the pictures in between would only be decoded to be dropped).
-const SKIP_LAG_NS: i64 = 1_000_000_000;
+const SKIP_LAG_NS: i64 = 750_000_000;
 
 impl Server {
     /// The next video frame to decode (its index and time), if the budget allows it.

@@ -5,8 +5,8 @@
  * 32 bits, + 64, >> 7, clamped to 0..255; the averaging variants then (dst + p + 1) >> 1), hence
  * bit-exact with the C (the MD5 check against ffmpeg's libvpx covers it). They read exactly the
  * bytes the C reads. Only the unscaled case (step 16, what a stream without reference scaling uses)
- * is vectorised; anything else goes to the C. csrc/vpx/vpx_dsp_rtcd.h points vpx_convolve8* and
- * vpx_convolve_avg here. */
+ * is vectorised; anything else goes to the C. csrc/vpx/vpx_dsp_rtcd.h points vpx_convolve8*,
+ * vpx_convolve_avg and vpx_convolve_copy here. */
 #include <emmintrin.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -92,6 +92,9 @@ static void horiz(const uint8_t *src, ptrdiff_t ss, uint8_t *dst, ptrdiff_t ds, 
     }
 }
 
+/* The vertical filter goes down a column strip at a time, keeping the eight rows it needs in
+ * registers: each output row loads and widens one new row instead of eight (the same bytes read, the
+ * same arithmetic, so still bit-exact). Under emulation this is a quarter of the decoder's time. */
 static void vert(const uint8_t *src, ptrdiff_t ss, uint8_t *dst, ptrdiff_t ds, const int16_t *f,
                  int w, int h, int avg)
 {
@@ -99,35 +102,51 @@ static void vert(const uint8_t *src, ptrdiff_t ss, uint8_t *dst, ptrdiff_t ds, c
     __m128i t[4], a[8];
     taps(f, t);
     src -= ss * (SUBPEL_TAPS / 2 - 1);
-    for (int y = 0; y < h; y++) {
-        int x = 0;
-        for (; x + 8 <= w; x += 8) {
-            for (int k = 0; k < 8; k++)
-                a[k] = _mm_unpacklo_epi8(_mm_loadl_epi64((const __m128i *)(src + k * ss + x)),
-                                         zero);
+    int x = 0;
+    for (; x + 8 <= w; x += 8) {
+        const uint8_t *s = src + x;
+        uint8_t *d = dst + x;
+        for (int k = 0; k < 7; k++)
+            a[k] = _mm_unpacklo_epi8(_mm_loadl_epi64((const __m128i *)(s + k * ss)), zero);
+        for (int y = 0; y < h; y++) {
+            a[7] = _mm_unpacklo_epi8(_mm_loadl_epi64((const __m128i *)(s + (y + 7) * ss)), zero);
             __m128i r = filter8(a, t);
             if (avg)
-                r = _mm_avg_epu8(r, _mm_loadl_epi64((const __m128i *)(dst + x)));
-            _mm_storel_epi64((__m128i *)(dst + x), r);
+                r = _mm_avg_epu8(r, _mm_loadl_epi64((const __m128i *)d));
+            _mm_storel_epi64((__m128i *)d, r);
+            for (int k = 0; k < 7; k++)
+                a[k] = a[k + 1];
+            d += ds;
         }
-        for (; x + 4 <= w; x += 4) {
-            for (int k = 0; k < 8; k++)
-                a[k] = _mm_unpacklo_epi8(load4(src + k * ss + x), zero);
+    }
+    for (; x + 4 <= w; x += 4) {
+        const uint8_t *s = src + x;
+        uint8_t *d = dst + x;
+        for (int k = 0; k < 7; k++)
+            a[k] = _mm_unpacklo_epi8(load4(s + k * ss), zero);
+        for (int y = 0; y < h; y++) {
+            a[7] = _mm_unpacklo_epi8(load4(s + (y + 7) * ss), zero);
             __m128i r = filter8(a, t);
             if (avg)
-                r = _mm_avg_epu8(r, load4(dst + x));
-            store4(dst + x, r);
+                r = _mm_avg_epu8(r, load4(d));
+            store4(d, r);
+            for (int k = 0; k < 7; k++)
+                a[k] = a[k + 1];
+            d += ds;
         }
-        for (; x < w; x++) {
+    }
+    for (; x < w; x++) {
+        const uint8_t *s = src + x;
+        uint8_t *d = dst + x;
+        for (int y = 0; y < h; y++) {
             int sum = 0;
             for (int k = 0; k < SUBPEL_TAPS; k++)
-                sum += src[k * ss + x] * f[k];
+                sum += s[(y + k) * ss] * f[k];
             int v = (sum + (1 << (FILTER_BITS - 1))) >> FILTER_BITS;
             v = v < 0 ? 0 : v > 255 ? 255 : v;
-            dst[x] = (uint8_t)(avg ? (dst[x] + v + 1) >> 1 : v);
+            *d = (uint8_t)(avg ? (*d + v + 1) >> 1 : v);
+            d += ds;
         }
-        src += ss;
-        dst += ds;
     }
 }
 
@@ -230,6 +249,32 @@ void kmd_convolve_avg_sse2(const uint8_t *src, ptrdiff_t ss, uint8_t *dst, ptrdi
         }
         for (; x < w; x++)
             dst[x] = (uint8_t)((dst[x] + src[x] + 1) >> 1);
+        src += ss;
+        dst += ds;
+    }
+}
+
+/* A block copied as it is (a whole-pixel motion vector): 16 or 8 bytes at a time instead of a memcpy
+ * call per row (each one a `rep movs` that an emulator runs byte by byte). */
+void kmd_convolve_copy_sse2(const uint8_t *src, ptrdiff_t ss, uint8_t *dst, ptrdiff_t ds,
+                            const InterpKernel *filter, int x0_q4, int x_step_q4, int y0_q4,
+                            int y_step_q4, int w, int h)
+{
+    (void)filter;
+    (void)x0_q4;
+    (void)x_step_q4;
+    (void)y0_q4;
+    (void)y_step_q4;
+    for (int y = 0; y < h; y++) {
+        int x = 0;
+        for (; x + 16 <= w; x += 16)
+            _mm_storeu_si128((__m128i *)(dst + x), _mm_loadu_si128((const __m128i *)(src + x)));
+        for (; x + 8 <= w; x += 8)
+            _mm_storel_epi64((__m128i *)(dst + x), _mm_loadl_epi64((const __m128i *)(src + x)));
+        for (; x + 4 <= w; x += 4)
+            store4(dst + x, load4(src + x));
+        for (; x < w; x++)
+            dst[x] = src[x];
         src += ss;
         dst += ds;
     }
