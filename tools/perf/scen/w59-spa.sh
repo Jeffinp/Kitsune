@@ -33,7 +33,7 @@ origin() { log "script(s) handed to pid" | tail -1 | sed -E 's/.*page at (-?[0-9
 click_at() {
   local ox oy z cx cy
   read -r ox oy z < <(origin)
-  read -r cx cy < <(log "$1 at " | tail -1 | sed -E "s/.* $2=(-?[0-9]+),(-?[0-9]+).*/\1 \2/")
+  read -r cx cy < <(log "$1: at " | tail -1 | sed -E "s/.* $2=(-?[0-9]+),(-?[0-9]+).*/\1 \2/")
   echo "click $1 $2 at client $cx,$cy page origin $ox,$oy zoom $z" >> "$OUT/steps.txt"
   goto $((ox + cx * z / 100)) $((oy + cy * z / 100))
   click

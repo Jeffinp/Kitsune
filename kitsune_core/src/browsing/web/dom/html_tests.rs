@@ -152,3 +152,18 @@ fn decodes_entities_in_text() {
         panic!("expected text");
     }
 }
+
+#[test]
+fn attribute_names_of_framework_templates_survive() {
+    let (nodes, _) = parse_html(
+        b"<input @click='go()' :Class=\"{ on: x }\" v-model.trim=name @keyup.enter=\"add\" data-a/b=1 x=\"y\"/>",
+    );
+    let el = first_element(&nodes);
+    let get = |k: &str| el.attrs.get(k).map(String::as_str);
+    assert_eq!(get("@click"), Some("go()"));
+    assert_eq!(get(":class"), Some("{ on: x }"), "lower case");
+    assert_eq!(get("v-model.trim"), Some("name"));
+    assert_eq!(get("@keyup.enter"), Some("add"));
+    assert_eq!(get("x"), Some("y"));
+    assert_eq!(get("data-a"), Some(""), "a '/' ends a name");
+}

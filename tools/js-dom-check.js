@@ -170,6 +170,15 @@ function toInit(html) {
   };
   let dom = conv(nodes);
   dom = dom.filter((n) => typeof n !== 'string' || n.trim());
+  // KITSUNE_INIT=<script_init binary> takes the tree from the browser's own HTML parser instead
+  // (cargo build -p kitsune_core --example script_init).
+  if (process.env.KITSUNE_INIT) {
+    const tmp = path.join(require('os').tmpdir(), 'kjs-page-' + process.pid + '.html');
+    fs.writeFileSync(tmp, html);
+    const out = require('child_process').execFileSync(process.env.KITSUNE_INIT, [tmp, 'http://h/']);
+    fs.unlinkSync(tmp);
+    dom = JSON.parse(out.toString()).dom;
+  }
   return { dom, scripts };
 }
 

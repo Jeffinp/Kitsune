@@ -312,6 +312,21 @@ impl HtmlParser<'_> {
         String::from_utf8(v).unwrap_or_default()
     }
 
+    /// An attribute name, lower case: as in the HTML tokenizer, anything up to whitespace, `/`, `>`
+    /// or `=` (quotes and `<` end it too). Frameworks put `@click`, `:class` and `v-model.trim` in
+    /// their templates, and the page's scripts read them back.
+    fn parse_attr_name_lower(&mut self) -> String {
+        let start = self.i;
+        while !self.eof() {
+            let c = self.peek();
+            if c.is_ascii_whitespace() || matches!(c, b'/' | b'>' | b'=' | b'"' | b'\'' | b'<') {
+                break;
+            }
+            self.i += 1;
+        }
+        String::from_utf8_lossy(&self.b[start..self.i]).to_ascii_lowercase()
+    }
+
     fn parse_attrs(&mut self) -> BTreeMap<String, String> {
         let mut attrs = BTreeMap::new();
         loop {
@@ -319,7 +334,7 @@ impl HtmlParser<'_> {
             if self.eof() || self.peek() == b'>' || self.starts_with(b"/>") {
                 break;
             }
-            let name = self.parse_name_lower();
+            let name = self.parse_attr_name_lower();
             if name.is_empty() {
                 // Stray character (e.g. a lone '/'): skip it to make progress.
                 self.i += 1;
