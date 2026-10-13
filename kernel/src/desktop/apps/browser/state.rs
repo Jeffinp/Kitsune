@@ -188,6 +188,8 @@ pub(crate) struct BrowserState {
     pub cache: core::cell::RefCell<crate::desktop::apps::browser::PaintCache>,
     /// Bumped by everything that changes how the page area looks, so the cache knows.
     pub rev: u64,
+    /// The pages' `localStorage` (`~/.webstorage`).
+    pub webstore: super::jsstore::Store,
 }
 
 /// The page's context menu.
@@ -286,6 +288,7 @@ impl BrowserState {
             glass: Default::default(),
             cache: core::cell::RefCell::new(Default::default()),
             rev: 1,
+            webstore: super::jsstore::load(),
         }
     }
 }

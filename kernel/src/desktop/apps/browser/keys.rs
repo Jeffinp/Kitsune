@@ -69,15 +69,45 @@ impl Desktop {
         let has_focus = b.forms.focus().is_some() && b.page.is_some();
         if has_focus {
             let t = b.tabs.active_mut();
+            let before = super::jsinput::Before::take(t);
             let Some(page) = &t.page else { return };
             if key == Key::Tab {
                 if !t.forms.tab(&page.forms, shift) {
                     t.browser.set_bar_focus(true);
                 }
+                super::jsinput::after_key(t, key, shift, &before, None);
                 self.browser_scroll_to_focus(id);
                 return;
             }
-            match t.forms.on_key(&page.forms, key) {
+            let outcome = t.forms.on_key(&page.forms, key);
+            if t.js.is_some() {
+                // The page sees the key (and the control's new text); Enter in a form waits for its
+                // verdict, the controls outside forms are never submitted.
+                let action = match outcome {
+                    FormOutcome::Submit { form, submitter }
+                        if page.forms.get(form).is_some_and(|f| !f.formless) =>
+                    {
+                        Some(super::script::JsAction::Submit(form, submitter))
+                    }
+                    _ => None,
+                };
+                super::jsinput::after_key(t, key, shift, &before, action);
+                match outcome {
+                    FormOutcome::Changed => self.browser_scroll_to_focus(id),
+                    FormOutcome::Ignored => match key {
+                        Key::PageUp => {
+                            self.scroll_page(id, -page_step(view_h));
+                        }
+                        Key::PageDown => {
+                            self.scroll_page(id, page_step(view_h));
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+                return;
+            }
+            match outcome {
                 FormOutcome::Submit { form, submitter } => {
                     self.browser_submit_form(id, form, submitter);
                 }
@@ -116,6 +146,14 @@ impl Desktop {
         }
         let t = b.tabs.active_mut();
         let page_focus = !t.browser.bar_focus();
+        // A page that listens to keys gets them; then they do what they do on any page, except that
+        // typing does not jump to the address bar.
+        if page_focus
+            && super::jsinput::page_key(t, key, shift)
+            && matches!(key, Key::Char(c) if c != b' ')
+        {
+            return;
+        }
         match key {
             Key::PageUp => {
                 self.scroll_page(id, -page_step(view_h));

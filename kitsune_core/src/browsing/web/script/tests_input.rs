@@ -77,8 +77,8 @@ fn view_is_in_css_pixels() {
 fn inputs_are_acknowledged_in_order() {
     let mut i = Inputs::default();
     assert!(i.settled());
-    let a = i.next();
-    let b = i.next();
+    let a = i.next_number();
+    let b = i.next_number();
     assert!(!i.settled());
     i.ack(a);
     assert!(!i.settled());

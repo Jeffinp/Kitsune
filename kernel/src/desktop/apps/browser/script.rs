@@ -6,24 +6,47 @@
 //! own copy of the DOM: it receives the document once and sends the whole document back after a task
 //! changed it, which is laid out again here. A click on the page goes to the process with the element
 //! under the pointer; a click with a default action (a link, a submit button) waits for the page's
-//! verdict (`preventDefault`) for at most `ANSWER_TIMEOUT_MS`. The messages and the bookkeeping are
-//! `kitsune_core::web::script`; the kernel side of the link is `userproc/page.rs`.
+//! verdict (`preventDefault`) for at most `ANSWER_TIMEOUT_MS`. Keys, focus, the mouse and the
+//! layout snapshot are `jsinput.rs`; `localStorage` is `jsstore.rs`. The messages and the bookkeeping
+//! are `kitsune_core::web::script`; the kernel side of the link is `userproc/page.rs`.
 
 use super::layout::{clamp_scroll, layout_browser};
 use crate::desktop::*;
-use kitsune_core::web::form::FieldKind;
-use kitsune_core::web::script::{FromScript, InitInfo, Session, init_message, parse_message};
+use kitsune_core::web::form::{FieldKind, FormState, field_by_uid};
+use kitsune_core::web::script::{
+    ClickAt, FromScript, InitInfo, Inputs, Session, Subs, View, init_message, parse_message,
+    view_message,
+};
 
-/// What a click on the page does unless its scripts prevent it.
+/// What a click or a key on the page does unless its scripts prevent it, and what the page asks for.
 pub(crate) enum JsAction {
     Link(Vec<u8>),
-    Submit(usize, usize),
+    /// Submit form `.0` with the button `.1` (Enter in a field: none).
+    Submit(usize, Option<usize>),
+    /// Scroll the page to this y (device px).
+    Scroll(i32),
+    /// Open this address in a new tab (`window.open`).
+    Open(Vec<u8>),
 }
 
 /// The script process of a tab.
 pub(crate) struct JsProc {
     pub pid: u32,
     pub session: Session<JsAction>,
+    /// The inputs sent and how far the page's documents caught up with them.
+    pub inputs: Inputs,
+    /// The events the page listens to that are only sent on request.
+    pub subs: Subs,
+    /// The control the page was last told has the focus (element uid, 0: none).
+    pub focus_uid: u32,
+    /// A layout ran: the page gets the new snapshot this frame.
+    pub boxes_due: bool,
+    /// The viewport and scroll the page last heard of.
+    pub view: View,
+    /// The last pointer position over the page (page px) not yet sent.
+    pub pending_move: Option<(i32, i32)>,
+    /// The page was last told its tab is shown.
+    pub visible: bool,
 }
 
 impl Drop for JsProc {
@@ -112,13 +135,19 @@ impl Desktop {
         let content = b.chrome(rect).content;
         let active_id = b.tabs.active().id;
         super::jsnet::save_cookies();
+        b.webstore.save_due();
         let mut redraw = false;
         let mut actions: Vec<(u32, JsAction)> = Vec::new();
         let mut title: Option<String> = None;
-        let BrowserState { tabs, images, .. } = &mut *b;
+        let BrowserState {
+            tabs,
+            images,
+            webstore,
+            ..
+        } = &mut *b;
         for t in tabs.iter_mut() {
             if t.id == active_id && t.js.is_none() && t.scripts.ready() && t.page.is_some() {
-                start_js(t, images, content);
+                start_js(t, images, content, webstore);
                 redraw = true;
             }
             let Some(js) = t.js.as_mut() else { continue };
@@ -144,6 +173,42 @@ impl Desktop {
                     FromScript::Abort(rid) => crate::fetch::abort_script_fetch(js.pid, rid),
                     FromScript::SetCookie(text) => {
                         super::jsnet::on_set_cookie(&t.browser, js.pid, text);
+                    }
+                    FromScript::Ack(n) => js.inputs.ack(n),
+                    FromScript::Want(s) => js.subs = s,
+                    FromScript::Focus(uid) => {
+                        // A script focused a control: the caret goes there (or nowhere).
+                        js.focus_uid = uid;
+                        if let Some(p) = &t.page {
+                            match field_by_uid(&p.forms, uid) {
+                                Some((f, i)) => {
+                                    t.forms.set_focus(&p.forms, f, i);
+                                    if t.id == active_id {
+                                        t.browser.set_bar_focus(false);
+                                    }
+                                }
+                                None => t.forms.blur(),
+                            }
+                            redraw = true;
+                        }
+                    }
+                    FromScript::Scroll(_, y) if t.id == active_id => {
+                        let y = super::jsinput::scroll_target(t.zoom, y);
+                        actions.push((t.id, JsAction::Scroll(y)));
+                    }
+                    FromScript::Scroll(..) => {}
+                    FromScript::History { replace, url } => {
+                        if t.browser.push_state(url.as_bytes(), replace) {
+                            redraw = true;
+                        }
+                    }
+                    FromScript::Go(n) => t.browser.go(n),
+                    FromScript::Open(url) => {
+                        actions.push((t.id, JsAction::Open(url.as_bytes().to_vec())));
+                    }
+                    FromScript::Storage(op) => {
+                        let url = String::from_utf8_lossy(t.browser.nav_url()).into_owned();
+                        webstore.apply(&url, op);
                     }
                     FromScript::Unknown => {}
                 }
@@ -172,6 +237,7 @@ impl Desktop {
                 }
                 redraw = true;
             }
+            super::jsinput::frame(t, content, t.id == active_id);
             if !alive && let Some(mut js) = t.js.take() {
                 crate::klog!(
                     Info,
@@ -210,10 +276,18 @@ impl Desktop {
                     b.say(kitsune_core::t!("web.notice.link_bad"));
                 }
             }
-            JsAction::Submit(form, field) if active => {
-                self.browser_submit_form(id, form, Some(field));
+            JsAction::Submit(form, submitter) if active => {
+                self.browser_submit_form(id, form, submitter);
             }
             JsAction::Submit(..) => {}
+            JsAction::Scroll(y) if active => self.scroll_page_to(id, y),
+            JsAction::Scroll(_) => {}
+            JsAction::Open(url) => {
+                self.browser_new_tab(id);
+                if let Some(b) = self.browser_state_mut(id) {
+                    b.tabs.active_mut().browser.open(&url);
+                }
+            }
         }
     }
 
@@ -231,15 +305,17 @@ impl Desktop {
         let uid = page.node_at(qx, qy).unwrap_or(0);
         let mut action = None;
         let mut select = false;
+        let mut stepped = None;
         if let Some(f) = page.field_at(qx, qy).copied() {
             t.forms.set_focus(&page.forms, f.form, f.field);
             match f.kind {
-                FieldKind::Submit => action = Some(JsAction::Submit(f.form, f.field)),
+                FieldKind::Submit => action = Some(JsAction::Submit(f.form, Some(f.field))),
                 FieldKind::Checkbox | FieldKind::Radio => {
                     t.forms.toggle(&page.forms, f.form, f.field);
                 }
                 FieldKind::Select => {
                     t.forms.step_select(&page.forms, f.form, f.field, 1);
+                    stepped = Some((f.form, f.field));
                 }
                 _ => {}
             }
@@ -253,11 +329,28 @@ impl Desktop {
                 }
             }
         }
+        // The page hears of the focus first, then the click, then a <select> the click stepped.
+        super::jsinput::sync_focus(t);
+        let at = ClickAt {
+            x: qx,
+            y: qy,
+            cx: super::jsinput::css(qx, t.zoom),
+            cy: super::jsinput::css(qy - t.scroll, t.zoom),
+        };
+        let forms = t.page.as_ref().map(|p| p.forms.clone()).unwrap_or_default();
         let Some(js) = t.js.as_mut() else {
             return select;
         };
-        let msg = js.session.click(uid, qx, qy, action, now_ms());
-        if !crate::userproc::page_post(js.pid, msg) {
+        let n = js.inputs.next_number();
+        let msg = js.session.click(uid, at, n, action, now_ms());
+        let posted = crate::userproc::page_post(js.pid, msg);
+        if let Some((f, i)) = stepped {
+            super::jsinput::select_changed(t, &forms, f, i);
+        }
+        let Some(js) = t.js.as_mut() else {
+            return select;
+        };
+        if !posted {
             // The process is gone or flooded: the browser does what the click would have done.
             if let Some(a) = js.session.abandon() {
                 let tid = t.id;
@@ -269,8 +362,14 @@ impl Desktop {
 }
 
 /// Start the script process of tab `t` (its scripts are in): the page records its element boxes from
-/// now on, and the process gets the document and the scripts.
-fn start_js(t: &mut TabData, images: &mut kitsune_core::web::imgcache::ImageCache, content: Rect) {
+/// now on, and the process gets the document and the scripts, then the viewport, its origin's
+/// `localStorage` and where it is in the history.
+fn start_js(
+    t: &mut TabData,
+    images: &mut kitsune_core::web::imgcache::ImageCache,
+    content: Rect,
+    webstore: &mut super::jsstore::Store,
+) {
     let sources = t.scripts.take();
     let cookie = super::jsnet::init_cookie(t);
     let Some(doc) = t.doc.as_mut() else {
@@ -316,47 +415,65 @@ fn start_js(t: &mut TabData, images: &mut kitsune_core::web::imgcache::ImageCach
         pid
     );
     doc.set_track(true);
+    let view = View::from_device(content.w, content.h, t.scroll, 0, t.zoom);
+    crate::userproc::page_post(pid, view_message(&view));
+    crate::userproc::page_post(pid, webstore.message_for(&url));
     t.js = Some(JsProc {
         pid,
         session: Session::default(),
+        inputs: Inputs::default(),
+        subs: Subs::default(),
+        focus_uid: 0,
+        boxes_due: true,
+        view,
+        pending_move: None,
+        visible: true,
     });
+    super::jsinput::after_init(t);
     // The element boxes (and the controls outside forms) appear: lay out as for a new page.
     layout_browser(t, images, content.w, true);
     let max = t.page.as_ref().map_or(0, |p| (p.height - content.h).max(0));
     clamp_scroll(t, max);
 }
 
-/// The page's document changed: lay it out again, keeping what was typed into its controls while the
-/// forms are the same, and asking for any new pictures.
+/// The page's document changed: lay it out again and ask for any new pictures. The controls' state
+/// comes from the document (the page owns it: what a script set shows); the focus and the caret stay on
+/// the same control, and while the page has not seen every key yet the focused control keeps what the
+/// person typed (the next document will carry it).
 fn relayout_js(
     t: &mut TabData,
     images: &mut kitsune_core::web::imgcache::ImageCache,
     content: Rect,
 ) {
-    let forms = core::mem::take(&mut t.forms);
+    let old = core::mem::take(&mut t.forms);
+    let focus_uid = super::jsinput::focused_uid(&old, t.page.as_ref());
+    let (typed, caret) = match old.focus() {
+        Some((f, i)) => (String::from(old.value(f, i)), old.caret()),
+        None => (String::new(), 0),
+    };
+    let settled = t.js.as_ref().is_none_or(|js| js.inputs.settled());
     let srcs: Vec<String> = t.page.as_ref().map_or(Vec::new(), |p| {
         p.images.iter().map(|i| i.src.clone()).collect()
     });
-    let shape: Vec<usize> = t.page.as_ref().map_or(Vec::new(), |p| {
-        p.forms.iter().map(|f| f.fields.len()).collect()
-    });
     layout_browser(t, images, content.w, false);
-    let (same_pics, same_forms) = t.page.as_ref().map_or((true, false), |p| {
-        (
-            p.images.len() == srcs.len() && p.images.iter().zip(&srcs).all(|(a, b)| a.src == *b),
-            p.forms
-                .iter()
-                .map(|f| f.fields.len())
-                .eq(shape.iter().copied()),
-        )
+    let same_pics = t.page.as_ref().is_none_or(|p| {
+        p.images.len() == srcs.len() && p.images.iter().zip(&srcs).all(|(a, b)| a.src == *b)
     });
     if !same_pics {
         layout_browser(t, images, content.w, true);
     }
-    if same_forms {
+    if let Some(p) = &t.page {
+        let mut forms = FormState::new(&p.forms);
+        if let Some((f, i)) = field_by_uid(&p.forms, focus_uid) {
+            forms.set_focus(&p.forms, f, i);
+            if !settled {
+                forms.set_text(&p.forms, f, i, &typed);
+            }
+            if forms.value(f, i) == typed {
+                forms.set_caret(caret);
+            }
+        }
         t.forms = forms;
-    } else if same_pics && let Some(p) = &t.page {
-        t.forms = kitsune_core::web::form::FormState::new(&p.forms);
     }
     let max = t.page.as_ref().map_or(0, |p| (p.height - content.h).max(0));
     clamp_scroll(t, max);

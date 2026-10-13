@@ -81,6 +81,10 @@ pub(crate) fn layout_browser(t: &mut TabData, images: &mut ImageCache, width: i3
         }
     }
     t.page = Some(page);
+    // The page's scripts measure with the new boxes (see `jsinput::frame`).
+    if let Some(js) = t.js.as_mut() {
+        js.boxes_due = true;
+    }
     t.relayout.done(started, crate::interrupts::ticks());
     // The text moved: the selection and the find matches follow the new layout.
     t.find

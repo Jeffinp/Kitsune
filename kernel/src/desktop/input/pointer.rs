@@ -85,6 +85,10 @@ impl Desktop {
         {
             self.client_dirty = Some(id);
         }
+        // A page that listens to the mouse gets the move.
+        if cursor_moved {
+            self.browser_js_pointer(cx, cy);
+        }
 
         // Moving over an open menu / Apps launcher updates the hover highlight,
         // but it is NOT a full-scene change: the compositor repaints only the

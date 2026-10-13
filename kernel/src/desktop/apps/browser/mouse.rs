@@ -247,6 +247,11 @@ impl Desktop {
             b.ctx = None;
             return;
         }
+        // A page that listens gets `contextmenu` (the browser's menu still opens).
+        self.browser_js_mouse(id, px, py, kitsune_core::web::script::MouseKind::Context);
+        let Some(b) = self.browser_state_mut(id) else {
+            return;
+        };
         let t = b.tabs.active();
         let mut link = None;
         if let Some(page) = &t.page {

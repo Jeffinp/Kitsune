@@ -80,7 +80,7 @@ pub struct Inputs {
 
 impl Inputs {
     /// The number of the next input.
-    pub fn next(&mut self) -> u32 {
+    pub fn next_number(&mut self) -> u32 {
         self.sent = self.sent.wrapping_add(1).max(1);
         self.sent
     }

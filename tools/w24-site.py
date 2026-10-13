@@ -20,6 +20,10 @@ in the guest's log), and two ad boxes that the cosmetic rules hide (one holds a 
 not be asked for). With the blocker on the server sees only /ads and /g.png; with it off, all of them.
 Every request is printed on stderr, so `tools/w24-site.py 2> requests.log` is the record to check.
 
+/preact and /vue are the acceptance pages of the DOM for frameworks (W59): a TodoMVC with Preact + htm
+and a small Vue 3 app (the in-DOM template compiled by vue.global.prod.js). The libraries and the
+pages are files of tools/site-assets/, served under /assets/ (see THIRD-PARTY.md for their licences).
+
 /net is the page for the network of scripts (W55: fetch, XMLHttpRequest, cookies, CORS, streaming,
 keep-alive); its routes are in tools/w24net.py. The server speaks HTTP/1.1 with keep-alive and also
 listens on the port just below (PORT - 1: another origin for CORS). Arguments:
@@ -44,6 +48,8 @@ from urllib.parse import parse_qs, urlparse
 import w24net
 
 PORT = 8079
+ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "site-assets")
+ASSET_TYPES = {".js": "text/javascript; charset=utf-8", ".html": "text/html; charset=utf-8", ".css": "text/css"}
 
 
 def png(w, h, fn):
@@ -449,6 +455,14 @@ main{max-width:min(100%, 760px);margin:0 auto;padding:20px}
             return self.reply(200, "text/css; charset=utf-8", css.encode())
         if u.path == "/js/app.js":
             return self.reply(200, "text/javascript; charset=utf-8", JS_APP.encode())
+        if u.path in ("/preact", "/vue") or u.path.startswith("/assets/"):
+            name = os.path.basename(u.path[len("/assets/"):] if u.path.startswith("/assets/") else u.path + ".html")
+            path = os.path.join(ASSETS, name)
+            if name and os.path.isfile(path):
+                with open(path, "rb") as f:
+                    body = f.read()
+                ctype = ASSET_TYPES.get(os.path.splitext(name)[1], "application/octet-stream")
+                return self.reply(200, ctype, body, [("Cache-Control", "max-age=60")])
         if u.path == "/big.css":
             import gzip
             rules = "".join(f".r{i}{{color:#{i % 4096:03x};margin:{i % 7}px;padding:{i % 5}px}}\n" for i in range(9000))

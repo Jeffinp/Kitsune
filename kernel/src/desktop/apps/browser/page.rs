@@ -57,7 +57,10 @@ impl Desktop {
         {
             return false;
         }
-        self.scroll_page(id, notches * WHEEL_PX)
+        let (cx, cy) = (self.cursor_x, self.cursor_y);
+        let dy = notches * WHEEL_PX;
+        self.browser_js_mouse(id, cx, cy, kitsune_core::web::script::MouseKind::Wheel(dy));
+        self.scroll_page(id, dy)
     }
 
     /// Lay the page of the active tab out again for the window's current width (after a

@@ -79,7 +79,11 @@ impl Desktop {
             Kind::Calculator => self.calc_click(w, rect, cx, cy),
             Kind::Browser => {
                 let double = self.clicks.press(crate::interrupts::ticks(), cx, cy, w);
-                if self.browser_click(w, rect, cx, cy) {
+                let select = self.browser_click(w, rect, cx, cy);
+                if double {
+                    self.browser_js_mouse(w, cx, cy, kitsune_core::web::script::MouseKind::Double);
+                }
+                if select {
                     if double {
                         let content = self
                             .browser_state_mut(w)
