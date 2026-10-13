@@ -34,7 +34,7 @@ mod structure;
 // Flat paths kept for the kernel, the fuzz targets and the benches: `kitsune_core::fs3` is
 // `kitsune_core::storage::fs3`. Inside this crate, use the grouped path (`crate::storage::fs3`).
 pub use apps::{activity, calc, editor2, fileman, shell, termui, viewer};
-pub use browsing::{browser, cookies, cors, http1, redirect, shields, web};
+pub use browsing::{browser, cookies, cors, http1, media, redirect, shields, web};
 pub use format::{
     base64, bmp, deflate, elf, gzip, image, inflate, md5, png, ppm, search, text as textenc,
     unixtime, wav, webm, zip,
