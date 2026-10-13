@@ -106,9 +106,20 @@ fn blit_rgba(c: &mut Canvas, src: &[u8], sw: u32, sh: u32, src_bgr: bool, dst: R
                 v
             }
         };
-        for i in 0..whole {
-            let sx = if same_cols { i } else { cols[i] };
-            out[i * bpp..i * bpp + 4].copy_from_slice(&px(sx).to_le_bytes());
+        if same_cols {
+            for i in 0..whole {
+                out[i * bpp..i * bpp + 4].copy_from_slice(&px(i).to_le_bytes());
+            }
+        } else {
+            // Scaled up, neighbouring screen pixels show the same picture pixel: read it once.
+            let (mut last, mut v) = (usize::MAX, 0u32);
+            for (i, &sx) in cols[..whole].iter().enumerate() {
+                if sx != last {
+                    last = sx;
+                    v = px(sx);
+                }
+                out[i * bpp..i * bpp + 4].copy_from_slice(&v.to_le_bytes());
+            }
         }
         if whole < n {
             let sx = if same_cols { whole } else { cols[whole] };

@@ -16,6 +16,7 @@ pub(super) struct Mark {
     busy: [u64; kitsune_core::sysmon::MAX_THREADS],
     presented: u32,
     dropped: u32,
+    dec_dropped: u32,
     position: i64,
 }
 
@@ -26,6 +27,7 @@ impl MediaPlayer {
             busy: crate::sched::busy_ticks(),
             presented: self.player.presented,
             dropped: self.player.dropped,
+            dec_dropped: self.dec_dropped,
             position: self.player.position(),
         });
     }
@@ -97,10 +99,11 @@ impl MediaPlayer {
             .unwrap_or(0);
         let shown = self.player.presented.saturating_sub(m.presented);
         let dropped = self.player.dropped.saturating_sub(m.dropped);
+        let dec_dropped = self.dec_dropped.saturating_sub(m.dec_dropped);
         let media_ms = (self.player.position() - m.position).max(0) / 1_000_000;
         crate::klog!(
             Info,
-            "media: element {} played {} ms of media in {} ms ({}): {} pictures shown ({} fps), {} dropped; \
+            "media: element {} played {} ms of media in {} ms ({}): {} pictures shown ({} fps), {} dropped ({} by the decoder); \
              CPU decoder {}%, compositor {}%, page {}%, all {}%; clock {} ({})",
             self.uid,
             media_ms,
@@ -109,6 +112,7 @@ impl MediaPlayer {
             shown,
             u64::from(shown) * 1000 / ms.max(1),
             dropped,
+            dec_dropped,
             decoder * 100 / ticks,
             compositor * 100 / ticks,
             page * 100 / ticks,

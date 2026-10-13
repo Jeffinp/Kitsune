@@ -83,6 +83,8 @@ pub(crate) struct MediaPlayer {
     mark: Option<stats::Mark>,
     /// The download of a `src` address.
     direct: Option<direct::Direct>,
+    /// Pictures the decoder dropped (part of the player's `dropped`), for the log.
+    dec_dropped: u32,
     /// What each source holds (the decoder's last answer), for `priority.rs`.
     ranges: Vec<Vec<(i64, i64)>>,
 }
@@ -311,6 +313,7 @@ impl MediaSet {
             mark: None,
             direct: None,
             ranges: Vec::new(),
+            dec_dropped: 0,
         };
         p.post(proto::msg(
             proto::IN_FLOW,
@@ -490,6 +493,7 @@ fn take(
         }
         Out::Frame { pts, skipped, .. } => {
             p.player.decoder_dropped(u32::from(skipped));
+            p.dec_dropped = p.dec_dropped.saturating_add(u32::from(skipped));
             p.player.frame(pts, len, m);
         }
         Out::Audio { pts, bytes, .. } => {
