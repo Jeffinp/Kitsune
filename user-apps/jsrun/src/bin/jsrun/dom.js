@@ -18,6 +18,12 @@
   let nextUid = 1;
   const byUid = new Map();
   const touch = () => { dirty = true; };
+  // Hooks for the files evaluated after this one (events.js, observers.js, structure.js...):
+  // `mutators` see every change of the tree (MutationObserver, custom elements), `wire` decides what
+  // the browser's copy of an element holds (live form values, shadow trees).
+  const mutators = [];
+  const notify = (type, target, a, b, c, d) => { for (const f of mutators) f(type, target, a, b, c, d); };
+  const hooks = { wireAttrs: null, wireKids: null, created: null };
 
   const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta',
     'source', 'track', 'wbr']);
@@ -177,7 +183,8 @@
   function dispatch(target, ev) {
     ev.target = target;
     const path = [];
-    for (let n = target; n; n = n.parentNode) path.push(n);
+    // A shadow root's host is next on the path (structure.js sets `_kjsHost`).
+    for (let n = target; n; n = n.parentNode || n._kjsHost || null) path.push(n);
     if (path[path.length - 1] === document && ev.type !== 'load') path.push(global);
     ev._path = path;
     for (let i = path.length - 1; i > 0 && !ev._stop; i--) invoke(path[i], ev, 1);
@@ -248,6 +255,7 @@
       if (i < 0) this.childNodes.push(c); else this.childNodes.splice(i, 0, c);
       c.parentNode = this;
       touch();
+      if (mutators.length) notify('childList', this, [c], [], c.previousSibling, c.nextSibling);
       return c;
     }
     removeChild(c) {
@@ -258,9 +266,18 @@
     replaceChild(n, old) { this.insertBefore(n, old); if (n !== old) this.removeChild(old); return old; }
     _detach(c) {
       const i = this.childNodes.indexOf(c);
+      const prev = i > 0 ? this.childNodes[i - 1] : null;
+      const next = i >= 0 ? this.childNodes[i + 1] || null : null;
       if (i >= 0) this.childNodes.splice(i, 1);
       c.parentNode = null;
       touch();
+      if (mutators.length) notify('childList', this, [], [c], prev, next);
+    }
+    _dropAll() {
+      const old = this.childNodes;
+      for (const k of old) k.parentNode = null;
+      this.childNodes = [];
+      if (old.length && mutators.length) notify('childList', this, [], old, null, null);
     }
     get textContent() {
       let out = '';
@@ -274,8 +291,7 @@
       return out;
     }
     set textContent(v) {
-      for (const k of this.childNodes) k.parentNode = null;
-      this.childNodes = [];
+      this._dropAll();
       if (v !== null && v !== undefined && v !== '') this.appendChild(new Text(String(v)));
       touch();
     }
@@ -354,7 +370,12 @@
   class CharacterData extends Node {
     constructor(type, name, data) { super(type, name); this._data = String(data); }
     get data() { return this._data; }
-    set data(v) { this._data = String(v); touch(); }
+    set data(v) {
+      const old = this._data;
+      this._data = String(v);
+      touch();
+      if (mutators.length) notify('characterData', this, old);
+    }
     get nodeValue() { return this._data; }
     set nodeValue(v) { this.data = v; }
     get textContent() { return this._data; }
@@ -468,7 +489,6 @@
       this.uid = uid || nextUid++;
       if (this.uid >= nextUid) nextUid = this.uid + 1;
       byUid.set(this.uid, this);
-      this._value = undefined;
     }
     get tagName() { return this.nodeName; }
     _shallow() {
@@ -477,8 +497,21 @@
       return c;
     }
     getAttribute(n) { const v = this._attrs.get(String(n).toLowerCase()); return v === undefined ? null : v; }
-    setAttribute(n, v) { this._attrs.set(String(n).toLowerCase(), String(v)); touch(); }
-    removeAttribute(n) { if (this._attrs.delete(String(n).toLowerCase())) touch(); }
+    setAttribute(n, v) {
+      n = String(n).toLowerCase();
+      const old = this._attrs.get(n);
+      this._attrs.set(n, String(v));
+      touch();
+      if (mutators.length) notify('attributes', this, n, old === undefined ? null : old);
+    }
+    removeAttribute(n) {
+      n = String(n).toLowerCase();
+      const old = this._attrs.get(n);
+      if (this._attrs.delete(n)) {
+        touch();
+        if (mutators.length) notify('attributes', this, n, old);
+      }
+    }
     hasAttribute(n) { return this._attrs.has(String(n).toLowerCase()); }
     hasAttributes() { return this._attrs.size > 0; }
     toggleAttribute(n, force) {
@@ -516,8 +549,7 @@
     }
     get innerHTML() { return this.childNodes.map((n) => serialize(n, false)).join(''); }
     set innerHTML(html) {
-      for (const k of this.childNodes) k.parentNode = null;
-      this.childNodes = [];
+      this._dropAll();
       for (const n of parseHTML(String(html))) this.appendChild(n);
       touch();
     }
@@ -553,7 +585,7 @@
     get hidden() { return this.hasAttribute('hidden'); }
     set hidden(v) { this.toggleAttribute('hidden', !!v); }
     get value() {
-      if (this._value !== undefined) return this._value;
+      if (this._kjsV !== undefined) return this._kjsV;
       if (this.localName === 'textarea') return this.textContent;
       if (this.localName === 'select') {
         const opts = this.getElementsByTagName('option');
@@ -565,7 +597,7 @@
     }
     set value(v) {
       v = String(v);
-      this._value = v;
+      this._kjsV = v;
       if (this.localName === 'textarea') this.textContent = v;
       else if (this.localName === 'select') {
         for (const o of this.getElementsByTagName('option')) o.toggleAttribute('selected', o.value === v);
@@ -621,7 +653,10 @@
   mixin(Element.prototype, childMethods);
   class HTMLElement extends Element {}
 
-  function createElement(tag, uid) { return new HTMLElement(tag, uid); }
+  function createElement(tag, uid) {
+    const el = new HTMLElement(tag, uid);
+    return hooks.created ? hooks.created(el) : el;
+  }
 
   // ---- selectors ----
 
@@ -950,7 +985,7 @@
         }
         out.push('<', tag);
         if (wire) out.push(' data-kjs="', String(node.uid), '"');
-        for (const [k, v] of node._attrs) {
+        for (const [k, v] of (wire && hooks.wireAttrs ? hooks.wireAttrs(node) : node._attrs)) {
           if (wire && (k === 'data-kjs' || !NAME_OK.test(k))) continue;
           out.push(' ', k, '="', escAttr(v), '"');
         }
@@ -960,7 +995,7 @@
           const t = node.textContent;
           out.push(wire ? t.replace(/<\//g, '<\\/') : t);
         } else {
-          for (const k of node.childNodes) serialize(k, wire, out);
+          for (const k of (wire && hooks.wireKids ? hooks.wireKids(node) : node.childNodes)) serialize(k, wire, out);
         }
         out.push('</', tag, '>');
         break;
@@ -1458,4 +1493,13 @@
   global._on = null;
   addHandlerProps(global);
   global.__kjs = { onMessage, runOne, nextDelay, flush, interrupted };
+  // What the files evaluated after this one build on (they get it as `kjs.dom`).
+  global.__kjs.dom = {
+    Node, Element, HTMLElement, CharacterData, Text, Comment, DocumentFragment, Document, document,
+    Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent, FocusEvent, InputEvent, DOMException,
+    DOMTokenList, dispatch, invoke, handlerOf, byUid, touch, serialize, parseHTML, createElement,
+    parseSelector, matchComplex, descendants, tasks, timers, addTimer, reportError, splitURL,
+    resolveURL, navigate, location, navigator, screen, Storage, mutators, hooks, getDecl, setDecl,
+    kebab, camel, targetMethods, addHandlerProps, HANDLERS, isDirty: () => dirty,
+  };
 })(globalThis, globalThis.__kjs_native);

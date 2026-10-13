@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Vue</title>
+<style>
+body{font-family:sans-serif;margin:0;background:#f4f8f6;color:#213}
+#app{max-width:600px;margin:16px auto;background:#fff;border:1px solid #cde;border-radius:8px;padding:8px 16px}
+h1{color:#42b883;margin:4px 0 8px}
+.on{background:#42b883;color:#fff}
+.extra{background:#fff3c4;padding:4px 8px}
+.fruits li{padding:2px 0}
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>{{ title }}</h1>
+  <p>Contador: <strong id="count">{{ count }}</strong> <button id="inc" :class="{ on: count > 0 }" @click="count++">Somar</button> <button @click="count = 0">Zerar</button></p>
+  <p><input id="name" v-model="name" placeholder="Seu nome"></p>
+  <p v-if="name" id="hello">Ola, {{ name }}!</p>
+  <p v-else id="hello">Digite seu nome.</p>
+  <ul class="fruits"><li v-for="(f, i) in fruits" :key="f">{{ i + 1 }}. {{ f }}</li></ul>
+  <p><input id="fruit" v-model.trim="fruit" @keyup.enter="addFruit" placeholder="Nova fruta"> <button @click="addFruit">Adicionar</button></p>
+  <p><label><input type="checkbox" id="show" v-model="show"> mostrar extra</label></p>
+  <div v-if="show" class="extra">Extra visivel ({{ fruits.length }} frutas)</div>
+  <p>Cor: <select v-model="color"><option>vermelho</option><option>verde</option><option>azul</option></select> <span :style="{ color: hex }">{{ color }}</span></p>
+  <form @submit.prevent="send"><input v-model="msg" placeholder="Mensagem"> <button type="submit">Enviar</button></form>
+  <p v-if="sent">Enviado: {{ sent }}</p>
+</div>
+<script src="/assets/vue.global.prod.js"></script>
+<script src="/assets/app-vue.js"></script>
+</body>
+</html>
