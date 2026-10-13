@@ -152,6 +152,10 @@ impl Desktop {
         let (qx, qy) = (px - content.x, py - content.y + t.scroll);
         t.browser.set_bar_focus(false);
         t.sel = None;
+        if t.js.is_some() {
+            // The page's scripts see the click first (see `script.rs`).
+            return self.browser_js_click(id, qx, qy);
+        }
         let page = t.page.as_ref();
         if let Some(f) = page.and_then(|p| p.field_at(qx, qy)).copied()
             && let Some(page) = &t.page

@@ -102,16 +102,27 @@ pub(super) fn fetch_sheet(
     net: &mut netstack::Net,
     url: &[u8],
     insecure_host: &[u8],
+    kind: u8,
 ) -> Option<Vec<u8>> {
-    let r = fetch_url(net, url, insecure_host, SHEET_CAP, None, None).ok()?;
+    let (cap, what) = if kind == KIND_SCRIPT {
+        (SCRIPT_CAP, "js")
+    } else {
+        (SHEET_CAP, "css")
+    };
+    let r = fetch_url(net, url, insecure_host, cap, None, None).ok()?;
     let name = core::str::from_utf8(url).unwrap_or("?");
     let code = kitsune_core::browser::status_code(&r.data).unwrap_or(0);
     if code != 200 {
-        serial_println!("css: status {} for {}", code, name);
+        serial_println!("{}: status {} for {}", what, code, name);
+        return None;
+    }
+    if kind == KIND_SCRIPT && r.truncated {
+        // Half a script is a syntax error at best.
+        serial_println!("js: {} is larger than {} bytes", name, cap);
         return None;
     }
     let body = kitsune_core::browser::page_body_partial(&r.data, r.truncated).body;
-    serial_println!("css: {} -> {} bytes", name, body.len());
+    serial_println!("{}: {} -> {} bytes", what, name, body.len());
     Some(body)
 }
 

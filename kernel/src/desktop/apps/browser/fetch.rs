@@ -3,6 +3,7 @@
 use super::layout::clamp_scroll;
 use super::layout::jump_scroll;
 use super::layout::layout_browser;
+use super::script::stop_js;
 use crate::desktop::*;
 use kitsune_core::anim::curves;
 use kitsune_core::t;
@@ -210,7 +211,9 @@ impl Desktop {
         }
         let t0 = crate::trace::t();
         let doc = kitsune_core::web::Doc::parse(&body);
+        stop_js(t);
         t.sheets.begin(&doc, t.browser.nav_url());
+        t.scripts.begin(&doc, t.browser.nav_url());
         t.doc = Some(doc);
         crate::trace::note("parse", t0, body.len() as u64);
         t.trace_t0.set(t0);
@@ -257,6 +260,7 @@ impl Desktop {
             };
             t.doc = Some(kitsune_core::web::Doc::parse(&html));
             t.sheets = kitsune_core::web::sheets::SheetSet::default();
+            stop_js(t);
             t.page = None;
             t.cert = None;
             t.sel = None;
@@ -337,6 +341,7 @@ impl Desktop {
                 }
                 t.page = None;
                 t.doc = None;
+                stop_js(t);
                 t.sel = None;
                 t.cert = None;
                 t.load.finish();

@@ -72,7 +72,10 @@ impl FormState {
         form: usize,
         submitter: Option<usize>,
     ) -> Result<Submission, FormError> {
-        let f = forms.get(form).ok_or(FormError::NoForm)?;
+        let f = forms
+            .get(form)
+            .filter(|f| !f.formless)
+            .ok_or(FormError::NoForm)?;
         let action = f.action.trim();
         let end = action.find(['?', '#']).unwrap_or(action.len());
         let mut href = String::from(&action[..end]);

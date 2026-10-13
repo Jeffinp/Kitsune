@@ -77,13 +77,13 @@ pub(super) fn post(
     }
     WHO.store(WHO_BROWSER, Ordering::Release);
     if OFFLINE.load(Ordering::Acquire) {
-        if kind == KIND_SHEET {
+        if kind == KIND_SHEET || kind == KIND_SCRIPT {
             // SAFETY: this client holds the slot (CLAIMED, won above) and no worker exists (OFFLINE);
             // published by the Release store of DONE.
             unsafe {
                 *SHEET_RESULT.get() = Some(None);
             }
-            REQ_KIND.store(KIND_SHEET, Ordering::Relaxed);
+            REQ_KIND.store(kind, Ordering::Relaxed);
             STATE.store(DONE, Ordering::Release);
             return true;
         }
@@ -178,13 +178,29 @@ pub fn take_image_result() -> Option<Result<ImgLoaded, ImgFail>> {
     Some(r.unwrap_or(Err(ImgFail::Failed)))
 }
 
+/// Queue the download of one script of the page being shown; collect it with
+/// [`take_script_result`].
+pub fn try_post_script(url: &[u8], insecure_host: &[u8]) -> bool {
+    post(url, insecure_host, KIND_SCRIPT, 0, None)
+}
+
 /// If a style sheet request has finished, return its body (`None` = it failed) and reset to idle.
 pub fn take_sheet_result() -> Option<Option<Vec<u8>>> {
+    take_body(KIND_SHEET)
+}
+
+/// If a script request has finished, return its body (`None` = it failed) and reset to idle.
+pub fn take_script_result() -> Option<Option<Vec<u8>>> {
+    take_body(KIND_SCRIPT)
+}
+
+/// The body of a finished request of `kind` (a sheet or a script), which share the result slot.
+fn take_body(kind: u8) -> Option<Option<Vec<u8>>> {
     if WHO.load(Ordering::Acquire) != WHO_BROWSER {
         return None;
     }
     let state = STATE.load(Ordering::Acquire);
-    if REQ_KIND.load(Ordering::Relaxed) != KIND_SHEET {
+    if REQ_KIND.load(Ordering::Relaxed) != kind {
         return None;
     }
     if matches!(state, REQUESTED | RUNNING) && worker_dead() {

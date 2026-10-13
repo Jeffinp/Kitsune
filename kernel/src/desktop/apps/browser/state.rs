@@ -52,6 +52,9 @@ pub(crate) struct TabData {
     pub img_keys: Vec<Option<String>>,
     /// The external style sheets of the page (which are asked for, which arrived).
     pub sheets: kitsune_core::web::sheets::SheetSet,
+    /// The scripts of the page and, once they run, its script process (see `script.rs`).
+    pub scripts: kitsune_core::web::script::ScriptSet,
+    pub js: Option<super::script::JsProc>,
     /// Page zoom in percent.
     pub zoom: u16,
     /// What the user typed into the page's form controls.
@@ -97,6 +100,8 @@ pub(crate) struct BrowserState {
     pub img_inflight: Option<(u32, String)>,
     /// The style sheet the fetcher is working on, and the tab that asked for it.
     pub sheet_inflight: Option<(u32, String)>,
+    /// The script the fetcher is working on, and the tab that asked for it.
+    pub script_inflight: Option<(u32, String)>,
     /// The tab whose page request the fetcher has.
     pub req_tab: Option<u32>,
     pub next_id: u32,
@@ -170,6 +175,8 @@ impl TabData {
             layout_w: 0,
             img_keys: Vec::new(),
             sheets: kitsune_core::web::sheets::SheetSet::default(),
+            scripts: kitsune_core::web::script::ScriptSet::default(),
+            js: None,
             zoom: 100,
             forms: kitsune_core::web::form::FormState::default(),
             find: kitsune_core::web::find::FindBar::new(),
@@ -193,6 +200,7 @@ impl BrowserState {
             images: kitsune_core::web::imgcache::ImageCache::new(),
             img_inflight: None,
             sheet_inflight: None,
+            script_inflight: None,
             req_tab: None,
             next_id: 2,
             strip: alloc::vec![StripEntry {

@@ -10,7 +10,7 @@ server):
       tools/perf/run.sh <img> bios <out> 200 tools/perf/scen/w24-pages.sh
 
 Routes: / (index), /type, /lists, /tables, /forms, /result (echoes the query), /images,
-/long, /intl, /styled, /quote, /big?n=2000 (about n nodes), /slow (a 3 s response, to see the
+/long, /intl, /styled, /quote, /js (JavaScript: W52), /big?n=2000 (about n nodes), /slow (a 3 s response, to see the
 progress bar), /redirect, /gone (404), /hang (never answers).
 """
 import struct
@@ -76,6 +76,87 @@ PT = (
     "A rápida raposa marrom pula sobre o cão preguiçoso; açúcar, coração, ação, órgão, avô, "
     "também, você, maçã, lição e pingüim. “Aspas”, ‘simples’, travessão — e reticências…"
 )
+
+
+JS_PAGE = """<!doctype html><html><head><meta charset=utf-8><title>Sem JavaScript</title>
+<style>
+body{font-family:sans-serif;margin:16px;background:#fafafa}
+.box{padding:12px;background:#e8e4ff;border-radius:8px;margin:8px 0}
+.on{background:#bdf5c9;font-weight:bold}
+button{margin:4px 8px 4px 0}
+#list li{color:#5b3df5}
+</style>
+<script src="/js/app.js"></script>
+</head><body>
+<h1 id=title>Sem JavaScript</h1>
+<p id=status>O script ainda não rodou.</p>
+<ul id=list></ul>
+<p><button id=btn>Clique aqui</button><button id=loop>Laço infinito</button></p>
+<p id=count class=box>Cliques: 0</p>
+<p id=timer>Timer: 0</p>
+<p><a id=prevent href="/type">Link que o script segura</a> · <a href="javascript:mark('js-link')">link javascript:</a></p>
+<p id=log>-</p>
+<script>
+  // Inline, after the external one: it already sees what app.js defined.
+  console.log('js: inline sees app =', typeof window.app, 'readyState', document.readyState);
+  document.getElementById('status').textContent = 'Script inline rodou.';
+</script>
+</body></html>"""
+
+JS_APP = r"""
+'use strict';
+window.app = { clicks: 0 };
+function mark(what) {
+  document.getElementById('log').textContent = 'último: ' + what;
+  console.log('js: mark ' + what);
+}
+console.log('js: app.js start, ua=' + navigator.userAgent.split(' ')[0] + ' host=' + location.host +
+  ' path=' + location.pathname);
+document.addEventListener('DOMContentLoaded', () => {
+  console.log('js: DOMContentLoaded, items before:', document.querySelectorAll('#list li').length);
+  document.title = 'Com JavaScript';
+  document.getElementById('title').textContent = 'Montada pelo JavaScript';
+  const list = document.querySelector('#list');
+  for (const name of ['um', 'dois', 'três']) {
+    const li = document.createElement('li');
+    li.textContent = 'Item ' + name + ' (criado com createElement)';
+    li.setAttribute('data-n', name);
+    list.appendChild(li);
+  }
+  list.insertAdjacentHTML('beforeend', '<li><b>Item quatro</b> (innerHTML)</li>');
+  console.log('js: list has', list.children.length, 'items; matches', list.matches('ul#list'),
+    'closest', list.querySelector('b').closest('ul').id);
+  const btn = document.getElementById('btn');
+  btn.addEventListener('click', (e) => {
+    app.clicks++;
+    const c = document.getElementById('count');
+    c.textContent = 'Cliques: ' + app.clicks;
+    c.classList.toggle('on');
+    console.log('js: click', app.clicks, 'target', e.target.id, 'class', c.className);
+  });
+  document.getElementById('prevent').onclick = (e) => {
+    e.preventDefault();
+    mark('link segurado');
+  };
+  document.getElementById('loop').addEventListener('click', () => {
+    console.log('js: entering an endless loop');
+    for (;;) {}
+  });
+  let ticks = 0;
+  const iv = setInterval(() => {
+    ticks++;
+    document.getElementById('timer').textContent = 'Timer: ' + ticks;
+    if (ticks === 3) { clearInterval(iv); console.log('js: interval done'); }
+  }, 300);
+  setTimeout(() => {
+    document.getElementById('status').innerHTML = 'Mudado pelo <i>setTimeout</i>.';
+    console.log('js: timeout fired');
+  }, 600);
+  requestAnimationFrame((t) => console.log('js: animation frame', t >= 0));
+  Promise.resolve().then(() => console.log('js: microtask'));
+});
+window.addEventListener('load', () => console.log('js: load event'));
+"""
 
 
 def route(path, q):
@@ -219,6 +300,10 @@ a:hover{color:red}
             "<p class=after>Depois das colunas flutuantes.</p></main>"
             "<footer class=foot><span>Rodapé</span><span class=push>fim</span></footer></body></html>"
         ).encode()
+    if path == "/js":
+        # A page that builds part of itself with JavaScript (/js/app.js and an inline script) and
+        # answers clicks: W52.
+        return JS_PAGE.encode()
     if path == "/bigcss":
         # A 300 KB sheet (served gzip-compressed): the rule that matters is the last one.
         return (
@@ -288,6 +373,8 @@ main{max-width:min(100%, 760px);margin:0 auto;padding:20px}
 @media print{ body{display:none} }
 """
             return self.reply(200, "text/css; charset=utf-8", css.encode())
+        if u.path == "/js/app.js":
+            return self.reply(200, "text/javascript; charset=utf-8", JS_APP.encode())
         if u.path == "/big.css":
             import gzip
             rules = "".join(f".r{i}{{color:#{i % 4096:03x};margin:{i % 7}px;padding:{i % 5}px}}\n" for i in range(9000))

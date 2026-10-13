@@ -113,6 +113,7 @@ impl SysInfo for KSys {
             stdin: ctx.stdin.clone(),
             // It acts as the user who runs it, even if the session changes meanwhile.
             cred: crate::desktop::services::accounts::cred(),
+            page: false,
         };
         userproc::spawn_elf(name, bytes, launch).map_err(|e| match e {
             SpawnError::BadElf(why) => {

@@ -46,9 +46,9 @@ pub extern "C" fn worker() -> ! {
             // SAFETY: NET is set once, before this thread exists (`fetch::init`), and used only by this
             // worker, one request at a time, so the `&mut` is unique.
             let netd = unsafe { (*NET.get()).as_mut() };
-            if kind == KIND_SHEET {
+            if kind == KIND_SHEET || kind == KIND_SCRIPT {
                 let result = match netd {
-                    Some(netd) => fetch_sheet(netd.net_mut(), &url, &insecure),
+                    Some(netd) => fetch_sheet(netd.net_mut(), &url, &insecure, kind),
                     None => None,
                 };
                 // SAFETY: STATE is RUNNING; the compositor reads SHEET_RESULT only after seeing DONE

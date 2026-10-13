@@ -390,7 +390,7 @@ a lista de desenho é descartada e refeita ao voltar.
 | Páginas de teste (tipografia, listas, tabelas, formulários, imagens, palavras longas, idiomas, estilos, citações, 2000 nós) | `tools/w24-site.py` e `w24-pages.sh` |
 | Custo | `tools/perf/scen/w24-perf.sh` e `tools/perf/w24-perf.py` (`docs/TESTING.md`, "Navegador na W24") |
 
-Limites conhecidos (os de CSS moderno estão no §10): sem JavaScript; sem
+Limites conhecidos (os de CSS moderno estão no §10; JavaScript no §12): sem
 `rowspan`; sem rolagem horizontal (`pre` quebra); alfabetos fora do Latim-1
 (cirílico, grego, CJK, emoji) e escrita da direita para a esquerda aparecem como quadros; sem
 cookies nem *cache* de HTTP; o itálico é uma inclinação do negrito/regular, não uma face.
@@ -438,7 +438,7 @@ com bordas suavizadas: `path` (todos os comandos; o arco elíptico vira a corda)
 gradientes (a primeira cor vale pelo gradiente). Sem texto, `use`, filtros, máscaras, recortes nem `<style>`. Logos
 e ícones de Wikipédia, Python, Rust e HN saem certos.
 
-**Limites.** Sem JavaScript, sem `position` de verdade (`sticky`, `fixed`, `absolute`
+**Limites.** JavaScript só o básico do §12, sem `position` de verdade (`sticky`, `fixed`, `absolute`
 vão para o fluxo), sem imagens de fundo (`background-image: url()`), sem `grid-template-areas` nem linhas explícitas, sem fontes da web, sem
 `rowspan`, sem cookies. Uma página SPA (BBC, por exemplo) mostra só o que o HTML do servidor traz.
 
@@ -463,10 +463,89 @@ pedido de cada subrecurso e na diagramação. O ponto único para isso é a fila
 (`web::sheets::SheetSet` e `web::imgcache::ImageCache`): ambas passam a perguntar a um filtro (`kitsune_core`, puro
 e testável no host) se o endereço pode ser pedido.
 
-## 12. JavaScript: o motor existe, ainda fora do navegador
+## 12. JavaScript nas páginas
 
-Etapa 1 do item 11 do [`ROADMAP`](../ROADMAP.md): o **QuickJS** (C, nativo, num processo de anel 3) roda scripts
-com `run jsrun arquivo.js` e passa no teste embutido (`run jsrun --selftest`, cenário `w51-jsrun.sh`); detalhes,
-limites e números em [`processos.md`](processos.md) ("JavaScript em anel 3"). O Navegador continua sem
-JavaScript: a etapa 2 é ligar o motor ao `Doc` (a ideia é um processo por aba, com `document`, eventos, `setTimeout`
-e `fetch` servidos pelo navegador por chamadas próprias), e só então páginas que se montam com JavaScript aparecem.
+Etapas 1 e 2 do item 11 do [`ROADMAP`](../ROADMAP.md). O motor é o **QuickJS** (C, nativo, num processo de anel 3:
+`jsrun`, ver [`processos.md`](processos.md), "JavaScript em anel 3"). Desde a etapa 2 o Navegador roda o JavaScript
+das páginas: **um processo `jsrun --page` por aba** cuja página tem scripts, ligado ao navegador por duas filas de
+mensagens no kernel. Nada do JavaScript (nem do C) roda no anel 0.
+
+### 12.1 Desenho
+
+Por que um processo por aba, e com o DOM dentro dele: as APIs do DOM são síncronas (`getElementById`,
+`textContent`, `appendChild`...) e chamadas às centenas por script; se cada uma fosse uma ida e volta ao
+compositor, um script comum custaria milhares de trocas de contexto. Então o processo tem **a sua cópia do
+DOM** (em JavaScript, `user-apps/jsrun/src/bin/jsrun/dom.js`), e o navegador e ele só trocam o documento inteiro e
+eventos. O mesmo binário `jsrun` faz as duas coisas (`--page` é o modo do navegador), assim o motor, a libc e o
+`build.rs` são um só.
+
+| Peça | Onde | O quê |
+|---|---|---|
+| Coleta dos scripts | `kitsune_core::web::dom` (`parse_html_full`) | o parser guarda os `<script>` clássicos (sem `type` ou com tipo JavaScript; `module` e JSON ficam de fora), inline e `src`, em ordem; até 64 por documento e 2 MiB de texto inline |
+| Busca dos externos | `web::script::ScriptSet`, `kernel/src/fetch` (`KIND_SCRIPT`), `bringup::pump_browser` | como as folhas: um por vez pelo `fetcher`, depois das folhas e antes das imagens; até 48 scripts e 4 MiB por página, cada um até 1 MiB (um script cortado é descartado) |
+| Ids dos elementos | `Element::uid`, `number_elements` | cada elemento ganha um número em ordem de documento; é por ele que um clique acha o elemento no processo e que o documento devolvido mantém a identidade |
+| Mensagens | `web::script::{init_message, click_message, parse_message}` | navegador → processo: JSON (`init` com a árvore, a URL, o idioma, o viewport e os scripts; `click` com o id, a posição e um número de sequência). Processo → navegador: um byte de tipo e o resto (`D` + HTML do documento com os ids em `data-kjs`, `A` + veredito de um clique, `N` + endereço) |
+| Ligação no kernel | `kernel/src/userproc/page.rs`, chamadas 56 (`page_recv`) e 57 (`page_send`) | duas filas por processo (até 8 MiB e 256 mensagens esperando; mensagem de até 4 MiB). Só um processo iniciado com `spawn_page` tem a ligação; os outros recebem `ENOSYS` |
+| Laço do processo | `user-apps/jsrun/src/page.c` | espera uma mensagem ou o próximo timer, roda as tarefas que venceram (cada uma com orçamento próprio), os jobs de promise depois de cada uma, e envia o documento se mudou (no máximo a cada ~40 ms de tarefas) |
+| DOM, eventos, timers | `user-apps/jsrun/src/bin/jsrun/dom.js` | ver §12.2 |
+| Navegador | `kernel/src/desktop/apps/browser/script.rs` | inicia o processo quando os scripts da aba ativa chegaram, entrega o `init`, aplica o documento devolvido (`Doc::replace_from_script`) e refaz o layout, manda os cliques, mata o processo quando a aba troca de página ou fecha (`Drop` do `JsProc`) |
+
+Fluxo de uma página: o HTML chega e é mostrado como sempre (sem esperar scripts); as folhas e os scripts externos
+são buscados; com todos os scripts em mãos o navegador inicia o processo e manda o `init`; o processo monta o DOM,
+roda os scripts **em ordem, cada um como uma tarefa**, dispara `DOMContentLoaded` e `load`, e a cada lote de tarefas
+que mudou algo manda o documento de volta. O navegador o passa pelo **mesmo parser tolerante** de uma página da rede
+(o processo não é confiável), mantém as folhas externas e o `<style>` original e refaz o layout. Com scripts, o
+layout registra a caixa de cada elemento (`Doc::set_track`) e `Page::node_at` acha o elemento sob o ponteiro.
+
+**Cliques.** Um clique na página vai ao processo com o id do elemento mais interno sob o ponteiro (o menor retângulo
+que contém o ponto). Os controles reagem na hora como antes (foco, caixa marcada). Um link ou um botão de envio
+**espera o veredito** da página: o processo dispara o evento (captura, alvo, bolha, atributos `on*`, `return false`),
+e se ninguém chamou `preventDefault()` responde `A seq 1` e o navegador segue o link ou envia o formulário. Uma página
+que não responde em 1,5 s (ocupada ou morta) não segura o clique: a ação acontece assim mesmo. `javascript:` em
+links é avaliado no processo; `location.href = ...`, `assign`, `replace` e `reload` viram navegação. Em páginas com
+scripts os controles fora de `<form>` (um `<button>` solto, muito comum) passam a ser desenhados, num formulário
+próprio que nunca é enviado.
+
+**Limites de tempo e memória.** Cada tarefa (um script, um evento, um timer) tem **3 s**; passou disso o interrupt
+handler do QuickJS a interrompe (erro não capturável, relatado como `Uncaught InternalError: interrupted` e
+`jsrun: ... ran for too long and was stopped`), o timer que a iniciou é cancelado e a página continua viva. O
+processo é preemptado como qualquer outro, então nem durante esses 3 s o desktop para (provado no W52: o cursor e o
+hover seguem desenhados durante um `for(;;){}`). Memória: a do `jsrun` (48 MiB de JS, 64 MiB de heap). No máximo 8
+processos no sistema: sem vaga, a página fica sem JavaScript (o log diz).
+
+### 12.2 O que os scripts encontram
+
+`window`/`globalThis`/`self`, `document` (`documentElement`, `head`, `body`, `title` que lê e escreve,
+`readyState`, `getElementById`, `getElementsByTagName/ClassName/Name`, `querySelector(All)`, `createElement`,
+`createTextNode`, `createDocumentFragment`, `createComment`, `cookie` em memória, `write` que acrescenta ao
+`body`), nós (`appendChild`, `insertBefore`, `removeChild`, `replaceChild`, `remove`, `append`, `prepend`, `before`,
+`after`, `replaceWith`, `cloneNode`, `contains`, `textContent`, `childNodes`, `children`, irmãos e pais), elementos
+(`getAttribute`/`setAttribute`/`removeAttribute`/`toggleAttribute`, `id`, `className`, `classList`, `style` como
+objeto que escreve o atributo, `dataset`, `innerHTML`/`outerHTML`/`insertAdjacentHTML` com um parser de fragmentos
+próprio, `innerText`, `hidden`, `value`, `checked`, `disabled`, `href`/`src` e afins, `matches`, `closest`, `click()`),
+seletores (tipo, `#id`, `.classe`, atributos com `= ~= |= ^= $= *=`, combinadores ` > + ~`, listas, `:first/last/only-child`,
+`:nth-child()` e afins, `:not()`, `:is()`, `:where()`, `:has()`, `:empty`, `:root`, `:checked`, `:disabled`, `:scope`),
+eventos (`addEventListener` com `capture`/`once`, `removeEventListener`, `dispatchEvent`, `Event`, `CustomEvent`,
+`MouseEvent`, `KeyboardEvent`, `preventDefault`, `stopPropagation`, propriedades `onclick` etc. e atributos `on*`),
+`setTimeout`/`setInterval`/`clear*`, `requestAnimationFrame` (~60 por segundo), `queueMicrotask`,
+`requestIdleCallback`, `location` (partes da URL, `hash`, navegação), `navigator` (`userAgent` =
+`Mozilla/5.0 (X11; Kitsune x86_64) Kitsune/<versão>`, `language`), `URL` e `URLSearchParams`, `localStorage` e
+`sessionStorage` em memória, `history` (sem efeito), `matchMedia` (nunca casa), `getComputedStyle` (só o estilo em
+linha), `atob`/`btoa`, `alert`/`confirm`/`prompt` (vão para o log), e `MutationObserver`, `IntersectionObserver` e
+`ResizeObserver` que não observam nada. `console.log` sai no log do sistema como `[jsrun:PID] ...`.
+
+**Ainda não** (etapa 2 mínima): `fetch` e `XMLHttpRequest` (rejeitam), cookies de verdade, módulos (`type=module`,
+`import`), Web Workers, canvas, teclado e texto digitado nos campos (o script não vê o que se digita, e `input`/`change`
+não disparam), eventos de mouse além do clique, medidas de layout (`getBoundingClientRect`, `offsetWidth`... são 0),
+estilo computado de verdade, `<link>` e `<img>` acrescentados por script depois do início (as imagens novas são
+buscadas; folhas novas não). Os scripts rodam todos depois do documento inteiro (como `defer`), não no meio do
+parse; `document.write` acrescenta ao fim. O documento volta inteiro a cada mudança: barato em páginas pequenas,
+caro numa SPA grande (cada envio é um parse e um layout). Os scripts só começam na aba ativa.
+
+### 12.3 Provas
+
+| O quê | Evidência |
+|---|---|
+| Parser guarda os scripts, ids, `replace_from_script` (folhas externas e `<style>` mantidos, entrada hostil), caixa por elemento, `ScriptSet`, mensagens e o clique que espera o veredito | `kitsune_core` `web::script::tests` (18 testes) |
+| O DOM em JavaScript no hospedeiro | `cargo run -p kitsune_core --example script_init -- pagina.html URL nome.js=arquivo.js` gera o `init`; o `jsrun` compilado para o hospedeiro com um laço de teste (não versionado) rodou a página `/js` com cliques |
+| A página `/js` de `tools/w24-site.py` no QEMU (BIOS, 256 MiB) | `tools/perf/scen/w52-browser-js.sh`: **19/19**. Script externo buscado, processo iniciado, scripts em ordem, `DOMContentLoaded`, `load`, `createElement`/`appendChild`/`insertAdjacentHTML`/seletores, `setTimeout`, `setInterval`, `requestAnimationFrame`, promise; o título da janela, o `h1`, a lista e um parágrafo mudam na tela; dois cliques no botão contam e trocam a classe (o fundo muda); o link com `preventDefault` não navega; o `javascript:` roda; o `for(;;){}` é interrompido (orçamento de 3 s por tarefa), o desktop segue desenhando e o terceiro clique funciona |

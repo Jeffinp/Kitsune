@@ -26,10 +26,29 @@ pub const MAX_DEPTH: usize = 40;
 /// budget is spent: the page is rendered truncated, never refused. Real pages
 /// under `<body>` stay well below this.
 pub const MAX_NODES: usize = 20_000;
+/// Most `<script>` elements kept for one document, and most bytes of inline script text.
+pub const MAX_SCRIPTS: usize = 64;
+pub const MAX_INLINE_SCRIPT: usize = 2 * 1024 * 1024;
+
+/// What [`parse_html_full`] finds in a document.
+pub struct Parsed {
+    pub nodes: Vec<Node>,
+    /// The text of every `<style>` element, in order.
+    pub css: String,
+    /// The classic scripts (`<script>` without a `type`, or with a JavaScript one), in order.
+    pub scripts: Vec<ScriptRef>,
+}
+
 /// Parse an HTML document into a DOM tree plus the concatenated text of every
 /// `<style>` element (the page's CSS). Tolerant of malformed markup: unknown
 /// tags pass through, mismatched close tags pop to the nearest match.
 pub fn parse_html(input: &[u8]) -> (Vec<Node>, String) {
+    let p = parse_html_full(input);
+    (p.nodes, p.css)
+}
+
+/// [`parse_html`], keeping the document's scripts too.
+pub fn parse_html_full(input: &[u8]) -> Parsed {
     // A page that is not valid UTF-8 is read as Windows-1252 (what pages without a
     // declared charset almost always are) instead of rendering as nothing.
     let converted;
@@ -47,10 +66,33 @@ pub fn parse_html(input: &[u8]) -> (Vec<Node>, String) {
         nodes: 0,
         pending_ws: false,
         pre_depth: 0,
+        scripts: Vec::new(),
+        script_bytes: 0,
     };
     let mut nodes = p.parse_nodes(&mut Vec::new());
     annotate(&mut nodes, 0);
-    (nodes, p.css)
+    Parsed {
+        nodes,
+        css: p.css,
+        scripts: p.scripts,
+    }
+}
+
+/// Is `t` (a `<script type>`) one the engine runs? No type, or a JavaScript MIME type; modules,
+/// JSON, templates and the like are not classic scripts.
+fn is_classic_script(t: Option<&String>) -> bool {
+    let Some(t) = t else { return true };
+    let t = t.trim().to_ascii_lowercase();
+    let t = t.split(';').next().unwrap_or("").trim();
+    matches!(
+        t,
+        "" | "text/javascript"
+            | "application/javascript"
+            | "application/x-javascript"
+            | "text/ecmascript"
+            | "application/ecmascript"
+            | "text/jscript"
+    )
 }
 struct HtmlParser<'a> {
     b: &'a [u8],
@@ -62,6 +104,9 @@ struct HtmlParser<'a> {
     pending_ws: bool,
     /// Open `<pre>` elements: whitespace-only text is kept verbatim inside them.
     pre_depth: usize,
+    scripts: Vec<ScriptRef>,
+    /// Bytes of inline script text kept (see [`MAX_INLINE_SCRIPT`]).
+    script_bytes: usize,
 }
 impl HtmlParser<'_> {
     fn eof(&self) -> bool {
@@ -159,6 +204,25 @@ impl HtmlParser<'_> {
             if tag == "style" {
                 self.css.push_str(&raw);
                 self.css.push('\n');
+            } else if is_classic_script(attrs.get("type")) && self.scripts.len() < MAX_SCRIPTS {
+                let src = attrs
+                    .get("src")
+                    .map(|s| decode_attr(s))
+                    .filter(|s| !s.trim().is_empty());
+                if src.is_some() {
+                    self.scripts.push(ScriptRef {
+                        src,
+                        text: String::new(),
+                    });
+                } else if !raw.trim().is_empty()
+                    && self.script_bytes.saturating_add(raw.len()) <= MAX_INLINE_SCRIPT
+                {
+                    self.script_bytes += raw.len();
+                    self.scripts.push(ScriptRef {
+                        src: None,
+                        text: raw,
+                    });
+                }
             }
             return None;
         }
@@ -171,6 +235,7 @@ impl HtmlParser<'_> {
                 children: Vec::new(),
                 ws_before,
                 sib: Sib::default(),
+                uid: 0,
             }));
         }
 
@@ -221,6 +286,7 @@ impl HtmlParser<'_> {
             children,
             ws_before,
             sib: Sib::default(),
+            uid: 0,
         }))
     }
 

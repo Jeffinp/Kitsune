@@ -13,7 +13,7 @@ ele consegue fazer, depois o polimento. Cada item tem um **critério de aceite v
 | Scheduler | Preemptivo a 250 Hz, threads prontas/bloqueadas, CPU real por thread, compositor ocioso sem acordar à toa |
 | Armazenamento | **OJFS v3**: journal de metadados, dados *copy-on-write*, extents, CRC32, `fsck` no boot, cache de blocos, `FLUSH` no disco, camada VFS única |
 | Rede | `virtio-net` e NE2000, ARP/IPv4/ICMP/DHCP com renovação, DNS com cache, TCP, **TLS 1.3 com cadeia de certificados verificada** (46 raízes), hora por SNTP |
-| Navegador | HTML/CSS, imagens PNG/BMP/PPM, formulários GET, favoritos, busca na página, zoom, gzip/deflate, indicador de conexão segura |
+| Navegador | HTML/CSS, imagens PNG/BMP/PPM, formulários GET, favoritos, busca na página, zoom, gzip/deflate, indicador de conexão segura, JavaScript das páginas (QuickJS num processo de anel 3 por aba, DOM e eventos básicos) |
 | Apps | Plataforma WebAssembly com manifesto, permissões, cotas de CPU e memória, dados em `/data/<id>`, instalação em `/apps`; Terminal, Editor, Arquivos, Imagens, Tarefas, Registro, Ajustes, Calculadora |
 | Interface | Painel superior, barra de tarefas flutuante, Apps com categorias, Busca, encaixe de janelas, 2 a 4 áreas de trabalho, configurações rápidas, central de notificações, tema claro/escuro, animações com opção de reduzir movimento |
 | Idiomas | Português do Brasil e inglês, trocados ao vivo, com formatos de data e número do idioma |
@@ -87,9 +87,9 @@ ideia: nada do código nem da marca do Brave). Decisões já tomadas:
   **por site**, por sessão ou para sempre. Se um site detectar o bloqueio e pedir para desativar, a pessoa desliga ali
   e a página recarrega sem o filtro e abre normalmente.
 - **Como:** lista de regras embutida e atualizável (formato de filtros comum, só o subconjunto de bloqueio por domínio,
-  caminho e tipo de recurso), aplicada **antes** do `fetcher` pedir qualquer subrecurso (imagens, folhas, scripts que
-  nem rodamos) e na diagramação (elementos escondidos por seletor cosmético). Sem JavaScript no navegador, o
-  ganho é menos tráfego, menos memória e páginas mais limpas.
+  caminho e tipo de recurso), aplicada **antes** do `fetcher` pedir qualquer subrecurso (imagens, folhas, scripts) e na
+  diagramação (elementos escondidos por seletor cosmético). O ganho é menos tráfego, menos memória, menos script de
+  terceiros rodando e páginas mais limpas.
 - **Extras do estilo Brave, em ordem:** bloquear rastreadores de terceiros, remover parâmetros de rastreio das
   URLs (`utm_*`, `fbclid`...), atualizar http→https quando o site oferece, contador de itens bloqueados na página.
 - **Aceite:** uma página de teste com anúncios e rastreadores locais não pede nenhum deles com o filtro ligado e pede
@@ -111,9 +111,17 @@ abaixo, e nenhuma existe ainda. Ordem proposta, cada etapa com aceite próprio:
    ~0,3 s sob emulação TCG (~20 ms nativo no hospedeiro). Ver `docs/design/processos.md` ("JavaScript em anel 3").
    Ficou de fora: `test262`, `Intl`, módulos `import`, `setTimeout`, limite de tempo de CPU (o `Ctrl+C` mata), e a
    ligação com o Navegador (é a etapa 2).
-2. **DOM e APIs da web** sobre o `Doc`: `document`, `querySelector`, eventos, `setTimeout`, `fetch`/`XMLHttpRequest`
-   sobre o `fetcher`, `localStorage`, `history`, cookies (hoje não há). Aceite: uma página com JavaScript que monta a si
-   mesma (um app pequeno de React/Preact) aparece certa.
+2. **DOM e APIs da web. Parte mínima feita (2026-10).** O Navegador roda o JavaScript das páginas: um processo
+   `jsrun --page` (anel 3) por aba com scripts, com a sua cópia do DOM em JavaScript, ligado ao navegador por duas
+   filas de mensagens (chamadas 56 e 57). Scripts inline e externos (buscados pelo `fetcher`) em ordem,
+   `DOMContentLoaded`/`load`, `document`/`querySelector(All)`/`createElement`/`appendChild`/`innerHTML`/`classList`/
+   `setAttribute`/`style`, eventos com captura e bolha, clique com `preventDefault` (o link ou o envio espera o veredito
+   da página), `setTimeout`/`setInterval`/`requestAnimationFrame`, `location`, `navigator`; cada mudança no DOM volta
+   ao navegador e refaz o layout; 3 s por tarefa (um laço infinito é interrompido e a página segue). Provado no QEMU
+   (`w52-browser-js.sh`, 19/19) com a página `/js` de `tools/w24-site.py`; ver `docs/design/tls-browser.md` §12.
+   **Falta para o aceite desta etapa** (um app pequeno de React/Preact aparece certo, não testado): `fetch`/
+   `XMLHttpRequest` sobre o `fetcher`, cookies, teclado e texto dos campos visíveis ao script, eventos de mouse além do
+   clique, medidas de layout, módulos, e um envio do DOM mais barato que o documento inteiro.
 3. **Rede para o que o YouTube pede:** cookies, HTTP keep-alive/HTTP/2 se o servidor exigir, CORS, WebSocket.
 4. **Mídia:** Media Source Extensions, decodificadores de vídeo (H.264 e VP9 em Rust puro, em software: a CPU em
    software de 1080p não dá; 360p/480p é a meta realista) e de áudio (AAC e Opus), `<video>`/`<audio>`, sincronia.

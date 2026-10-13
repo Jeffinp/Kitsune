@@ -38,7 +38,7 @@ fn main() {
             vec!["-w".into(), "-include".into(), "features.h".into()],
         ));
     }
-    for file in ["libc/libc.c", "libc/printf.c", "src/glue.c"] {
+    for file in ["libc/libc.c", "libc/printf.c", "src/glue.c", "src/page.c"] {
         jobs.push((root.join(file), vec!["-Wall".into()]));
     }
 

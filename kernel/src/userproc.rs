@@ -20,6 +20,8 @@
 //! | 16–21 | `host_*` | only for a WebAssembly host process, see [`HostLink`] | |
 //! | 48–51 | `win_open`, `win_present`, `win_event`, `win_title` | one window on the desktop, see `kitsune_userabi` and `crate::wasm::manager::native` | |
 //! | 32–42 | `open`, `close`, `read`, `write`, `seek`, `stat`, `readdir`, `mkdir`, `remove`, `rename`, `getargs` | files and arguments, see `kitsune_userabi` and [`crate::userfs`] | |
+//! | 52–54 | `spawn`, `proc_poll`, `proc_kill` | child processes | |
+//! | 56–57 | `page_recv`, `page_send` | only the script process of a browser page, see `page.rs` | |
 //!
 //! Every pointer is translated through the process's own page tables before the kernel touches
 //! it (`AddressSpace::copy_in`), so a bad pointer is an error return, never a kernel fault.
@@ -43,10 +45,13 @@ use kitsune_userabi as abi;
 
 mod files;
 mod host;
+mod page;
 mod queue;
 mod syscall;
 use files::*;
 pub use host::*;
+use page::*;
+pub use page::{page_post, page_take, spawn_page};
 pub(crate) use queue::*;
 pub use syscall::syscall_entry;
 use syscall::*;
@@ -138,6 +143,8 @@ struct Proc {
     win: u32,
     events: VecDeque<abi::Event>,
     event_deadline: Option<u64>,
+    /// The link with the browser, for the script process of a page (`page.rs`).
+    page: Option<PageLink>,
 }
 /// An open file: where it is and where the next read or write happens.
 #[derive(Clone)]
@@ -224,6 +231,8 @@ pub struct Launch {
     pub args: Vec<u8>,
     pub stdin: Vec<u8>,
     pub cred: Option<Cred>,
+    /// Give it the link with the browser (the script process of a page).
+    pub page: bool,
 }
 /// The kernel's side of a WebAssembly host process: the module it runs, the job the kernel posted
 /// and the host call the process is waiting on. The process blocks in `int 0x80` (the call is
@@ -388,6 +397,7 @@ fn spawn(
         win: 0,
         events: VecDeque::new(),
         event_deadline: None,
+        page: launch.page.then(PageLink::default),
     };
     // The entry goes into the table in the same critical section that makes the thread runnable (the
     // lock keeps interrupts off): the thread's first system call looks its process up by slot, and

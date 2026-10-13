@@ -348,15 +348,7 @@ pub(super) fn emit_line(
         let pw = (w + Q - 1) / Q;
         let nat = p.nat(st.font);
         let ty = baseline - p.asc(st.font) - st.shift;
-        if let Some(l) = st.link {
-            p.hits.push(LinkHit {
-                x: px,
-                y,
-                w: pw,
-                h: line_h,
-                link: l,
-            });
-        }
+        p.push_hit(px, y, pw, line_h, st.link, st.node);
         p.push_cmd(Cmd::Text {
             x: px,
             y: ty,

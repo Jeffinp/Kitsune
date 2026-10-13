@@ -109,6 +109,8 @@ pub struct FormInfo {
     /// The `action` attribute (empty = the current page).
     pub action: String,
     pub fields: Vec<FieldInfo>,
+    /// The controls outside any `<form>` of a page with scripts: drawn and usable, never submitted.
+    pub formless: bool,
 }
 impl FormInfo {
     /// A form from its `method` and `action` attributes.
@@ -117,6 +119,15 @@ impl FormInfo {
             post: method.is_some_and(|m| m.trim().eq_ignore_ascii_case("post")),
             action: action.unwrap_or_default(),
             fields: Vec::new(),
+            formless: false,
+        }
+    }
+
+    /// The group of controls outside any form (see [`FormInfo::formless`]).
+    pub fn formless() -> FormInfo {
+        FormInfo {
+            formless: true,
+            ..FormInfo::from_attrs(None, None)
         }
     }
 }
