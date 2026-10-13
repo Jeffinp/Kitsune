@@ -104,8 +104,9 @@ provas).
 | Hosts liberados com "continuar mesmo assim" | 8, só na memória, perdem-se ao reiniciar |
 
 `Accept-Encoding: gzip, deflate`; `Transfer-Encoding: chunked` e `Content-Encoding` são
-tratados por `browser::page_body` (primeiro `dechunk`, depois descompactar). O pedido agora
-é HTTP/1.1 com `Connection: close` (gateways respondem 426 a HTTP/1.0). Uma codificação
+tratados por `browser::page_body` (primeiro `dechunk`, depois descompactar). O pedido é
+HTTP/1.1 e, desde o §13, a conexão (e a sessão TLS) fica aberta para os próximos pedidos ao mesmo
+host (keep-alive; antes era `Connection: close`). Uma codificação
 desconhecida (`br`) ou um fluxo corrompido vira uma página curta explicando o problema.
 
 ## 5. Erros na tela
@@ -440,7 +441,7 @@ e ícones de Wikipédia, Python, Rust e HN saem certos.
 
 **Limites.** JavaScript só o básico do §12, sem `position` de verdade (`sticky`, `fixed`, `absolute`
 vão para o fluxo), sem imagens de fundo (`background-image: url()`), sem `grid-template-areas` nem linhas explícitas, sem fontes da web, sem
-`rowspan`, sem cookies. Uma página SPA (BBC, por exemplo) mostra só o que o HTML do servidor traz.
+`rowspan`. (Cookies: §13.) Uma página SPA (BBC, por exemplo) mostra só o que o HTML do servidor traz.
 
 **Como olhar uma página sem iniciar o sistema.** `tools/fetch-page-css.py URL pasta` baixa a página e as folhas
 que ela liga; `tools/render-page.py pasta/page.html saida.png 1000 1400 --css pasta/css-*.css` roda o motor
@@ -489,8 +490,10 @@ página de teste.
   **não ganha caixa nenhuma** (o `ImgRef` continua na lista para os índices baterem).
 * **Cosmético**: `hide_ads` roda uma vez, ao carregar; o que está dentro de uma caixa escondida não é pedido
   (o layout nem o vê) e conta uma vez.
-* **Scripts** (a ligação do JavaScript com o navegador): a fonte de scripts deve perguntar o mesmo
-  `PageShield::check(url)` antes de pedir o `.js`.
+* **Scripts**: a fonte de scripts pergunta o mesmo `PageShield::check(url)` antes de pedir o `.js`; os pedidos que os
+  scripts fazem (`fetch`, `XMLHttpRequest`, `sendBeacon`) também (§13): bloqueado é um erro de rede para o script
+  (`TypeError`) e conta no escudo (`shields: blocked <ad|tracker> fetch <url>`).
+* **Cookies de terceiros**: com o escudo ligado, um pedido de subrecurso a outro site não leva nem guarda cookies (§13).
 * Cada bloqueio vai para a serial (`shields: blocked <ad|tracker> <sheet|image|import> <url>`, `shields: page <host>
   on=.. ads=.. trackers=.. hidden=.. total=..`, `shields: off|on for <site>`), que é o que o cenário QEMU lê.
 
@@ -507,8 +510,8 @@ chave do balão fica apagada. Esc, clique fora, troca de aba e página nova fech
 ### 11.4 Limites
 
 * O que mudou na chave global só vale para a **próxima** carga. A lista de sites guarda até 64.
-* Não há JavaScript no navegador, então não existe o que bloquear em `fetch`/`XHR`; os subrecursos de hoje são folhas e
-  imagens. Sem `iframe`, fontes da web nem `background-image`.
+* Os subrecursos filtrados são folhas, imagens, scripts e os pedidos dos scripts. Sem `iframe`, fontes da web nem
+  `background-image`; `WebSocket` não existe ainda.
 * Foram feitos os itens "domínio, caminho e seletor" e o contador. **Não** foram feitos: remover `utm_*`/`fbclid`
   das URLs, subir http para https, listas atualizáveis e o formato de filtros comum (a lista é um arquivo de dados
   fixo na imagem). Mais de 64 imagens bloqueadas numa página ficam como caixa cinza sem carregar.
@@ -600,7 +603,7 @@ processos no sistema: sem vaga, a página fica sem JavaScript (o log diz).
 
 `window`/`globalThis`/`self`, `document` (`documentElement`, `head`, `body`, `title` que lê e escreve,
 `readyState`, `getElementById`, `getElementsByTagName/ClassName/Name`, `querySelector(All)`, `createElement`,
-`createTextNode`, `createDocumentFragment`, `createComment`, `cookie` em memória, `write` que acrescenta ao
+`createTextNode`, `createDocumentFragment`, `createComment`, `cookie` (o pote do navegador, §13), `write` que acrescenta ao
 `body`), nós (`appendChild`, `insertBefore`, `removeChild`, `replaceChild`, `remove`, `append`, `prepend`, `before`,
 `after`, `replaceWith`, `cloneNode`, `contains`, `textContent`, `childNodes`, `children`, irmãos e pais), elementos
 (`getAttribute`/`setAttribute`/`removeAttribute`/`toggleAttribute`, `id`, `className`, `classList`, `style` como
@@ -617,7 +620,9 @@ eventos (`addEventListener` com `capture`/`once`, `removeEventListener`, `dispat
 linha), `atob`/`btoa`, `alert`/`confirm`/`prompt` (vão para o log), e `MutationObserver`, `IntersectionObserver` e
 `ResizeObserver` que não observam nada. `console.log` sai no log do sistema como `[jsrun:PID] ...`.
 
-**Ainda não** (etapa 2 mínima): `fetch` e `XMLHttpRequest` (rejeitam), cookies de verdade, módulos (`type=module`,
+A rede (`fetch`, `XMLHttpRequest`, cookies, CORS, `TextEncoder`, `Blob`, `crypto`...) está no §13.
+
+**Ainda não**: módulos (`type=module`,
 `import`), Web Workers, canvas, teclado e texto digitado nos campos (o script não vê o que se digita, e `input`/`change`
 não disparam), eventos de mouse além do clique, medidas de layout (`getBoundingClientRect`, `offsetWidth`... são 0),
 estilo computado de verdade, `<link>` e `<img>` acrescentados por script depois do início (as imagens novas são
@@ -632,3 +637,152 @@ caro numa SPA grande (cada envio é um parse e um layout). Os scripts só começ
 | Parser guarda os scripts, ids, `replace_from_script` (folhas externas e `<style>` mantidos, entrada hostil), caixa por elemento, `ScriptSet`, mensagens e o clique que espera o veredito | `kitsune_core` `web::script::tests` (18 testes) |
 | O DOM em JavaScript no hospedeiro | `cargo run -p kitsune_core --example script_init -- pagina.html URL nome.js=arquivo.js` gera o `init`; o `jsrun` compilado para o hospedeiro com um laço de teste (não versionado) rodou a página `/js` com cliques |
 | A página `/js` de `tools/w24-site.py` no QEMU (BIOS, 256 MiB) | `tools/perf/scen/w52-browser-js.sh`: **19/19**. Script externo buscado, processo iniciado, scripts em ordem, `DOMContentLoaded`, `load`, `createElement`/`appendChild`/`insertAdjacentHTML`/seletores, `setTimeout`, `setInterval`, `requestAnimationFrame`, promise; o título da janela, o `h1`, a lista e um parágrafo mudam na tela; dois cliques no botão contam e trocam a classe (o fundo muda); o link com `preventDefault` não navega; o `javascript:` roda; o `for(;;){}` é interrompido (orçamento de 3 s por tarefa), o desktop segue desenhando e o terceiro clique funciona |
+
+## 13. A rede dos scripts: fetch, XHR, cookies, CORS e conexões persistentes
+
+Etapas 2 (o que faltava de rede) e 3 do item 11 do [`ROADMAP`](../ROADMAP.md). O JavaScript das páginas tem rede de
+verdade: `fetch` e `XMLHttpRequest` passam pelo mesmo `fetcher` do navegador, com cookies, a regra de mesma origem
+(CORS), o bloqueador e conexões HTTP/1.1 mantidas abertas com a sessão TLS.
+
+### 13.1 Caminho de um pedido
+
+```text
+script (jsrun --page)              navegador (compositor)                fetcher (thread da rede)
+fetch(url, init) --F msg (57)-->   PageShield::check  --bloqueado--> erro ao script, conta no escudo
+                                   post_script_fetch  --fila (256)-->  serve.rs: CORS, pré-voo, cookies,
+                                                                       redirecionamentos, Net::exchange
+<--- cabeça (JSON) / pedaços (binário, até 256 KiB) / fim | erro --- page_try_post (56), direto ao processo
+```
+
+| Peça | Onde | O quê |
+|---|---|---|
+| Mensagens | `kitsune_core::web::script::net` | `F` (pedido: id, método, URL, `mode`, `credentials`, `redirect`, cabeçalhos, corpo binário), `X` (abortar), `C` (`document.cookie = ...`); de volta, a cabeça e o fim em JSON e os pedaços do corpo como mensagem binária (`0x01`, id, bytes) |
+| HTTP/1.1 | `kitsune_core::http1` | `ResponseReader` (onde a resposta termina: `Content-Length`, `chunked` sem a moldura, até o fechamento; `1xx` pulados; `HEAD`/`204`/`304` sem corpo; keep-alive), `write_request`, `Target` (URL sem o limite de 480 bytes), `resolve` de `Location`, `Content-Range` |
+| Cookies | `kitsune_core::cookies` (`Jar`), `kernel/src/fetch/cookies.rs` | ver §13.3 |
+| CORS | `kitsune_core::cors` | ver §13.4 |
+| Conexões | `kernel/src/netstack/{pool,http,tls}.rs` | ver §13.2 |
+| Fila dos scripts | `kernel/src/fetch/script.rs`, `script/serve.rs` | um pedido por vez, em ordem, depois dos pedidos do próprio navegador (página, folhas, scripts, imagens) e do shell; abortar (`X`, a aba trocar de página ou fechar) para a transferência e fecha a conexão |
+| Navegador | `kernel/src/desktop/apps/browser/jsnet.rs` | escudo, fila, `document.cookie`, `~/.cookies` |
+| JavaScript | `user-apps/jsrun/src/bin/jsrun/net.js` (depois do `dom.js`), `src/page.c` | ver §13.5 |
+
+O corpo vai **direto** do `fetcher` para a fila de mensagens do processo (`userproc::page_try_post`), sem passar pelo
+compositor: um pedaço a cada 256 KiB ou 40 ms. Quando a fila do processo está cheia (8 MiB ou 256 mensagens), o
+`fetcher` espera um tick e tenta de novo: é a contrapressão de um stream que ninguém lê (o log diz quanto tempo
+esperou, `ms waiting for the page`). O `page.c` pega várias mensagens seguidas (até 64 ou 20 ms) antes de rodar as
+tarefas.
+
+### 13.2 Conexões persistentes (keep-alive) e TLS reutilizado
+
+O `Net` tem **4 sockets TCP** (janela de 64 KiB cada; antes era um socket de 8 KiB), e cada um pode guardar uma
+conexão aberta com a sua sessão TLS (`pool::Slot`, buffers de registro estáticos por vaga). Um pedido usa a conexão
+ociosa com a mesma chave (esquema, host, porta, a exceção de certificado da pessoa, e se é de um app) se ela está
+`Established`, sem nada por ler e ociosa há menos de **15 s**; senão abre outra numa vaga livre ou na ociosa mais
+antiga. Fecha em erro, resposta lida até o fechamento, `Connection: close`, HTTP/1.0 sem `keep-alive`, bytes a mais
+depois da resposta, ou pedido abortado. Se o servidor tinha fechado a conexão reaproveitada e nada da resposta chegou,
+o pedido é refeito **uma vez** numa conexão nova. Todo pedido da página, das folhas, das imagens, dos scripts e dos
+`fetch` passa por aí (`Net::exchange`), e o log conta: `net: new connection ...`, `net: reusing connection ...`,
+`[net: N connections, H TLS handshakes, R reuses]`.
+
+Leitura sem cópia a mais: o corpo decifrado é lido do próprio registro do `embedded-tls` (`read_buffered`) e
+entregue ao leitor HTTP; o leitor passa fatias; para o script, uma cópia para o pedaço da mensagem e outra para a
+memória do processo. O `Stream` do TLS só gira o `poll` da interface quando o socket está vazio.
+
+Enquanto o `fetcher` está ocioso, o serviço da rede (`netd`) lê a placa direto (DHCP, ARP, ping) e os segmentos de uma
+conexão ociosa se perdem; por isso o fechamento de uma conexão ociosa pelo servidor só é notado no próximo uso (e o
+pedido é refeito, como acima).
+
+### 13.3 Cookies
+
+`kitsune_core::cookies::Jar` (RFC 6265 com as regras do 6265bis que os navegadores aplicam): `Set-Cookie` com
+`Domain` (o domínio precisa ser o site do host ou abaixo dele: `Domain=co.uk` e `Domain=com` são recusados; IP só
+ele mesmo), `Path` (padrão: o diretório), `Expires` (o formato de datas do §5.1.1, tolerante) e `Max-Age` (vence o
+`Expires`; no máximo 400 dias), `Secure` (só de e para https; uma página http não sombreia um cookie `Secure`),
+`HttpOnly` (o script não lê nem escreve), `SameSite` (`Strict` só para pedidos do mesmo site; `Lax` e sem atributo
+também na navegação de topo com `GET`; `None` exige `Secure`; uma resposta de outro site só grava `None`), prefixos
+`__Secure-` e `__Host-`. Envio ordenado por caminho mais longo e depois mais antigo. Limites: 4 KiB por cookie, 50
+por domínio, 1000 no total (sai o mais antigo).
+
+O `fetcher` tem um pote só (o do navegador): toda navegação manda e guarda cookies; folhas, imagens, scripts e
+`fetch` são subrecursos da página da aba ativa (`set_page`) e decidem o contexto pelo site (`shields::site_of`).
+**Com o escudo ligado, um subrecurso de outro site não manda nem guarda cookies** (log `cookies: third-party
+cookies blocked for ...`). Apps (`net_http_get`) e o shell (`curl`) não veem o pote. `document.cookie` lê do pote
+(o que não é `HttpOnly`) e escreve nele (`C`); o valor chega no `init` e em cada cabeça de resposta.
+
+Persistência: os cookies com validade vão para `~/.cookies` (`/home/<nome>/.cookies`, texto com um cookie por linha
+e campos separados por tab; uma conta logada não escreve em `/home`), no máximo a cada 3 s depois de uma mudança, e
+são lidos quando uma janela do navegador abre. Os de sessão somem ao reiniciar.
+
+### 13.4 Mesma origem (CORS) e `Origin`/`Referer`
+
+`kitsune_core::cors`, aplicado pelo `fetcher` em cada salto:
+
+* Mesma origem (esquema, host e porta da página): tudo é legível, inclusive cabeçalhos (menos `Set-Cookie`).
+* Outra origem em `mode: 'cors'` (o padrão): leva `Origin`; a resposta só é entregue se
+  `Access-Control-Allow-Origin` for `*` (sem credenciais) ou a origem da página; com `credentials: 'include'` (ou
+  `withCredentials`) também `Access-Control-Allow-Credentials: true` e origem exata. Senão: `TypeError` no script e
+  `cors: blocked ...` no log. O script lê só os cabeçalhos da lista segura e os de `Access-Control-Expose-Headers`.
+* Método fora de `GET`/`HEAD`/`POST` ou cabeçalho fora da lista segura (`Accept`, `Accept-Language`,
+  `Content-Language`, `Content-Type` simples, `Range` simples): **pré-voo `OPTIONS`** com
+  `Access-Control-Request-Method`/`-Headers`, conferido (`2xx`, origem, métodos, cabeçalhos, `*` sem credenciais).
+* `no-cors`: só pedidos simples; a resposta é opaca (status 0, sem cabeçalhos nem corpo). `same-origin`: outra
+  origem é erro.
+* Cookies seguem `credentials` (`omit`, `same-origin` padrão, `include`) além das regras do §13.3.
+* `Origin` vai em pedidos a outra origem e em métodos que não são `GET`/`HEAD`; `Referer` segue
+  `strict-origin-when-cross-origin` (a URL inteira para a mesma origem, só a origem para outra, nada de https para
+  http). Cabeçalhos proibidos (`Cookie`, `Host`, `Origin`, `Referer`, `Content-Length`, `Sec-*`, `Proxy-*`...) que o
+  script tente pôr são descartados. Uma página https não busca http (conteúdo misto).
+
+**Simplificado:** sem cache de pré-voo (cada pedido não simples faz o seu `OPTIONS`); um redirecionamento para outra
+origem mantém o `Origin` original (o padrão o troca por `null` e a resposta passa a exigir CORS); `referrerPolicy` e
+`integrity` são ignorados; o contexto de cookies de uma navegação é sempre o do próprio site (não sabemos quem
+iniciou a navegação, então um formulário POST de outro site leva os cookies `Lax`).
+
+### 13.5 O que os scripts encontram
+
+`fetch` (GET/POST/PUT/DELETE/HEAD/PATCH e métodos próprios; corpo `string`, `ArrayBuffer`/views, `Blob`, `FormData`
+(multipart), `URLSearchParams`; `headers`, `mode`, `credentials`, `redirect` (`follow`, `error`, `manual` dá
+`opaqueredirect`), `signal`), `Request`, `Response` (`status`, `ok`, `statusText`, `headers`, `url`, `redirected`,
+`type`, `text`/`json`/`arrayBuffer`/`blob`/`bytes`/`formData`, `clone`, `Response.json/error/redirect`) com **`body`
+como `ReadableStream`** (`getReader().read()` em pedaços, `for await`, `tee`, `cancel`), `Headers`,
+`AbortController`/`AbortSignal` (`abort`, `timeout`, `any`), `XMLHttpRequest` (assíncrono; `responseType` texto, `json`,
+`arraybuffer`, `blob`; eventos `readystatechange`/`loadstart`/`progress`/`load`/`error`/`abort`/`timeout`/`loadend`;
+`timeout`; `withCredentials`; cabeçalhos da resposta), `navigator.sendBeacon`, `Blob`, `File`, `FormData`,
+`TextEncoder`/`TextDecoder` (UTF-8 com `stream` e `fatal`, latin1, UTF-16LE), `crypto.getRandomValues` e
+`crypto.randomUUID` (do gerador do kernel pela **chamada 66 `getrandom`**), `structuredClone`, `URL.createObjectURL`
+(`blob:`) e `data:` no `fetch`, `URL.canParse`, `performance.timeOrigin/mark/measure`; `URLSearchParams` com `+` para
+espaço, `size` e `sort`. `atob`/`btoa`, `queueMicrotask` e `performance.now` já existiam.
+
+Limites: `XMLHttpRequest` síncrono roda assíncrono (avisa no console); corpo de pedido em stream não; resposta até 64
+MiB (o processo tem 48 MiB de JS para tudo); `gzip`/`deflate` não é pedido (`Accept-Encoding: identity`), e se vier é
+descompactado inteiro no fim; `crypto.subtle` não existe; **`WebSocket` não foi feito** (pendente: `ws://` e `wss://`
+sobre a mesma pilha, com o `Upgrade` e o enquadramento no `fetcher`). Um download grande de um script ocupa o
+`fetcher` até acabar (folhas e imagens esperam).
+
+### 13.6 Medidas (QEMU TCG, sem KVM)
+
+Página `/net/speed` (dois downloads de 8 MiB lidos com `getReader`, na mesma conexão), servidor local
+(`tools/w24-site.py --tls`), cenário `w55-net-js.sh` com `SPEED_HTTP=1`:
+
+| Placa | http | https (TLS 1.3, AES-128-GCM em software) | handshake |
+|---|---|---|---|
+| `virtio-net-pci` | 26,0 e 29,0 MB/s | 8,2 e 6,7 MB/s | 3,9 s |
+| `ne2k_isa` (padrão do `run.sh`) | 7,6 MB/s (8 MiB `arrayBuffer` no `/net`) | 3,6 e 2,2 MB/s | 4,2 s |
+
+Com a virtio a diferença http/https é a cifra: AES e GHASH em software (o kernel é compilado sem SSE, então nem
+AES-NI nem os caminhos SIMD do RustCrypto servem; ver `.cargo/config.toml`). Ficou ~8 MB/s, o suficiente para um
+segmento de vídeo de 10 MiB em pouco mais de 1 s; na NE2000 a placa (PIO) divide a CPU com a cifra.
+
+Handshakes: na página `/net` (23 pedidos do script, mais a página e o script) o servidor viu **3 conexões** (uma para a
+página e outra para a segunda origem, e uma refeita depois do pedido abortado); na `/net/speed` em https, **1
+handshake** para a página e os dois downloads (antes seriam 3, ~4 s cada no TCG). REALSITE
+
+### 13.7 Provas
+
+| O quê | Evidência |
+|---|---|
+| Leitor HTTP/1.1 (cortes em qualquer byte, chunked, 1xx, HEAD/204/304, Content-Length conflitante, cabeçalho grande, 3 MiB em fatias), `Target`, `resolve`, `write_request`, `Content-Range` | `kitsune_core` `browsing::http1::tests` |
+| Cookies (Domain/Path/Expires/Max-Age/Secure/HttpOnly/SameSite, prefixos, limites, datas, persistência e arquivo danificado) | `browsing::cookies::tests` |
+| CORS (pré-voo, lista segura, Allow-Origin/Credentials, cabeçalhos expostos, Referer, proibidos) | `browsing::cors::tests` |
+| Mensagens `F`/`X`/`C` e as de volta | `web::script::net::tests` |
+| `fetch`/XHR/streams/abort/`FormData`/`TextDecoder` em stream no JavaScript, com um navegador falso | `node tools/js-net-check.js user-apps/jsrun/src/bin/jsrun` |
+| Tudo junto no QEMU (BIOS, 256 MiB), página `/net` de `tools/w24-site.py` (rotas em `tools/w24net.py`) | `tools/perf/scen/w55-net-js.sh`: **23/23** verificações do script e 8 do log (cookies guardados e salvos em `~/.cookies`, CORS recusado e pré-voo no log, o escudo contou o `fetch`, conexões reutilizadas); `docs/img/browser-net-js.png` |

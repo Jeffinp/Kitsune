@@ -121,10 +121,20 @@ abaixo, e nenhuma existe ainda. Ordem proposta, cada etapa com aceite próprio:
    da página), `setTimeout`/`setInterval`/`requestAnimationFrame`, `location`, `navigator`; cada mudança no DOM volta
    ao navegador e refaz o layout; 3 s por tarefa (um laço infinito é interrompido e a página segue). Provado no QEMU
    (`w52-browser-js.sh`, 19/19) com a página `/js` de `tools/w24-site.py`; ver `docs/design/tls-browser.md` §12.
-   **Falta para o aceite desta etapa** (um app pequeno de React/Preact aparece certo, não testado): `fetch`/
-   `XMLHttpRequest` sobre o `fetcher`, cookies, teclado e texto dos campos visíveis ao script, eventos de mouse além do
-   clique, medidas de layout, módulos, e um envio do DOM mais barato que o documento inteiro.
-3. **Rede para o que o YouTube pede:** cookies, HTTP keep-alive/HTTP/2 se o servidor exigir, CORS, WebSocket.
+   **Rede dos scripts: feita (2026-10).** `fetch` (corpo em stream com `getReader`, `Range`, respostas de vários MiB,
+   `AbortController`), `XMLHttpRequest`, `sendBeacon`, `Headers`/`Request`/`Response`, `Blob`/`FormData`,
+   `TextEncoder`/`TextDecoder`, `crypto.getRandomValues` (chamada 66), `structuredClone`, pelo `fetcher` (fila de
+   pedidos dos scripts) e pelo bloqueador; provado no QEMU (`w55-net-js.sh`, 23/23). Ver `tls-browser.md` §13.
+   **Falta para o aceite desta etapa** (um app pequeno de React/Preact aparece certo, não testado): teclado e texto
+   dos campos visíveis ao script, eventos de mouse além do clique, medidas de layout, módulos, e um envio do DOM mais
+   barato que o documento inteiro.
+3. **Rede para o que o YouTube pede. Feita em parte (2026-10):** **cookies** (pote com `Domain`/`Path`/`Expires`/
+   `Max-Age`/`Secure`/`HttpOnly`/`SameSite`, `document.cookie`, `~/.cookies`, terceiros bloqueados com o escudo
+   ligado), **HTTP/1.1 keep-alive** com a sessão TLS reutilizada (até 4 conexões, 15 s ociosas; uma página de 25
+   pedidos usou 3 conexões; vazão medida no TCG: http ~29 MB/s e https ~8 MB/s com virtio-net), `chunked`/
+   `Content-Length`/redirecionamentos corretos, **CORS** (pré-voo, credenciais, `no-cors` opaco, `Origin`/`Referer`).
+   **Falta:** `WebSocket` (`ws://`/`wss://` sobre a mesma pilha), HTTP/2 (se algum servidor exigir), cache de
+   pré-voo, e vários downloads ao mesmo tempo (o `fetcher` atende um pedido por vez).
 4. **Mídia:** Media Source Extensions, decodificadores de vídeo (H.264 e VP9 em Rust puro, em software: a CPU em
    software de 1080p não dá; 360p/480p é a meta realista) e de áudio (AAC e Opus), `<video>`/`<audio>`, sincronia.
 5. **Som:** driver de áudio (Intel HDA ou AC'97/virtio-snd no QEMU) e mixagem; hoje o sistema não tem som.

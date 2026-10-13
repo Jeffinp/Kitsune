@@ -15,6 +15,7 @@ kitsune_core/src/            pure no_std logic, host-tested (forbid(unsafe_code)
   storage/    blockdev blockcache | fs (OJFS v2) fs3 (OJFS v3) | vfs secured
   network/    net dns icmp sntp lease netstats | x509 tlsverify
   browsing/   web (HTML/CSS/layout engine) | browser (model: tabs, history, errors) | redirect | shields (ad blocker)
+              http1 (HTTP/1.1 framing) | cookies (the jar) | cors (same-origin rules)
   format/     base64 | inflate deflate gzip zip | png bmp ppm gif jpeg image | elf | text | unixtime | search
   platform/   appabi wasmsec | appmanifest appinstall | appfs | appnet      (the WASM app platform)
   system/     klog sysmon sysif | notify | process schedule paging heap | entropy rng | settings
@@ -82,7 +83,9 @@ Files split this way, with their children:
 | `i18n/audit` (testes) | `scan` (leitor das fontes), `accents` (acentos, idiomas, fontes) |
 | `kernel/wasm/abi2` | `guest`, `hostio`, `pixels` |
 | `kernel/netd` | `mailbox`, `pinger` |
-| `kernel/fetch` | `client`, `thread`, `load` (+ `apps`, `jobs`) |
+| `kernel/fetch` | `client`, `thread`, `load` (+ `apps`, `jobs`, `cookies`, `script` with `script/serve`) |
+| `kernel/netstack` | `http` (one exchange), `pool` (kept-alive connections), `tls` |
+| `browsing/http1`, `browsing/cookies` | `reader`, `request`; `parse`, `jar`, `store` |
 | `kernel/fb/shapes` | `rrect`, `shadow`, `blit`, `glow` |
 
 ## Dependency rules (core)
