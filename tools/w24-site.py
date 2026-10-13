@@ -20,6 +20,9 @@ in the guest's log), and two ad boxes that the cosmetic rules hide (one holds a 
 not be asked for). With the blocker on the server sees only /ads and /g.png; with it off, all of them.
 Every request is printed on stderr, so `tools/w24-site.py 2> requests.log` is the record to check.
 
+/video, /mse and /audio are the pages of the media player (W58: <video>, <audio>, Media Source
+Extensions); their routes and the test files (made with ffmpeg) are in tools/w24media.py.
+
 /net is the page for the network of scripts (W55: fetch, XMLHttpRequest, cookies, CORS, streaming,
 keep-alive); its routes are in tools/w24net.py. The server speaks HTTP/1.1 with keep-alive and also
 listens on the port just below (PORT - 1: another origin for CORS). Arguments:
@@ -41,6 +44,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+import w24media
 import w24net
 
 PORT = 8079
@@ -392,7 +396,8 @@ class H(BaseHTTPRequestHandler):
     def net(self, method):
         w24net.count("requests")
         u = urlparse(self.path)
-        return w24net.handle(self, method, u, parse_qs(u.query))
+        q = parse_qs(u.query)
+        return w24media.handle(self, method, u, q) or w24net.handle(self, method, u, q)
 
     def do_HEAD(self):
         if not self.net("HEAD"):

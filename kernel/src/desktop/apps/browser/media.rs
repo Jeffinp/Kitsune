@@ -22,6 +22,7 @@ use kitsune_core::media::wire::{self, Command, Control};
 
 mod controls;
 mod paint;
+mod stats;
 
 /// Players playing at once in a page (each is a decoder process with up to 128 MiB).
 pub(crate) const MAX_PLAYERS: usize = 2;
@@ -62,6 +63,8 @@ pub(crate) struct MediaPlayer {
     last_time_ms: u64,
     /// Bytes for the decoder that did not fit in its queue yet.
     backlog: VecDeque<Vec<u8>>,
+    /// Where the current stretch of playback began (for the log).
+    mark: Option<stats::Mark>,
 }
 
 impl Drop for MediaPlayer {
@@ -272,6 +275,7 @@ impl MediaSet {
             started: false,
             last_time_ms: 0,
             backlog: VecDeque::new(),
+            mark: None,
         };
         p.post(proto::msg(
             proto::IN_FLOW,
@@ -355,6 +359,7 @@ impl MediaSet {
                 }
             }
             let events = p.player.take_events();
+            p.note(&events);
             if !events.is_empty() {
                 let m = wire::state_message(p.uid, p.player.state(), p.player.position(), &events);
                 crate::userproc::page_post(js, m);

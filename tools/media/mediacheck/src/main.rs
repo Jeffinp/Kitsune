@@ -64,9 +64,11 @@ fn main() {
     let mut rgb_diff: Option<(u32, u64)> = None;
     // Largest difference against the exact (floating-point) BT.601/709 formula.
     let mut float_diff: Option<u32> = None;
+    let mut mse_audio: Option<String> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
+            "--serve-mse" => mse_audio = it.next().cloned(),
             "--vmd5" => vmd5 = it.next().cloned(),
             "--aref" => aref = it.next().cloned(),
             "--pcm" => pcm_out = it.next().cloned(),
@@ -84,6 +86,15 @@ fn main() {
     }
     let file = file.expect("usage: mediacheck FILE.webm [--vmd5 REF] [--aref REF.raw] ...");
     let data = std::fs::read(&file).expect("read the file");
+    if let Some(audio) = mse_audio {
+        // Media Source Extensions: FILE is the video-only WebM, the argument the sound-only one.
+        let a = std::fs::read(&audio).expect("read the audio file");
+        let r = serve::selftest_mse(&data, &a);
+        println!("{r:?}");
+        let ok = r.ok();
+        println!("serve-mse: {}", if ok { "PASS" } else { "FAIL" });
+        std::process::exit(i32::from(!ok));
+    }
     if args.iter().any(|a| a == "--serve-test") {
         // The message server over an in-memory link, as `mediadec --serve-test` runs it.
         let r = serve::selftest(&data);

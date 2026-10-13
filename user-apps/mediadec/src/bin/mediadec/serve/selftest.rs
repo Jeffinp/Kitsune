@@ -68,6 +68,133 @@ impl Report {
     }
 }
 
+/// What [`selftest_mse`] saw.
+#[derive(Debug, Default)]
+pub struct MseReport {
+    pub headers: u32,
+    pub pictures: u32,
+    pub samples: u64,
+    /// What each source holds at the end, ms.
+    pub video_ranges: Vec<(i64, i64)>,
+    pub audio_ranges: Vec<(i64, i64)>,
+    /// The sound was never more than this far behind the pictures in the output (ms): the two
+    /// sources are interleaved by time.
+    pub max_lag_ms: i64,
+    pub drained: bool,
+    /// After the video was appended a second time (a new init segment and the same clusters).
+    pub ranges_after_again: Vec<(i64, i64)>,
+    pub first_after_seek_ns: i64,
+    pub errors: u32,
+}
+
+impl MseReport {
+    pub fn ok(&self) -> bool {
+        self.headers == 2
+            && self.pictures == 90
+            && self.samples >= 143_000
+            && self.video_ranges.len() == 1
+            && self.audio_ranges.len() == 1
+            && self.video_ranges[0].1 >= 2_900
+            && self.audio_ranges[0].1 >= 2_900
+            && self.max_lag_ms <= 200
+            && self.drained
+            && self.ranges_after_again == self.video_ranges
+            // The picture that holds 2 s (the files start 7 ms in: the sound's codec delay).
+            && (1_966_000_000..=2_000_000_000).contains(&self.first_after_seek_ns)
+            && self.errors == 0
+    }
+}
+
+/// Media Source Extensions in memory: `video` (a WebM with only the video track) appended to source
+/// 0 and `audio` (only the sound) to source 1, in pieces of odd sizes, interleaved; then the video
+/// again from its init segment (another quality, the same frames), the end of the stream, and a seek
+/// to 2 s.
+pub fn selftest_mse(video: &[u8], audio: &[u8]) -> MseReport {
+    let mut r = MseReport::default();
+    let mut link = Loopback::default();
+    let mut s = Server::new();
+    link.inbox.push_back(proto::msg(
+        proto::IN_SIZE,
+        &[Field::U32(160), Field::U32(90)],
+    ));
+    let (mut vi, mut ai, mut seq) = (0usize, 0usize, 1u32);
+    while vi < video.len() || ai < audio.len() {
+        let vn = (video.len() - vi).min(12_345);
+        if vn > 0 {
+            link.inbox.push_back(proto::data(0, seq, &video[vi..vi + vn]));
+            vi += vn;
+            seq += 1;
+        }
+        let an = (audio.len() - ai).min(7_777);
+        if an > 0 {
+            link.inbox.push_back(proto::data(1, seq, &audio[ai..ai + an]));
+            ai += an;
+            seq += 1;
+        }
+    }
+    link.inbox.push_back(proto::msg(proto::IN_EOS, &[Field::U8(1)]));
+    pump(&mut s, &mut link);
+    let mut last_audio = i64::MIN;
+    for m in core::mem::take(&mut link.outbox) {
+        match parse_out(&m) {
+            Some(Out::Header(_)) => r.headers += 1,
+            Some(Out::Frame { pts, .. }) => {
+                r.pictures += 1;
+                if last_audio > i64::MIN {
+                    r.max_lag_ms = r.max_lag_ms.max((pts - last_audio) / 1_000_000);
+                }
+            }
+            Some(Out::Audio { pts, frames, .. }) => {
+                r.samples += u64::from(frames);
+                last_audio = pts;
+            }
+            Some(Out::Buffered { src, ranges, .. }) => {
+                let ms: Vec<(i64, i64)> = ranges
+                    .iter()
+                    .map(|&(a, b)| (a / 1_000_000, b / 1_000_000))
+                    .collect();
+                if src == 0 {
+                    r.video_ranges = ms;
+                } else {
+                    r.audio_ranges = ms;
+                }
+            }
+            Some(Out::Drained { .. }) => r.drained = true,
+            Some(Out::Error { .. }) | None => r.errors += 1,
+            _ => {}
+        }
+    }
+    // The video again: a new init segment resets the parser; the clusters replace the same frames.
+    link.inbox.push_back(proto::msg(
+        proto::IN_RESET,
+        &[Field::U8(0), Field::U64(u64::MAX)],
+    ));
+    link.inbox.push_back(proto::data(0, seq, video));
+    link.inbox.push_back(proto::msg(
+        proto::IN_SEEK,
+        &[Field::U32(1), Field::I64(2_000_000_000)],
+    ));
+    pump(&mut s, &mut link);
+    let mut marked = false;
+    for m in core::mem::take(&mut link.outbox) {
+        match parse_out(&m) {
+            Some(Out::Buffered { src: 0, ranges, .. }) => {
+                r.ranges_after_again = ranges
+                    .iter()
+                    .map(|&(a, b)| (a / 1_000_000, b / 1_000_000))
+                    .collect();
+            }
+            Some(Out::Mark { epoch: 1 }) => marked = true,
+            Some(Out::Frame { pts, .. }) if marked && r.first_after_seek_ns == 0 => {
+                r.first_after_seek_ns = pts;
+            }
+            Some(Out::Error { .. }) | None => r.errors += 1,
+            _ => {}
+        }
+    }
+    r
+}
+
 /// Run the server until it has nothing left to do.
 fn pump(s: &mut Server, link: &mut Loopback) {
     let mut buf = vec![0u8; MAX_MSG];
