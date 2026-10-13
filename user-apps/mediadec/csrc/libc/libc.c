@@ -1,7 +1,7 @@
 /* Kitsune mediadec: the small C library under libvpx and libopus.
  *
  * Strings, a minimal printf family (libvpx formats its error texts), setjmp/longjmp (libvpx's error
- * path), abort. memcpy/memmove/memset/memcmp come from Rust's compiler_builtins, malloc and friends
+ * path), abort, memcpy and memset (below). memmove/memcmp come from Rust's compiler_builtins, malloc and friends
  * from src/bin/mediadec/heap.rs, output and process end from src/bin/mediadec/sys.rs (`kmd_*`, only
  * integers and pointers: the Rust side is soft-float). */
 #include <setjmp.h>
@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <emmintrin.h>
 
 extern long kmd_write(int fd, const void *buf, size_t len);
 _Noreturn extern void kmd_exit(int code);
@@ -22,6 +24,62 @@ struct kmd_file {
 static struct kmd_file out_file = {1}, err_file = {2};
 FILE *const stdout = &out_file;
 FILE *const stderr = &err_file;
+
+/* ---- memcpy and memset ----
+ *
+ * compiler_builtins' versions (weak symbols, so these take their place for the whole program, Rust
+ * included) are `rep movs`/`rep stos`, which an emulator runs one element per step: under QEMU TCG
+ * memcpy was a sixth of the decoder's time (libvpx copies many small blocks and structures). These
+ * move 64, 16, 8 and 4 bytes per step with plain loads and stores. `no_builtin` keeps the compiler
+ * from turning the loops back into calls to themselves. */
+
+typedef uint64_t __attribute__((aligned(1), may_alias)) u64_unaligned;
+typedef uint32_t __attribute__((aligned(1), may_alias)) u32_unaligned;
+
+__attribute__((no_builtin("memcpy"))) void *memcpy(void *restrict dst, const void *restrict src,
+                                                    size_t n)
+{
+    unsigned char *d = dst;
+    const unsigned char *s = src;
+    for (; n >= 64; n -= 64, d += 64, s += 64) {
+        __m128i a = _mm_loadu_si128((const __m128i *)s);
+        __m128i b = _mm_loadu_si128((const __m128i *)(s + 16));
+        __m128i c = _mm_loadu_si128((const __m128i *)(s + 32));
+        __m128i e = _mm_loadu_si128((const __m128i *)(s + 48));
+        _mm_storeu_si128((__m128i *)d, a);
+        _mm_storeu_si128((__m128i *)(d + 16), b);
+        _mm_storeu_si128((__m128i *)(d + 32), c);
+        _mm_storeu_si128((__m128i *)(d + 48), e);
+    }
+    for (; n >= 16; n -= 16, d += 16, s += 16)
+        _mm_storeu_si128((__m128i *)d, _mm_loadu_si128((const __m128i *)s));
+    if (n >= 8) {
+        *(u64_unaligned *)d = *(const u64_unaligned *)s;
+        d += 8, s += 8, n -= 8;
+    }
+    if (n >= 4) {
+        *(u32_unaligned *)d = *(const u32_unaligned *)s;
+        d += 4, s += 4, n -= 4;
+    }
+    while (n--)
+        *d++ = *s++;
+    return dst;
+}
+
+__attribute__((no_builtin("memset"))) void *memset(void *dst, int c, size_t n)
+{
+    unsigned char *d = dst;
+    const __m128i v = _mm_set1_epi8((char)c);
+    for (; n >= 16; n -= 16, d += 16)
+        _mm_storeu_si128((__m128i *)d, v);
+    if (n >= 8) {
+        *(u64_unaligned *)d = (uint64_t)_mm_cvtsi128_si64(v);
+        d += 8, n -= 8;
+    }
+    while (n--)
+        *d++ = (unsigned char)c;
+    return dst;
+}
 
 /* ---- strings ---- */
 
