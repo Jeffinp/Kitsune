@@ -8,8 +8,11 @@
 //! enough that compiling YouTube's 1.9 MB player took 62 s under QEMU (0.47 s natively with glibc's
 //! malloc). So blocks up to [`SMALL_MAX`] bytes come from size classes of 16 bytes: a free list per
 //! class (constant time), refilled from chunks of [`CHUNK`] bytes taken from the SDK's allocator; freed
-//! small blocks stay in their class for the next allocation of that size. Bigger blocks go to the SDK's
-//! allocator as before.
+//! small blocks stay in their class for the next allocation of that size. Blocks up to [`MEDIUM_MAX`]
+//! (strings and buffers of a page: a serialized document, a media segment's pieces) have classes too,
+//! four per doubling, taken from the SDK's allocator one at a time and kept on a free list when freed:
+//! with YouTube's player playing, the first-fit walk for those was a fifth of the process's time.
+//! Bigger blocks go to the SDK's allocator as before.
 
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
@@ -25,10 +28,28 @@ const SMALL_MAX: usize = 1024;
 const CLASSES: usize = SMALL_MAX / STEP + 1;
 /// What a size class takes from the SDK's allocator when it has nothing free.
 const CHUNK: usize = 256 * 1024;
+/// The largest block (header included) served from a medium class.
+const MEDIUM_MAX: usize = 64 * 1024;
+/// Medium classes: four per doubling from 1 KiB to [`MEDIUM_MAX`].
+const MEDIUM: usize = 24;
+/// The class number of the first medium class (small ones are 1..CLASSES).
+const MEDIUM_BASE: usize = 1000;
+
+/// The medium class of a block of `t` bytes (`SMALL_MAX < t <= MEDIUM_MAX`) and its size.
+fn medium_class(t: usize) -> (usize, usize) {
+    // 2^top < t <= 2^(top+1), top >= 10; four steps of 2^(top-2) in between.
+    let top = (usize::BITS - 1 - (t - 1).leading_zeros()) as usize;
+    let step = 1usize << (top - 2);
+    let k = (t - 1 - (1 << top)) / step; // 0..=3
+    let size = (1 << top) + (k + 1) * step;
+    ((top - 10) * 4 + k, size)
+}
 
 struct Pools {
     /// The first free block of each class (its first word points to the next).
     free: [*mut u8; CLASSES],
+    /// The same for the medium classes.
+    medium: [*mut u8; MEDIUM],
     /// The rest of the current chunk, carved in order.
     bump: *mut u8,
     bump_end: *mut u8,
@@ -41,6 +62,7 @@ unsafe impl Sync for Shared {}
 
 static POOLS: Shared = Shared(UnsafeCell::new(Pools {
     free: [ptr::null_mut(); CLASSES],
+    medium: [ptr::null_mut(); MEDIUM],
     bump: ptr::null_mut(),
     bump_end: ptr::null_mut(),
 }));
@@ -89,6 +111,23 @@ unsafe fn small_alloc(cls: usize) -> *mut u8 {
     b
 }
 
+/// A block of medium class `m` (`size` bytes), or null when out of memory.
+///
+/// # Safety
+/// Single-threaded use only (see [`Shared`]); `size` is the class's size.
+unsafe fn medium_alloc(m: usize, size: usize) -> *mut u8 {
+    // SAFETY: single thread, no re-entry.
+    let p = unsafe { &mut *POOLS.0.get() };
+    let head = p.medium[m];
+    if !head.is_null() {
+        // SAFETY: `head` is a free block of this class; its first word holds the next one.
+        p.medium[m] = unsafe { (head as *const *mut u8).read() };
+        return head;
+    }
+    // SAFETY: `size` is a non-zero multiple of 16 (a class size).
+    unsafe { alloc::alloc::alloc(big_layout(size)) }
+}
+
 /// Write the header of `base` and return what C sees.
 ///
 /// # Safety
@@ -103,6 +142,12 @@ unsafe fn finish(base: *mut u8, size: usize, cls: usize) -> *mut u8 {
         (base as *mut usize).add(1).write(cls);
         base.add(HDR)
     }
+}
+
+/// The size of medium class `m`.
+fn medium_size(m: usize) -> usize {
+    let (top, k) = (m / 4 + 10, m % 4);
+    (1 << top) + (k + 1) * (1 << (top - 2))
 }
 
 /// The block that starts `HDR` bytes before `p`, the size C asked for, and its class (0: big).
@@ -131,6 +176,11 @@ pub extern "C" fn malloc(size: usize) -> *mut u8 {
         // SAFETY: single thread; the block holds `t` >= HDR + size bytes.
         return unsafe { finish(small_alloc(cls), size, cls) };
     }
+    if t <= MEDIUM_MAX {
+        let (m, bytes) = medium_class(t);
+        // SAFETY: single thread; the block holds `bytes` >= `t` bytes.
+        return unsafe { finish(medium_alloc(m, bytes), size, MEDIUM_BASE + m) };
+    }
     // SAFETY: `big_layout(t)` has a non-zero size; the block holds `t` bytes.
     unsafe { finish(alloc::alloc::alloc(big_layout(t)), size, 0) }
 }
@@ -143,7 +193,7 @@ pub extern "C" fn calloc(n: usize, size: usize) -> *mut u8 {
     let Some(t) = total(bytes) else {
         return ptr::null_mut();
     };
-    if t > SMALL_MAX {
+    if t > MEDIUM_MAX {
         // SAFETY: as in `malloc`; the block comes back zeroed.
         return unsafe { finish(alloc::alloc::alloc_zeroed(big_layout(t)), bytes, 0) };
     }
@@ -171,6 +221,12 @@ pub unsafe extern "C" fn free(p: *mut u8) {
             return;
         }
         let pools = &mut *POOLS.0.get();
+        if cls >= MEDIUM_BASE {
+            let m = cls - MEDIUM_BASE;
+            (base as *mut *mut u8).write(pools.medium[m]);
+            pools.medium[m] = base;
+            return;
+        }
         (base as *mut *mut u8).write(pools.free[cls]);
         pools.free[cls] = base;
     }
@@ -189,12 +245,17 @@ pub unsafe extern "C" fn realloc(p: *mut u8, size: usize) -> *mut u8 {
     // SAFETY: a live block of ours; on success the old one is gone and the new one holds the data.
     unsafe {
         let (base, old, cls) = header(p);
-        if cls != 0 && t <= cls * STEP {
+        let room = match cls {
+            0 => 0,
+            c if c >= MEDIUM_BASE => medium_size(c - MEDIUM_BASE),
+            c => c * STEP,
+        };
+        if cls != 0 && t <= room {
             // Still fits its block.
             (base as *mut usize).write(size);
             return p;
         }
-        if cls == 0 && t > SMALL_MAX {
+        if cls == 0 && t > MEDIUM_MAX {
             let old_t = total(old).unwrap_or(HDR); // as in `free`
             return finish(alloc::alloc::realloc(base, big_layout(old_t), t), size, 0);
         }
