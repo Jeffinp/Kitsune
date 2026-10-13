@@ -9,14 +9,23 @@
 //! the second one took (the first warms up; under an emulator it also translates the code); scaled
 //! by the share of the CPU the process got meanwhile (its scheduler slot's busy ticks: the page may
 //! be compiling its scripts at the same time) that gives pixels per CPU second. A playing video may
-//! use [`SHARE_PERCENT`] of that: the decoder shares the CPU with the compositor, the page's scripts
-//! and the sound. The pages hear the budget as soon as it is known (`wire::budget_message`).
+//! use [`SHARE_PERCENT`] of that (the decoder shares the CPU with the compositor, the page's scripts
+//! and the sound), and a real video decodes slower than the clip ([`REAL_PERCENT`]). The pages hear
+//! the budget as soon as it is known (`wire::budget_message`).
 
 use super::*;
 use crate::allocator::SpinLock;
 
-/// The part of the CPU a playing video's decoding may take.
-const SHARE_PERCENT: u64 = 40;
+/// The part of the CPU a playing video's decoding may take (the page's scripts are demoted while
+/// it plays, `priority.rs`; the compositor and the sound take the rest).
+const SHARE_PERCENT: u64 = 50;
+/// How fast a real video decodes next to the built-in clip, per pixel. The clip is small and simple
+/// (320x180, low bit rate): natively a real 240p decodes about as fast per pixel and a 360p about 30 %
+/// slower, but under QEMU TCG, where every memory access of a bigger picture costs more, YouTube's
+/// 360p decoded at ~44 % of the clip's rate (W61: the decoder at 53 % of the CPU only just kept 25
+/// fps of 480x360 while the clip measured 18.6 Mpixels/s). The worse figure is used: on a fast
+/// machine the budget is far above the 480p ceiling anyway.
+const REAL_PERCENT: u64 = 40;
 /// A measurement that takes longer than this is given up (the budget stays unknown).
 const GIVE_UP_MS: u64 = 20_000;
 
@@ -100,7 +109,7 @@ pub(crate) fn pump_speed_test() -> Option<u64> {
                 ms
             };
             let rate = pixels.saturating_mul(1000) / took.max(1);
-            let budget = rate / 100 * SHARE_PERCENT;
+            let budget = rate / 100 * SHARE_PERCENT / 100 * REAL_PERCENT;
             crate::klog!(
                 Info,
                 "media: decoder speed test: {pictures} pictures, {} kpixels in {ms} ms (CPU {cpu_ms} ms): \
