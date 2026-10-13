@@ -40,7 +40,7 @@ pub(super) fn info(data: &[u8]) -> Result<Info, Error> {
     // Duration is in timescale units, as a float.
     info.duration_ns = duration.and_then(|d| {
         let ns = d * info.timescale_ns as f64;
-        (ns.is_finite() && ns >= 0.0).then(|| ns as u64)
+        (ns.is_finite() && ns >= 0.0).then_some(ns as u64)
     });
     Ok(info)
 }
@@ -122,7 +122,7 @@ fn track(data: &[u8]) -> Result<Track, Error> {
                     match id {
                         SAMPLING_FREQUENCY => {
                             let f = ebml::float(body)?;
-                            t.sample_rate = if f.is_finite() && f >= 1.0 && f <= 1e7 {
+                            t.sample_rate = if (1.0..=1e7).contains(&f) {
                                 (f + 0.5) as u32
                             } else {
                                 return Err(Error::Invalid("bad sampling frequency"));
