@@ -279,9 +279,7 @@ pub fn timer_sample(rsp: u64, cur_slot: usize) {
         } else {
             TICK_BUSY.fetch_add(1, Relaxed);
             TICK_BUSY_THR[cur_slot.min(3)].fetch_add(1, Relaxed);
-            if cur_slot == 0 && cs & 3 == 0 {
-                super::pcs::note_pc(rip);
-            }
+            super::pcs::note_pc(cur_slot, cs & 3 == 3, rip);
         }
     }
 }

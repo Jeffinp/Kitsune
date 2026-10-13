@@ -93,6 +93,23 @@ pub fn note(label: &str, t0: u64, detail: u64) {
     }
 }
 
+/// A start for [`note_cpu`]: the TSC and the compositor's CPU time so far.
+pub fn tc() -> (u64, u64) {
+    if ON { (io::rdtsc(), cpu_now()) } else { (0, 0) }
+}
+
+/// Like [`note`], with the compositor's own CPU time since `start` (from [`tc`]) next to the wall
+/// time: under load the wall time also counts the slices other threads took meanwhile.
+pub fn note_cpu(label: &str, start: (u64, u64), detail: u64) {
+    if ON {
+        // SAFETY: as in `mark`: compositor thread only, nothing else holds `&mut Marks`.
+        let khz = unsafe { &*MARKS.get() }.khz.max(1);
+        let us = io::rdtsc().wrapping_sub(start.0) * 1000 / khz;
+        let cpu = cpu_now().wrapping_sub(start.1) * 1000 / khz;
+        crate::serial_println!("[trace] browser {label}: {us} us, cpu {cpu} us ({detail})");
+    }
+}
+
 /// Provide the calibrated TSC rate and flush the milestones buffered so far.
 /// Also reports how long the VM had been running when the kernel started
 /// (TSC counts from reset, so `tsc[0]` is the firmware + bootloader time).

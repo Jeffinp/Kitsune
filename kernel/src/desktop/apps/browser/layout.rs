@@ -41,9 +41,9 @@ pub(crate) fn layout_browser(t: &mut TabData, images: &mut ImageCache, width: i3
         })
     };
     let started = crate::interrupts::ticks();
-    let t0 = crate::trace::t();
+    let t0 = crate::trace::tc();
     let mut page = lay(images);
-    crate::trace::note("layout", t0, page.cmds.len() as u64);
+    crate::trace::note_cpu("layout", t0, page.cmds.len() as u64);
     if register {
         t.forms = kitsune_core::web::form::FormState::new(&page.forms);
         t.img_keys.clear();
