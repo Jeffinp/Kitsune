@@ -774,7 +774,13 @@ segmento de vídeo de 10 MiB em pouco mais de 1 s; na NE2000 a placa (PIO) divid
 
 Handshakes: na página `/net` (23 pedidos do script, mais a página e o script) o servidor viu **3 conexões** (uma para a
 página e outra para a segunda origem, e uma refeita depois do pedido abortado); na `/net/speed` em https, **1
-handshake** para a página e os dois downloads (antes seriam 3, ~4 s cada no TCG). REALSITE
+handshake** para a página e os dois downloads (antes seriam 3, ~4 s cada no TCG).
+
+Uma página real pela rede de verdade (`w50-real-site.sh`, `https://en.wikipedia.org/wiki/Kitsune`, virtio-net, com
+"continuar mesmo assim" porque o proxy deste ambiente reassina o HTTPS): 7 pedidos ao host da página (a página, duas
+folhas, o script de inicialização e três imagens) em **4 handshakes** (antes, 7). As conexões novas vieram depois de
+pausas maiores que os 15 s de ociosidade (o layout da página leva segundos no TCG); as imagens de outros hosts
+(`upload.wikimedia.org`) falham no certificado reassinado, como antes.
 
 ### 13.7 Provas
 

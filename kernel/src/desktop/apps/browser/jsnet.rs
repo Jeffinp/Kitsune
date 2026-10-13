@@ -40,6 +40,8 @@ pub(super) fn save_cookies() {
     if now.saturating_sub(LAST_SAVE.load(Ordering::Relaxed)) < SAVE_EVERY_MS {
         return;
     }
+    // Looked at most every SAVE_EVERY_MS, changed or not (this runs every frame).
+    LAST_SAVE.store(now, Ordering::Relaxed);
     // Only the owner's jar is written to the owner's home.
     if crate::fetch::cookies::owner() != crate::desktop::services::accounts::home() {
         return;
@@ -47,7 +49,6 @@ pub(super) fn save_cookies() {
     let Some(text) = crate::fetch::cookies::take_save() else {
         return;
     };
-    LAST_SAVE.store(now, Ordering::Relaxed);
     match crate::desktop::services::vfs::write_file(&path(), &text) {
         Ok(_) => crate::serial_println!("cookies: saved ({} bytes)", text.len()),
         Err(_) => crate::serial_println!("cookies: could not write the cookie file"),

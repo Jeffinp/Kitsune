@@ -113,6 +113,7 @@ impl Net {
                 );
                 return Ok((i, true));
             }
+            crate::serial_println!("net: connection {} was closed by the server while idle", i);
             self.close_slot(i);
         }
         // A free slot, else the one idle the longest.
@@ -139,6 +140,7 @@ impl Net {
         for i in 0..POOL_MAX {
             let s = &slots()[i];
             if s.key.is_some() && s.idle_since != 0 && now.saturating_sub(s.idle_since) > IDLE_MS {
+                crate::serial_println!("net: connection {} idle for too long, closed", i);
                 self.close_slot(i);
             }
         }
