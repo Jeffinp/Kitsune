@@ -180,6 +180,10 @@ pub fn pump_browser(desk: &mut Desktop, redraw: &mut bool) {
         desk.browser_image_done(res);
         *redraw = true;
     }
+    // Sheets and pictures that arrived are laid out together, not one layout each.
+    if desk.browser_flush_layout() {
+        *redraw = true;
+    }
     if let Some(result) = fetch::take_result() {
         match result {
             Ok(page) => desk.browser_load(&page.data, page.conn, page.truncated, page.cert),

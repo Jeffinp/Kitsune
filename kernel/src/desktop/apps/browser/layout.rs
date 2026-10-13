@@ -40,6 +40,7 @@ pub(crate) fn layout_browser(t: &mut TabData, images: &mut ImageCache, width: i3
             metrics: &apps::browser::paint::KernelMetrics,
         })
     };
+    let started = crate::interrupts::ticks();
     let t0 = crate::trace::t();
     let mut page = lay(images);
     crate::trace::note("layout", t0, page.cmds.len() as u64);
@@ -67,6 +68,7 @@ pub(crate) fn layout_browser(t: &mut TabData, images: &mut ImageCache, width: i3
         }
     }
     t.page = Some(page);
+    t.relayout.done(started, crate::interrupts::ticks());
     // The text moved: the selection and the find matches follow the new layout.
     t.find
         .refresh(t.page.as_ref(), &apps::browser::paint::KernelMetrics);

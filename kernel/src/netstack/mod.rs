@@ -28,7 +28,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 use embedded_tls::blocking::*;
 use kitsune_core::browser::{Conn, FailReason, append_capped};
-use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
+use smoltcp::iface::{Config, Interface, PollResult, SocketHandle, SocketSet};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::socket::{tcp, udp};
 use smoltcp::time::Instant;
@@ -100,6 +100,9 @@ impl TxToken for Tx<'_> {
 
 // ---- the stack ----
 
+/// Empty polls in a row before a waiting worker thread sleeps (see `Net::pause`).
+const QUIET_SPINS: u32 = 40;
+
 pub struct Net {
     iface: Interface,
     sockets: SocketSet<'static>,
@@ -113,6 +116,8 @@ pub struct Net {
     /// reserved address is refused after resolution, whatever the app's URL said
     /// (`kitsune_core::appnet::ipv4_allowed`).
     public_only: bool,
+    /// Polls in a row that found nothing to do (see [`Net::pause`]).
+    quiet: u32,
 }
 
 /// Absolute tick by which the TLS handshake in progress must be done (0 = none).
@@ -161,6 +166,7 @@ impl Net {
             udp,
             resolver: Resolver::new(cfg.dns),
             public_only: false,
+            quiet: 0,
         }
     }
 
@@ -198,13 +204,36 @@ impl Net {
     }
 
     fn poll(&mut self) {
-        self.iface.poll(now(), &mut self.device, &mut self.sockets);
+        let r = self.iface.poll(now(), &mut self.device, &mut self.sockets);
+        self.quiet = if matches!(r, PollResult::None) {
+            self.quiet.saturating_add(1)
+        } else {
+            0
+        };
     }
 
-    /// Spin (driving the stack) until `deadline_ms` of timer time elapses.
+    /// Drive the stack once and wait a little (see [`Net::pause`]).
     fn pump(&mut self) {
         self.poll();
-        core::hint::spin_loop();
+        self.pause();
+    }
+
+    /// Wait between two polls of a stack with nothing to do yet. The NICs are polled (no
+    /// interrupts), so a thread that just spun would keep a whole CPU at 100% for as long as the
+    /// network takes to answer: a page download, a DNS or TLS round trip. Answers on a local link
+    /// come back within a few polls, so spin that long; after that nothing is coming soon and the
+    /// thread sleeps until the next timer tick (4 ms), letting the desktop and the idle `hlt` have
+    /// the CPU. Only a worker thread with interrupts on can sleep (never the boot or compositor
+    /// thread, which keep the old spin).
+    pub(super) fn pause(&mut self) {
+        if self.quiet < QUIET_SPINS
+            || !x86_64::instructions::interrupts::are_enabled()
+            || crate::sched::current() == 0
+        {
+            core::hint::spin_loop();
+        } else {
+            crate::sched::block(interrupts::ticks() + 1, || true);
+        }
     }
 
     fn deadline(ms: u64) -> u64 {

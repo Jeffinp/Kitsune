@@ -3,8 +3,54 @@
 //!
 //! `cargo run --release -p kitsune_core --example render_page -- page.html [width] [zoom]`
 use kitsune_core::web::imgcache::NoImages;
-use kitsune_core::web::{Cmd, Doc, FixedAdvance, Layout};
+use kitsune_core::web::{Cmd, Doc, FixedAdvance, Font, Layout};
 use std::io::Write;
+
+/// The kernel's text engine (Inter and JetBrains Mono), for timing layouts as the system runs them.
+struct RealMetrics(std::cell::RefCell<kitsune_core::fontcache::TextEngine>);
+impl RealMetrics {
+    fn load() -> RealMetrics {
+        fn leak(f: &str) -> &'static [u8] {
+            Box::leak(std::fs::read(format!("assets/fonts/{f}")).expect("font").into_boxed_slice())
+        }
+        let e = kitsune_core::fontcache::TextEngine::new([
+            leak("Inter-Regular.subset.ttf"),
+            leak("Inter-Medium.subset.ttf"),
+            leak("Inter-SemiBold.subset.ttf"),
+            leak("JetBrainsMono-Regular.subset.ttf"),
+        ])
+        .expect("engine");
+        RealMetrics(std::cell::RefCell::new(e))
+    }
+    fn face(f: Font) -> (u16, kitsune_core::fontcache::Weight) {
+        use kitsune_core::fontcache::Weight;
+        let w = if f.mono {
+            Weight::Mono
+        } else if f.bold {
+            Weight::Semibold
+        } else {
+            Weight::Regular
+        };
+        (f.size.clamp(4, 400), w)
+    }
+}
+impl kitsune_core::web::TextMetrics for RealMetrics {
+    fn width(&self, t: &str, f: Font) -> i32 {
+        (self.width_q8(t, f) + 255) / 256
+    }
+    fn width_q8(&self, t: &str, f: Font) -> i32 {
+        let (px, w) = Self::face(f);
+        kitsune_core::textlayout::measure_q8(&self.0.borrow_mut().face(w, px), t)
+    }
+    fn line_height(&self, f: Font) -> i32 {
+        let (px, w) = Self::face(f);
+        self.0.borrow().vmetrics(w, px).line_height
+    }
+    fn ascent(&self, f: Font) -> i32 {
+        let (px, w) = Self::face(f);
+        self.0.borrow().vmetrics(w, px).ascent
+    }
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -31,13 +77,17 @@ fn main() {
             }
         }
     }
-    let m = FixedAdvance;
+    let real = args.iter().any(|a| a == "--real-font").then(RealMetrics::load);
+    let m: &dyn kitsune_core::web::TextMetrics = match &real {
+        Some(r) => r,
+        None => &FixedAdvance,
+    };
     let t = std::time::Instant::now();
     let page = doc.layout(&Layout {
         width,
         zoom,
         images: &NoImages,
-        metrics: &m,
+        metrics: m,
     });
     eprintln!("layout: {:?} ({} commands)", t.elapsed(), page.cmds.len());
     let out = std::io::stdout();

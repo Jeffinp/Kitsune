@@ -33,6 +33,57 @@ pub(crate) enum BrowserHover {
     Proceed,
 }
 
+/// A layout that is owed to a tab because a style sheet or a picture arrived. A real page brings
+/// dozens of them, and every layout of a big page is long: they are merged, and at most one runs per
+/// `gap` (a few times what the last one took), so loading never keeps the desktop busy.
+#[derive(Default)]
+pub(crate) struct Relayout {
+    pub pending: bool,
+    /// A pending layout must also look for the page's pictures (a style sheet changed what is shown).
+    pub register: bool,
+    /// Tick where the last layout ended, and how many ticks it took.
+    pub last_end: u64,
+    pub last_cost: u64,
+}
+
+/// Least and most ticks (4 ms each) between two layouts caused by arrivals.
+const RELAYOUT_MIN_GAP: u64 = 100;
+const RELAYOUT_MAX_GAP: u64 = 1250;
+/// A layout may take at most this share of the time while the page loads: the gap is this many
+/// times its cost.
+const RELAYOUT_GAP_FACTOR: u64 = 3;
+
+impl Relayout {
+    /// Something arrived that changes the page.
+    pub fn request(&mut self, register: bool) {
+        self.pending = true;
+        self.register |= register;
+    }
+    /// Is it time to lay out? Style sheets block the first styled paint, so a layout they caused
+    /// goes as soon as the last of them is in (`sheets_busy` false); one caused by pictures goes
+    /// when the last picture is in. Until then it waits for its gap, a few times what the last
+    /// layout took (so a long layout is not repeated back to back), but never beyond a few seconds.
+    pub fn due(&self, now: u64, sheets_busy: bool, images_busy: bool) -> bool {
+        if !self.pending {
+            return false;
+        }
+        let settled = if self.register {
+            !sheets_busy
+        } else {
+            !images_busy
+        };
+        let gap = (self.last_cost * RELAYOUT_GAP_FACTOR).clamp(RELAYOUT_MIN_GAP, RELAYOUT_MAX_GAP);
+        settled || now.saturating_sub(self.last_end) >= gap
+    }
+    /// A layout ran (for any reason): nothing is owed any more.
+    pub fn done(&mut self, start: u64, end: u64) {
+        self.pending = false;
+        self.register = false;
+        self.last_end = end;
+        self.last_cost = end.saturating_sub(start);
+    }
+}
+
 /// One tab of a browser window: its own history, page, scroll, forms and find state. Only
 /// the active tab is laid out and painted; the others keep their parsed document.
 pub(crate) struct TabData {
@@ -48,6 +99,8 @@ pub(crate) struct TabData {
     pub scroll_bar: kitsune_core::widgets::ScrollbarFade,
     /// Viewport width `page` was laid out for.
     pub layout_w: i32,
+    /// A layout owed because something arrived (see [`Relayout`]).
+    pub relayout: Relayout,
     /// Cache key of each `page.images` entry (`None`: not fetchable).
     pub img_keys: Vec<Option<String>>,
     /// The external style sheets of the page (which are asked for, which arrived).
@@ -173,6 +226,7 @@ impl TabData {
             scroll_spring: kitsune_core::anim::Spring::pixels(0.0, 260.0, 30.0),
             scroll_bar: kitsune_core::widgets::ScrollbarFade::new(),
             layout_w: 0,
+            relayout: Relayout::default(),
             img_keys: Vec::new(),
             sheets: kitsune_core::web::sheets::SheetSet::default(),
             scripts: kitsune_core::web::script::ScriptSet::default(),

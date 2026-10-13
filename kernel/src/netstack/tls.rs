@@ -61,7 +61,7 @@ impl embedded_io::Read for Stream<'_> {
             if interrupts::ticks() >= end {
                 return Err(StreamError);
             }
-            core::hint::spin_loop();
+            self.net.pause();
         }
     }
 }
@@ -89,7 +89,7 @@ impl embedded_io::Write for Stream<'_> {
             if interrupts::ticks() >= end {
                 return Err(StreamError);
             }
-            core::hint::spin_loop();
+            self.net.pause();
         }
     }
 
