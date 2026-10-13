@@ -127,7 +127,14 @@ abaixo, e nenhuma existe ainda. Ordem proposta, cada etapa com aceite próprio:
 3. **Rede para o que o YouTube pede:** cookies, HTTP keep-alive/HTTP/2 se o servidor exigir, CORS, WebSocket.
 4. **Mídia:** Media Source Extensions, decodificadores de vídeo (H.264 e VP9 em Rust puro, em software: a CPU em
    software de 1080p não dá; 360p/480p é a meta realista) e de áudio (AAC e Opus), `<video>`/`<audio>`, sincronia.
-5. **Som:** driver de áudio (Intel HDA ou AC'97/virtio-snd no QEMU) e mixagem; hoje o sistema não tem som.
+5. **Som. Feito (2026-10).** Driver **AC'97** (`-device AC97`; o `run.ps1` liga com `-audiodev dsound`), por polling,
+   ~128 ms à frente; **mixer** no kernel com até 16 fluxos (4 por processo), reamostragem linear de 8–96 kHz para 48 kHz,
+   volume por fluxo e do sistema, mudo, soma com saturação e o **relógio "tocado"** de cada fluxo (o que o player de vídeo
+   segue); chamadas **60–65** (`audio_open/write/status/close/ctl/wait`); `play arquivo.wav`, `tone`, `beep`, `volume`;
+   seção Som nos Ajustes. Provado no QEMU gravando o que o guest toca (`w56-audio.sh`): 440 Hz medidos 440,01 Hz,
+   2 s medidos 1999,8 ms, silêncio exato depois, WAV de 22,05 kHz reamostrado, acorde de dois fluxos, volume 25 %
+   medido 0,250, relógio com inclinação 0,998. Ver `docs/design/audio.md`. Falta: HDA/virtio-sound, provar com `dsound`
+   no Windows e em hardware real.
 6. **O próprio YouTube:** o player pede dezenas de APIs (Web Workers, `requestAnimationFrame`, `MutationObserver`,
    `IntersectionObserver`, Canvas, WebAudio, DRM não, mas vários recursos de segurança). Aceite: abrir um vídeo e vê-lo
    e ouvi-lo por um minuto.
@@ -136,5 +143,6 @@ Sem a etapa 1 nada do resto roda; a ordem acima é a mínima. Enquanto isso o na
 sem JavaScript pedem (itens do §10 do `tls-browser.md`).
 
 ### 12. Mais adiante: SMP, USB e som
-Vários núcleos (APIC), prioridades no scheduler, USB (teclado, mouse e armazenamento) e áudio.
+Vários núcleos (APIC), prioridades no scheduler, USB (teclado, mouse e armazenamento) e áudio além do AC'97 (Intel
+HDA, que é o que as placas novas têm; virtio-sound).
 *Aceite:* cada um com sua prova (o desktop usa mais de um núcleo; um teclado USB funciona).

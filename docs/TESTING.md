@@ -587,6 +587,26 @@ guest pediu): `w53-shields.sh` (`REQLOG=/tmp/w53-requests.log`; escreve `w53-res
 global). As posições do escudo e da chave são as da janela padrão em BIOS 1280x720 (`SHIELD_X`, `SWITCH_X`... mudam por
 variável de ambiente). Projeto e limites: [`design/tls-browser.md`](design/tls-browser.md) §11.
 
+### Som (W56)
+
+Testes no host: `cargo test -p kitsune_core hw::audio` (fila, limites, reamostragem de 8 a 96 kHz conferida por
+cruzamentos de zero, saturação, volumes, mudo, relógio "tocado" contra o dispositivo, drenar), `hw::ac97` (descritores e
+posição a partir de CIV/PICB/SR, parada e retomada), `format::wav` (8/16/24/32 bits, float, EXTENSIBLE, truncado, lixo),
+`settings` (volume e mudo), `shell::tests::process` (os comandos `play`, `tone`, `beep`, `volume`) e
+`cargo test -p kitsune-userabi` (`AudioStatus`). No QEMU, o próprio QEMU grava o que o guest toca:
+
+```bash
+OUT=/tmp/w56; QEMU_MEM=256M \
+QEMU_EXTRA="-audiodev wav,id=snd0,path=$OUT-audio.wav,out.frequency=48000 -device AC97,audiodev=snd0" \
+bash tools/perf/run.sh IMG bios $OUT 600 tools/perf/scen/w56-audio.sh     # veredito em $OUT/verdict.txt
+QEMU_MEM=256M bash tools/perf/run.sh IMG bios /tmp/w56n 200 tools/perf/scen/w56-audio-nodev.sh
+```
+
+`tools/perf/audio-check.py CAPTURA.wav PLANO [--serial serial.log]` mede cada som da gravação (frequência por FFT, duração,
+nível relativo, pureza, silêncio exato depois, canais iguais) e o relógio impresso por `play --clock`; sem `numpy` mede a
+frequência por cruzamentos de zero. Não cobre: o backend `dsound` do Windows e hardware real. Projeto:
+[`design/audio.md`](design/audio.md).
+
 **CPU do navegador (W54).** `tools/perf/scen/w54-browser-idle.sh` abre uma página de `tools/w24-site.py` (`PAGE=modern`,
 `bigcss` ou `js`), deixa-a parada e depois rola; com um build `--features perf-trace`, `tools/perf/idle_tail.py <saída> 10`
 mostra os quadros por segundo e a linha `cpu samples` de cada segundo do serial deve ficar em `idle=250` com a página

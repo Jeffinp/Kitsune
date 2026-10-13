@@ -21,7 +21,7 @@ kitsune_core/src/            pure no_std logic, host-tested (forbid(unsafe_code)
               input keymap clipboard
   windowing/  window winman wm snap | compositor (damage engine) | taskbar launcher
   apps/       fileman viewer editor2 termui shell calc activity           (app logic, no pixels)
-  hw/         device-independent driver logic (ata, pci, ps2, rtc, virtio, ...)
+  hw/         device-independent driver logic (ata, pci, ps2, rtc, virtio, ac97, ...) and the sound mixer (audio)
   i18n/       catalogs, lookup, plurals, locale formatting
   structure.rs testutil.rs         (test-only)
   lib.rs      re-exports every module at the crate root (`kitsune_core::fs3`), see below
@@ -78,7 +78,7 @@ Files split this way, with their children:
 | `windowing/winman` | `lifecycle`, `focus`, `workspaces`, `geometry` (+ `helpers`) |
 | `kernel/trace` | `stats`, `report`, `bench` |
 | `kernel/sched` | `spawn`, `death`, `blocking`, `introspect`, `user` |
-| `kernel/userproc` | `syscall` (entrada `int 0x80`), `host` (módulos WebAssembly), `files` (arquivos, janelas, filhos), `queue` (fila do sistema de arquivos e eventos de janela) |
+| `kernel/userproc` | `syscall` (entrada `int 0x80`), `host` (módulos WebAssembly), `files` (arquivos, janelas, filhos), `queue` (fila do sistema de arquivos e eventos de janela), `page` (script de página do navegador), `audio` (som, 60–65) |
 | `i18n/audit` (testes) | `scan` (leitor das fontes), `accents` (acentos, idiomas, fontes) |
 | `kernel/wasm/abi2` | `guest`, `hostio`, `pixels` |
 | `kernel/netd` | `mailbox`, `pinger` |

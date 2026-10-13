@@ -134,7 +134,8 @@ problemas: [`docs/BUILDING.md`](docs/BUILDING.md).
 | **Apps WebAssembly** | Runtime com ABI própria e subconjunto WASI, manifesto com permissões e cotas, instalação em `/apps`, dados em `/data/<id>`. Vêm na imagem: Relógio, Notas, Pintura e Cobrinha; DOOM roda como app | [`apps.md`](docs/design/apps.md) |
 | **Idiomas** | Português do Brasil e inglês ao vivo, plurais, formatos de data e número | [`i18n.md`](docs/design/i18n.md) |
 | **Sistema** | Configurações persistentes (`/etc/kitsune.conf`), log do kernel em anel (`/var/log`), notificações, entropia com reseed e saúde por fonte | [`sysmgmt.md`](docs/design/sysmgmt.md), [`entropy.md`](docs/design/entropy.md) |
-| **Dispositivos** | PS/2, RTC, PCI, ATA, virtio (rede, vídeo 2D, entropia) | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| **Som** | Driver AC'97, mixer com vários fluxos, reamostragem e volume, `play arquivo.wav`, `tone`, `beep`, volume nos Ajustes | [`audio.md`](docs/design/audio.md) |
+| **Dispositivos** | PS/2, RTC, PCI, ATA, virtio (rede, vídeo 2D, entropia), AC'97 (som) | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 
 ---
 

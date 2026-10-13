@@ -4,6 +4,31 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — Som (etapa 5 do YouTube)
+
+O sistema tem som. Projeto em `docs/design/audio.md`.
+
+- **Driver AC'97** (`kernel/src/ac97.rs`; QEMU `-device AC97`, ICH0–ICH7): detecção por PCI, reset frio, codec em 0 dB a
+  48 kHz, 32 blocos de 512 quadros de DMA, por polling na thread `audiod` (a cada tick enquanto toca, ~128 ms à frente).
+  Um atraso vira silêncio (o hardware para no último bloco válido), nunca um pedaço repetido. Sem placa:
+  `audio: no device` e o resto igual.
+- **Mixer** (`kitsune_core::hw::audio`): até 16 fluxos (4 por processo, 256 KiB de fila cada), s16 mono/estéreo de 8 a
+  96 kHz reamostrado para 48 kHz por interpolação linear (32.32), volume por fluxo e do sistema, mudo que mantém o
+  relógio, soma com saturação, e o **relógio "tocado"** de cada fluxo pelo tempo do dispositivo (para o player de vídeo
+  sincronizar). Tom senoidal só com inteiros. Parser **WAV** (`format::wav`: 8/16/24/32 bits, float, EXTENSIBLE).
+- **Chamadas 60–65** (`audio_open/write/status/close/ctl/wait`, `kitsune-userabi::audio`, `kitsune_user::audio`):
+  `audio_write` não bloqueia (`EAGAIN`), `audio_wait` espera por espaço ou pelo fim.
+- **Programa `play`** e comandos do shell `play arquivo.wav`, `tone FREQ[,FREQ] [MS]`, `beep`, `volume [N|mute|unmute]`.
+  **Ajustes → Som**: volume do sistema, sem som, testar (salvos em `/etc/kitsune.conf`: `volume=`, `mute=`).
+- `run.ps1` liga `-audiodev dsound -device AC97` (opção `-NoAudio`); `tools/run.sh` com `QEMU_AUDIO`.
+- **Provado no QEMU** (BIOS, TCG, `w56-audio.sh`, gravando com `-audiodev wav` e medindo no host com
+  `tools/perf/audio-check.py`): tom de 440 Hz medido **440,01 Hz** e **1999,8 ms**, seguido de silêncio exato; WAV gerado
+  no guest a 22,05 kHz mono → **660,02 Hz**, 999,9 ms; WAV 44,1 kHz estéreo 8 bits → **550,03 Hz**, 799,8 ms; acorde de
+  dois fluxos → **440,01 + 660,02 Hz**; volume do sistema em 25 % → nível **0,250** do primeiro; volume do fluxo em 50 % →
+  **0,500**; ≥ 99,95 % da energia na frequência certa em todos; relógio do fluxo contra o `uptime` com inclinação
+  **0,998**; nenhuma falha de buffer. `w56-audio-nodev.sh`: sem placa, `tone` responde "não há dispositivo de som" e
+  o sistema segue. **Não testado**: `dsound` no Windows (WHPX) e hardware real.
+
 ## 2026-10 — Navegador: CPU e congelamentos em páginas reais
 
 O navegador ficava a 100% de CPU "do nada" e congelava o sistema por instantes (no WHPX, um núcleo inteiro do host).

@@ -56,10 +56,25 @@ interface pequena de chamadas de sistema. É o primeiro passo da fase 3 de
 | 54 | `proc_kill(pid)` | para um filho |
 | 56 | `page_recv(ptr, cap, timeout_ms)` | só o processo de script de uma página do Navegador (`spawn_page`): a próxima mensagem do navegador; devolve o tamanho, 0 se nada veio no prazo (0 só olha, `u64::MAX` espera sem limite), `E2BIG` se não cabe (a mensagem é descartada); os outros processos recebem `ENOSYS` |
 | 57 | `page_send(ptr, len)` | idem, uma mensagem para o navegador (até 4 MiB); `EAGAIN` com 8 MiB esperando |
+| 60 | `audio_open(taxa, canais, formato)` | abre um fluxo de som s16le, mono ou estéreo, de 8 a 96 kHz; devolve o id (`ENODEV` sem placa, `EMFILE` com 4 abertos) |
+| 61 | `audio_write(id, ptr, len)` | põe amostras na fila do fluxo (até 256 KiB); **não bloqueia**: devolve os bytes aceitos, `EAGAIN` com a fila cheia |
+| 62 | `audio_status(id, saida)` | 48 bytes (`AudioStatus`): fila, quadros **tocados** (o relógio do player), consumidos, escritos, falhas, taxa, canais, volume |
+| 63 | `audio_close(id, drenar)` | fecha na hora (`0`) ou depois de tocar o que falta (`1`) |
+| 64 | `audio_ctl(id, op, valor)` | volume do fluxo, pausa, descartar a fila, volume e mudo do sistema, taxa do dispositivo |
+| 65 | `audio_wait(id, quer, timeout_ms)` | espera `quer` bytes livres na fila, ou (`0`) até tudo ter tocado; 1 quando vale, 0 no prazo |
 
 Todo ponteiro é traduzido pelas tabelas do próprio processo, página por página
 (`AddressSpace::copy_in`), antes de o kernel tocar nele: um ponteiro ruim é um erro de retorno
 (`-14`), nunca uma falta no kernel. Uma chamada desconhecida devolve `-38`.
+
+## Som (chamadas 60–65)
+
+Um programa abre fluxos no mixer do kernel e escreve amostras de 16 bits; o kernel reamostra cada fluxo para 48 kHz,
+soma tudo com o volume de cada um e o do sistema e manda para a placa (AC'97). `audio_write` nunca bloqueia (o player do
+navegador roda num laço de eventos); quem quer esperar usa `audio_wait`, que é reiniciada ao acordar como `page_recv`. Os
+fluxos são do processo que os abriu e fecham quando ele termina. O SDK tem `kitsune_user::audio::Stream`; o programa
+`play` (no crate `kterm`) e os comandos `play`, `tone`, `beep` e `volume` do shell usam isso. Projeto, limites e a prova
+no QEMU: [`audio.md`](audio.md).
 
 ## Arquivos, argumentos e entrada padrão
 

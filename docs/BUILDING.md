@@ -40,7 +40,14 @@ o bootloader); as seguintes ~25 s.
 tools/run.sh            # BIOS, janela do QEMU
 tools/run.sh uefi       # UEFI (usa OVMF)
 tools/run.sh bios -- -accel kvm   # com KVM, bem mais rápido
+QEMU_AUDIO=pa tools/run.sh        # som pelo PulseAudio (pipewire, alsa, sdl, coreaudio...)
+QEMU_AUDIO=wav:/tmp/som.wav tools/run.sh   # grava o que o sistema toca num WAV
+QEMU_AUDIO=none tools/run.sh      # sem placa de som
 ```
+
+**Som.** Os dois scripts põem uma placa **AC'97** (`-device AC97`): o kernel loga `audio: AC'97 up` e o Terminal toca
+(`tone 440 1000`, `play arquivo.wav`, `volume 50`). Sem a placa o boot é o mesmo (`audio: no device`). Projeto em
+[`design/audio.md`](design/audio.md).
 
 O disco do filesystem (`kitsune-fs.img`) é criado na primeira execução e persiste entre
 boots. Desde o OJFS v3 ele tem **64 MiB**, mas é um arquivo *esparso* (`truncate -s 64M`;
@@ -71,7 +78,11 @@ foi exercitado em uma máquina Windows real: se falhar, o WSL continua sendo o c
 .\run.ps1 -SkipBuild   # só boota a imagem existente
 .\run.ps1 -Usb         # gera kitsune-uefi.img para gravar em pendrive
 .\run.ps1 -Doom        # variante com DOOM (ver §4)
+.\run.ps1 -NoAudio     # sem a placa de som
 ```
+
+O `run.ps1` liga o som por padrão com `-audiodev dsound,id=snd0 -device AC97,audiodev=snd0` (DirectSound do Windows),
+se o QEMU instalado tiver os dois; senão avisa e sobe sem som.
 
 ### Sem tela (CI, servidor, nuvem)
 
