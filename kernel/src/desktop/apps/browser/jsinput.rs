@@ -89,6 +89,9 @@ pub(super) fn after_key(
         .then_some(now_text);
     let seq = js.session.wait(action, now_ms());
     let n = js.inputs.next_number();
+    if value.is_some() {
+        js.inputs.edited(before.uid, n);
+    }
     let info = KeyInfo {
         key: &k,
         code,

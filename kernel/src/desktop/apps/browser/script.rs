@@ -458,8 +458,8 @@ fn start_js(
 
 /// The page's document changed: lay it out again and ask for any new pictures. The controls' state
 /// comes from the document (the page owns it: what a script set shows); the focus and the caret stay on
-/// the same control, and while the page has not seen every key yet the focused control keeps what the
-/// person typed (the next document will carry it).
+/// the same control, and a control the person typed into keeps the browser's text while the page has
+/// not seen those keys yet (its next document will carry them).
 fn relayout_js(
     t: &mut TabData,
     images: &mut kitsune_core::web::imgcache::ImageCache,
@@ -471,7 +471,18 @@ fn relayout_js(
         Some((f, i)) => (String::from(old.value(f, i)), old.caret()),
         None => (String::new(), 0),
     };
-    let settled = t.js.as_ref().is_none_or(|js| js.inputs.settled());
+    // The text of the controls with keys the page has not seen.
+    let keep: Vec<(u32, String)> = match (&t.js, &t.page) {
+        (Some(js), Some(p)) => js
+            .inputs
+            .unseen_edits()
+            .into_iter()
+            .filter_map(|uid| {
+                field_by_uid(&p.forms, uid).map(|(f, i)| (uid, String::from(old.value(f, i))))
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
     let srcs: Vec<String> = t.page.as_ref().map_or(Vec::new(), |p| {
         p.images.iter().map(|i| i.src.clone()).collect()
     });
@@ -484,11 +495,13 @@ fn relayout_js(
     }
     if let Some(p) = &t.page {
         let mut forms = FormState::new(&p.forms);
+        for (uid, text) in &keep {
+            if let Some((f, i)) = field_by_uid(&p.forms, *uid) {
+                forms.set_text(&p.forms, f, i, text);
+            }
+        }
         if let Some((f, i)) = field_by_uid(&p.forms, focus_uid) {
             forms.set_focus(&p.forms, f, i);
-            if !settled {
-                forms.set_text(&p.forms, f, i, &typed);
-            }
             if forms.value(f, i) == typed {
                 forms.set_caret(caret);
             }

@@ -490,6 +490,7 @@
     if (m.si !== undefined && el.localName === 'select') {
       if (el.selectedIndex === (m.si | 0)) return;
       el._kjsSel = m.si | 0;
+      touch(); // the browser's copy follows even when the page changes nothing else
       fire(el, new InputEvent('input', { bubbles: true, composed: true }));
       fire(el, new BaseEvent('change', { bubbles: true }));
       return;
@@ -497,6 +498,7 @@
     if (m.v !== undefined && textLike(el)) {
       if (el.value === String(m.v)) return;
       el._kjsV = String(m.v);
+      touch();
       fire(el, new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertFromPaste' }));
     }
   };

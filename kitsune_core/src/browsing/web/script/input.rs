@@ -72,10 +72,13 @@ impl Subs {
 }
 
 /// The inputs sent to a page and how far its documents have caught up with them.
-#[derive(Clone, Copy, Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct Inputs {
     sent: u32,
     acked: u32,
+    /// `(control uid, input number)` of the keys that changed a control's text, until the page says
+    /// it saw them.
+    edits: Vec<(u32, u32)>,
 }
 
 impl Inputs {
@@ -89,7 +92,26 @@ impl Inputs {
     pub fn ack(&mut self, n: u32) {
         if n <= self.sent && n > self.acked {
             self.acked = n;
+            let acked = self.acked;
+            self.edits.retain(|e| e.1 > acked);
         }
+    }
+
+    /// Input `n` changed the text of control `uid` (a key typed into it).
+    pub fn edited(&mut self, uid: u32, n: u32) {
+        if uid != 0 && self.edits.len() < 4096 {
+            self.edits.push((uid, n));
+        }
+    }
+
+    /// The controls whose text the person changed and the page has not seen yet: a document from the
+    /// page lacks those changes, so the browser keeps its own text for them (the page's next document
+    /// carries it).
+    pub fn unseen_edits(&self) -> Vec<u32> {
+        let mut v: Vec<u32> = self.edits.iter().map(|e| e.0).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
     }
 
     /// Has the page seen every input sent? When not, a document it sends now may lack what the user

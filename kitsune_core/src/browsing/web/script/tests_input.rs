@@ -86,6 +86,17 @@ fn inputs_are_acknowledged_in_order() {
     assert!(!i.settled(), "an input never sent is not acknowledged");
     i.ack(b);
     assert!(i.settled());
+    // The text the person typed and the page has not seen.
+    let c = i.next_number();
+    i.edited(7, c);
+    let d = i.next_number();
+    i.edited(9, d);
+    i.edited(7, d);
+    assert_eq!(i.unseen_edits(), [7, 9]);
+    i.ack(c);
+    assert_eq!(i.unseen_edits(), [7, 9], "both were typed into after c");
+    i.ack(d);
+    assert!(i.unseen_edits().is_empty());
 }
 
 #[test]
