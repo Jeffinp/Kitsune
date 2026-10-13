@@ -4,6 +4,25 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — Navegador: CPU e congelamentos em páginas reais
+
+O navegador ficava a 100% de CPU "do nada" e congelava o sistema por instantes (no WHPX, um núcleo inteiro do host).
+Medido com `perf-trace` e `callgrind` numa página real (Wikipédia, 2 MB de HTML):
+
+- **Espera de rede sem laço ocupado.** As leituras e escritas TLS, o DNS e o HTTP esperavam dados com `spin_loop`
+  (as placas são por polling): o `fetcher` ficava a 100% o tempo todo em que a rede demorava. Agora, depois de 40
+  polls vazios, a thread de trabalho dorme um tick (4 ms); o compositor e a thread de boot mantêm o laço antigo.
+  Na carga da página o `fetcher` passou de 250 para ~0 amostras de CPU por segundo.
+- **Layout 2,3x mais rápido** (232 → ~100 ms no host, mesma saída byte a byte): o casamento de seletores era ~80% do
+  tempo. O que casa com cada elemento fica em memória durante um layout (o mesmo elemento era estilizado várias
+  vezes pelas medidas de flex/tabela e pelos pseudo-elementos) e um filtro de Bloom do caminho de ancestrais
+  (`css/bloom.rs`) recusa os seletores que pedem um ancestral ausente.
+- **Layouts agrupados.** Folhas de estilo e imagens que chegam pedem um layout (`Relayout`, em `state.rs`) em vez de
+  refazer a página uma a uma: sai quando a última folha chega (o CSS bloqueia a renderização) ou quando a última
+  imagem chega, com um intervalo de alguns vezes o custo do layout anterior (no máximo 5 s) enquanto chega mais.
+- Ferramentas: `render_page` imprime tempos (parse, folhas, layout) e aceita `--real-font`; o cenário `w54-browser-idle.sh`
+  mede a CPU com a página aberta e parada (`PAGE=modern|bigcss|js`, `tools/perf/idle_tail.py`).
+
 ## 2026-10 — JavaScript nas páginas do Navegador (etapa 2, mínima)
 
 - O Navegador roda o JavaScript das páginas: **um processo `jsrun --page` (anel 3) por aba** com scripts, com a sua

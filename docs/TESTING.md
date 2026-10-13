@@ -587,6 +587,12 @@ guest pediu): `w53-shields.sh` (`REQLOG=/tmp/w53-requests.log`; escreve `w53-res
 global). As posições do escudo e da chave são as da janela padrão em BIOS 1280x720 (`SHIELD_X`, `SWITCH_X`... mudam por
 variável de ambiente). Projeto e limites: [`design/tls-browser.md`](design/tls-browser.md) §11.
 
+**CPU do navegador (W54).** `tools/perf/scen/w54-browser-idle.sh` abre uma página de `tools/w24-site.py` (`PAGE=modern`,
+`bigcss` ou `js`), deixa-a parada e depois rola; com um build `--features perf-trace`, `tools/perf/idle_tail.py <saída> 10`
+mostra os quadros por segundo e a linha `cpu samples` de cada segundo do serial deve ficar em `idle=250` com a página
+parada (nenhuma thread ocupada). Para sites reais: `w50-real-site.sh` com `SITES`, `CONTINUE=1` e a mesma leitura.
+Projeto: [`design/tls-browser.md`](design/tls-browser.md) §11b.
+
 ### Compositor (W27): teste diferencial, oráculo no QEMU e custo de quadro
 
 Projeto em [`design/compositor.md`](design/compositor.md). O desktop piscava com várias janelas (sombras

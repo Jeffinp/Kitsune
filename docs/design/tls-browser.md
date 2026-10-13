@@ -531,6 +531,21 @@ chave do balão fica apagada. Esc, clique fora, troca de aba e página nova fech
 | A escolha por site sobrevive a um reinício (`~/.shields`) | `w53-persist-1.sh` e `w53-persist-2.sh` (`FS_IMG` do primeiro) |
 | A chave global de Ajustes abre a página sem filtro | `w53-settings.sh` |
 
+## 11b. CPU e congelamentos
+
+Três causas, medidas com `perf-trace` (`path ...`, `cpu samples` por segundo) e `callgrind` sobre o exemplo `render_page`:
+
+1. **Espera ocupada na rede.** `netstack::Net::pause` (usada por `pump` e pelo `Read`/`Write` do TLS) gira alguns polls
+   e depois dorme um tick de 4 ms com `sched::block` (só em thread de trabalho com interrupções ligadas).
+2. **Custo do layout.** `matched_decls` guarda, por elemento (endereço e tipo de pseudo-elemento), as regras que casam
+   (`Stylesheet::memo`, esvaziado no começo e no fim de cada layout) e `css/bloom.rs` filtra os seletores com
+   ancestrais pelo caminho do elemento (`Stylesheet::path_bloom`).
+3. **Número de layouts.** `Relayout` (`browser/state.rs`) junta as chegadas de folhas e imagens; `Desktop::browser_flush_layout`
+   (chamado por `bringup::pump_browser`) decide quando.
+
+Reproduzir: `tools/fetch-page-css.py URL /tmp/p` e `cargo run --release -p kitsune_core --example render_page -- /tmp/p/page.html 960 100 --real-font --css /tmp/p/css-*.css`
+(os tempos saem no stderr); no QEMU, `tools/perf/scen/w54-browser-idle.sh` com um build `--features perf-trace`.
+
 ## 12. JavaScript nas páginas
 
 Etapas 1 e 2 do item 11 do [`ROADMAP`](../ROADMAP.md). O motor é o **QuickJS** (C, nativo, num processo de anel 3:
