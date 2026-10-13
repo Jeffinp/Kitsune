@@ -346,6 +346,19 @@ impl MediaSet {
                 p.last_time_ms = now;
                 let t = p.player.position();
                 p.post(proto::msg(proto::IN_TIME, &[Field::I64(t)]));
+                // While it is supposed to play, how it goes (once a second).
+                if !p.player.state().paused {
+                    let sink = p.sink().map_or((0, 0), |s| (s.queued(), s.played()));
+                    crate::klog!(
+                        Info,
+                        "media: element {} {} sink q={} played={} backlog={}",
+                        p.uid,
+                        p.player.describe(),
+                        sink.0,
+                        sink.1,
+                        p.backlog.len()
+                    );
+                }
             }
             // The picture size: the element's box, the video's shape kept.
             if let Some(b) = page.and_then(|pg| pg.videos.iter().find(|v| v.uid == p.uid)) {

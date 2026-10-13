@@ -3,6 +3,9 @@
 
 use super::*;
 
+/// How far the decoded sound may run ahead of the decoded pictures.
+const AUDIO_LEAD_NS: i64 = 1_500_000_000;
+
 impl Server {
     /// The next video frame to decode (its index and time), if the budget allows it.
     fn next_video(&self) -> Option<(usize, i64)> {
@@ -59,7 +62,9 @@ impl Server {
         }
         match (self.next_video(), self.next_audio()) {
             (Some((i, vt)), Some((j, at))) => {
-                if at <= vt {
+                // The sound first, up to a lead over the pictures: it is cheap and it is the
+                // player's clock (a slow picture is dropped, a missing sound stops everything).
+                if at <= vt.saturating_add(AUDIO_LEAD_NS) {
                     self.decode_audio(j)
                 } else {
                     self.decode_video(i)

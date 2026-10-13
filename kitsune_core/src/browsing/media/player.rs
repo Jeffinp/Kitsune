@@ -474,4 +474,28 @@ impl<F> Player<F> {
     pub fn state(&self) -> &State {
         &self.st
     }
+
+    /// The inside of the player in one line, for the log: position, ready state, flags, what is
+    /// queued (pictures, sound waiting here) and held for the budget.
+    pub fn describe(&self) -> alloc::string::String {
+        let s = &self.st;
+        alloc::format!(
+            "t={}ms rs={} {}{}{}{}{}{} frames={} held={}K/{}K pcm={} shown={}ms end v{} a{}",
+            self.position / 1_000_000,
+            s.ready,
+            if s.paused { "P" } else { "p" },
+            if s.waiting { "W" } else { "w" },
+            if s.seeking.is_some() { "S" } else { "s" },
+            if s.eos { "E" } else { "e" },
+            if s.drained { "D" } else { "d" },
+            if s.current() { "C" } else { "c" },
+            self.frames.len(),
+            self.held_video / 1024,
+            self.held_audio / 1024,
+            self.pcm.len(),
+            self.shown_pts().unwrap_or(-1_000_000) / 1_000_000,
+            self.video_end / 1_000_000,
+            self.audio_end / 1_000_000,
+        )
+    }
 }

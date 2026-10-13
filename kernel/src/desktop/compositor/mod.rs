@@ -140,9 +140,22 @@ impl Compositor {
             true
         };
         let reference = desk.reference_mode() && (any_anim || i.input || i.clock_tick);
-        let due = i.input || hover || tick || settle || i.clock_tick || i.client.is_some();
+        // `extra_dirty` alone: a region that changed by itself (a video's picture).
+        let due = i.input
+            || hover
+            || tick
+            || settle
+            || i.clock_tick
+            || i.client.is_some()
+            || i.extra_dirty.is_some();
         // (`settle` is the frame after an animation: it needs the cursor passes too.)
-        let work = tick || i.input || i.client.is_some() || i.clock_tick || cursor_moved || settle;
+        let work = tick
+            || i.input
+            || i.client.is_some()
+            || i.clock_tick
+            || cursor_moved
+            || settle
+            || i.extra_dirty.is_some();
         let frame_start = crate::io::rdtsc();
         let cpu_start = trace::cpu_now();
 

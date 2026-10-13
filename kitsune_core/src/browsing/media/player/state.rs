@@ -287,6 +287,10 @@ impl State {
             HAVE_METADATA
         } else if enough {
             HAVE_ENOUGH_DATA
+        } else if self.ready >= HAVE_FUTURE_DATA && !dry {
+            // Less ahead than "enough", but not run dry: playing goes on (no flapping between
+            // `canplay` and nothing while the decoder keeps up just in time).
+            HAVE_FUTURE_DATA
         } else {
             HAVE_CURRENT_DATA
         };

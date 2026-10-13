@@ -45,7 +45,7 @@ wait_for "media-test: DONE" 60
 sleep 1
 shot v4-done
 # The controls: the play button at the left of the bar (VIDEO_PLAY_X/Y: the screen point).
-goto "${VIDEO_PLAY_X:-48}" "${VIDEO_PLAY_Y:-560}"; click
+goto "${VIDEO_PLAY_X:-187}" "${VIDEO_PLAY_Y:-563}"; click
 wait_n "media-test: play " 3 30
 sleep 1.2; snap v5-controls
 wait_n "media-test: ended" 3 30

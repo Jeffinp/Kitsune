@@ -115,6 +115,7 @@ impl Desktop {
         super::jsnet::save_cookies();
         let mut redraw = false;
         let mut media_relayout = false;
+        let mut media_redraw = false;
         let mut actions: Vec<(u32, JsAction)> = Vec::new();
         let mut title: Option<String> = None;
         let BrowserState { tabs, images, .. } = &mut *b;
@@ -164,7 +165,7 @@ impl Desktop {
             if !js.media.players.is_empty() {
                 let m = js.media.pump(js.pid, t.page.as_ref(), t.doc.as_mut());
                 if t.id == active_id {
-                    redraw |= m.redraw;
+                    media_redraw |= m.redraw;
                     media_relayout |= m.relayout;
                 }
             }
@@ -209,8 +210,26 @@ impl Desktop {
                 }
             }
         }
+        // A new picture only: just the video boxes are painted again (and uploaded).
+        let mut video_rects: Vec<Rect> = Vec::new();
+        if media_redraw && !redraw {
+            let t = b.tabs.active();
+            if let Some(p) = &t.page {
+                video_rects = p
+                    .videos
+                    .iter()
+                    .filter_map(|v| {
+                        Rect::new(content.x + v.x, content.y - t.scroll + v.y, v.w, v.h)
+                            .intersection(&content)
+                    })
+                    .collect();
+            }
+        }
         if redraw {
             b.touch();
+        }
+        for r in video_rects {
+            self.mark_dirty(r);
         }
         if let Some(tt) = title {
             self.browser_set_title(id, tt);

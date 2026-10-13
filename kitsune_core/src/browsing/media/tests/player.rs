@@ -171,6 +171,29 @@ fn the_picture_follows_the_sound_clock() {
 }
 
 #[test]
+fn a_thin_buffer_that_keeps_up_does_not_flap() {
+    let mut p: Player<u32> = Player::new(Flow::default(), true);
+    let mut s = Sink::new();
+    p.header(header(true, true));
+    feed(&mut p, 0, 600);
+    p.play();
+    p.step(0, Some(&mut s));
+    p.take_events();
+    // Play on with only a little ahead each time (less than "enough", never dry).
+    for k in 0..20 {
+        s.run(960);
+        feed(&mut p, 600 + k * 20, 20);
+        p.step(10 + k as u64, Some(&mut s));
+    }
+    let ev = names(&mut p);
+    assert!(
+        !ev.contains(&"canplay") && !ev.contains(&"waiting"),
+        "{ev:?}"
+    );
+    assert!(p.state().ready >= HAVE_FUTURE_DATA);
+}
+
+#[test]
 fn pause_stops_the_clock_and_play_resumes() {
     let mut p: Player<u32> = Player::new(Flow::default(), true);
     let mut s = Sink::new();
