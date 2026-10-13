@@ -19,7 +19,9 @@ Etapas 2 (rede) e 3 do item 11 do ROADMAP; detalhes em `docs/design/tls-browser.
 - **Conexões persistentes**: 4 sockets TCP de 64 KiB de janela (antes 1 de 8 KiB) com a sessão TLS guardada por
   host:porta, 15 s ociosas, refeitas uma vez se o servidor fechou; `Transfer-Encoding: chunked`/`Content-Length`
   respeitados (`kitsune_core::http1`). Medido no QEMU: 3 conexões para 25 pedidos na página `/net`; 1 handshake para
-  3 pedidos https; 8 MiB a ~29 MB/s em http e ~8 MB/s em https (AES-GCM em software) com virtio-net.
+  3 pedidos https; 8 MiB a ~29 MB/s em http e ~8 MB/s em https (AES-GCM em software) com virtio-net, ~7 e 3-5 MB/s
+  com a NE2000 (janela TCP de 10 KiB nela: com 64 KiB o anel da placa transbordava e o primeiro download grande de
+  uma conexão caía para 0,9 MB/s).
 - **Cookies** (`kitsune_core::cookies`): `Set-Cookie` completo, `Cookie` em toda navegação e subrecurso,
   `document.cookie` sem `HttpOnly`, limites, cookies de terceiros bloqueados com o escudo ligado e persistência em
   `~/.cookies`.

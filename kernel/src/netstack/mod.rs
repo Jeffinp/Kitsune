@@ -97,6 +97,9 @@ impl TxToken for Tx<'_> {
 
 // ---- the stack ----
 
+/// TCP receive window with the NE2000 (its receive ring is 58 pages of 256 bytes, ~9 full frames).
+const NE2000_WINDOW: usize = 10 * 1024;
+
 /// Empty polls in a row before a waiting worker thread sleeps (see `Net::pause`).
 const QUIET_SPINS: u32 = 40;
 
@@ -148,11 +151,18 @@ impl Net {
         );
 
         let mut sockets = SocketSet::new(vec![]);
-        // A 64 KiB receive window per connection: a whole TLS record plus room, so a fast server is
-        // not held back by acknowledgements (8 KiB made a download wait a round trip every 8 KiB).
+        // The receive window: 64 KiB on virtio-net (a whole TLS record plus room, so a fast server is
+        // not held back by acknowledgements). The NE2000 holds only ~14 KiB of frames in its ring
+        // and is polled: a 64 KiB burst overflows it, every lost segment costs a retransmission
+        // timeout and the first large download of a connection crawled (0.9 MB/s); a window that
+        // fits the ring avoids the losses.
+        let window = match device.port.kind() {
+            kitsune_core::netstats::NicKind::Ne2000 => NE2000_WINDOW,
+            _ => 64 * 1024,
+        };
         let tcp = core::array::from_fn(|_| {
             sockets.add(tcp::Socket::new(
-                tcp::SocketBuffer::new(vec![0u8; 64 * 1024]),
+                tcp::SocketBuffer::new(vec![0u8; window]),
                 tcp::SocketBuffer::new(vec![0u8; 16 * 1024]),
             ))
         });

@@ -766,11 +766,16 @@ Página `/net/speed` (dois downloads de 8 MiB lidos com `getReader`, na mesma co
 | Placa | http | https (TLS 1.3, AES-128-GCM em software) | handshake |
 |---|---|---|---|
 | `virtio-net-pci` | 26,0 e 29,0 MB/s | 8,2 e 6,7 MB/s | 3,9 s |
-| `ne2k_isa` (padrão do `run.sh`) | 7,6 MB/s (8 MiB `arrayBuffer` no `/net`) | 3,6 e 2,2 MB/s | 4,2 s |
+| `ne2k_isa` (padrão do `run.sh`) | 7,3 e 6,2 MB/s | 3,2 e 4,8 MB/s | 4,2 s |
 
 Com a virtio a diferença http/https é a cifra: AES e GHASH em software (o kernel é compilado sem SSE, então nem
 AES-NI nem os caminhos SIMD do RustCrypto servem; ver `.cargo/config.toml`). Ficou ~8 MB/s, o suficiente para um
 segmento de vídeo de 10 MiB em pouco mais de 1 s; na NE2000 a placa (PIO) divide a CPU com a cifra.
+
+Um achado da medida: com a janela TCP de 64 KiB a NE2000 perdia quadros (o anel de recepção dela guarda ~14 KiB e a
+placa é lida por polling), cada perda custava um tempo de retransmissão e o **primeiro** download grande de uma conexão
+saía a 0,9 MB/s (4 MiB em 4,7 s; o seguinte, já com a janela de congestionamento do servidor reduzida, a 7 MB/s). Com
+a NE2000 a janela agora é de 10 KiB (`NE2000_WINDOW`): o mesmo stream de 4 MiB passou a 7,0 MB/s.
 
 Handshakes: na página `/net` (23 pedidos do script, mais a página e o script) o servidor viu **3 conexões** (uma para a
 página e outra para a segunda origem, e uma refeita depois do pedido abortado); na `/net/speed` em https, **1
