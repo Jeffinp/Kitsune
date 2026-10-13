@@ -21,7 +21,8 @@
 use super::Rgb;
 use super::css::{MAX_RULES, Stylesheet, parse_css};
 use super::dom::{
-    Element, Node, decode_attr, fold_display, is_html_space, parse_html, text_content,
+    Element, Node, ScriptRef, decode_attr, fold_display, is_html_space, number_elements,
+    parse_html_full, text_content,
 };
 use super::form::{FieldInfo, FieldKind, FormInfo};
 use super::imgcache::{ImageLookup, ImgState, NoImages};
@@ -179,24 +180,42 @@ pub const MAX_CMDS: usize = 150_000;
 pub const MAX_WORD_CHARS: usize = 4096;
 /// Budget of ancestor steps the selector matching of one layout may take.
 const STYLE_BUDGET: u32 = 4_000_000;
-/// The box of one run of link text and the link it belongs to.
+/// The box of one run of link text and the link it belongs to; with node boxes on (a page with
+/// scripts, [`Doc::set_track`]) also the box of every text run, object and block, and the element
+/// it belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkHit {
     pub x: i32,
     pub y: i32,
     pub w: i32,
     pub h: i32,
-    /// Index into [`Page::links`].
+    /// Index into [`Page::links`], or [`NO_LINK`] for the box of an element that is not link text.
     pub link: usize,
+    /// [`Element::uid`] of the innermost element the box belongs to (0 = unknown).
+    pub node: u32,
 }
+/// [`LinkHit::link`] of a box that is not link text.
+pub const NO_LINK: usize = usize::MAX;
+/// Most boxes recorded per page (links and element boxes together).
+pub const MAX_HITS: usize = 120_000;
 impl Page {
     /// Index into [`Page::links`] of the link under page coordinates `(x, y)`, if any.
     pub fn link_index_at(&self, x: i32, y: i32) -> Option<usize> {
         self.hits
             .iter()
             .rev()
-            .find(|h| x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h)
+            .find(|h| h.link != NO_LINK && x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h)
             .map(|h| h.link)
+    }
+
+    /// The element under page coordinates `(x, y)`: the [`Element::uid`] of the smallest box there
+    /// (the innermost element, as boxes nest). Only pages laid out with node boxes have them.
+    pub fn node_at(&self, x: i32, y: i32) -> Option<u32> {
+        self.hits
+            .iter()
+            .filter(|h| h.node != 0 && x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h)
+            .min_by_key(|h| i64::from(h.w) * i64::from(h.h))
+            .map(|h| h.node)
     }
 
     /// The `href` of the link under page coordinates `(x, y)`, if any.

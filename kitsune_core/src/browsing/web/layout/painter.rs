@@ -17,6 +17,8 @@ pub(crate) struct Style {
     pub(crate) deco: u8,
     pub(crate) bg: Option<Rgb>,
     pub(crate) link: Option<usize>,
+    /// The element the run belongs to ([`Element::uid`]).
+    pub(crate) node: u32,
     /// Line-height of the run in pixels.
     pub(crate) lh: i32,
     /// Pixels the run is raised above the baseline (negative: lowered).
@@ -130,6 +132,12 @@ pub(crate) struct Painter<'a> {
     pub(crate) floats: Vec<FloatBox>,
     /// The page has no doctype: tables do not inherit `text-align` from their surroundings.
     pub(crate) quirks: bool,
+    /// The innermost element being laid out ([`Element::uid`]), and whether every box records it
+    /// (`Doc::set_track`).
+    pub(crate) node: u32,
+    pub(crate) track: bool,
+    /// The form of the controls outside any `<form>` (pages with scripts only).
+    pub(crate) formless: Option<usize>,
 }
 
 impl Painter<'_> {
@@ -199,8 +207,32 @@ impl Painter<'_> {
             // Only an inline element paints a background behind its words; a block paints its own box.
             bg: c.bg.filter(|_| c.display == Disp::Inline),
             link: self.link,
+            node: self.node,
             lh: self.lh(c, font),
             shift: i32::from(c.vshift) * (i32::from(font.size) * 2 / 5).max(1),
+        }
+    }
+
+    /// Record the box of a run, an object or a block: a link's always, any element's when node boxes
+    /// are on.
+    pub(crate) fn push_hit(
+        &mut self,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        link: Option<usize>,
+        node: u32,
+    ) {
+        if (link.is_some() || (self.track && node != 0)) && self.hits.len() < MAX_HITS {
+            self.hits.push(LinkHit {
+                x,
+                y,
+                w,
+                h,
+                link: link.unwrap_or(NO_LINK),
+                node,
+            });
         }
     }
 

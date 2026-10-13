@@ -159,8 +159,21 @@ fn pseudo_clears<'a>(p: &mut Painter<'a>, el: &'a Element, c: &Computed) -> bool
         .any(|d| d.name == "clear" && !d.value.trim().eq_ignore_ascii_case("none"))
 }
 /// An inline element: special ones (`br`, `img`, controls), otherwise its
-/// children join the inline run.
+/// children join the inline run. What it lays out belongs to it (`p.node`).
 pub(super) fn inline_element<'a>(
+    p: &mut Painter<'a>,
+    el: &'a Element,
+    c: &Computed,
+    area: Area,
+    y: i32,
+) -> i32 {
+    let outer = core::mem::replace(&mut p.node, el.uid);
+    let y = inline_element_in(p, el, c, area, y);
+    p.node = outer;
+    y
+}
+
+fn inline_element_in<'a>(
     p: &mut Painter<'a>,
     el: &'a Element,
     c: &Computed,

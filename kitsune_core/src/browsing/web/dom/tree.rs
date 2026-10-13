@@ -20,6 +20,47 @@ pub struct Element {
     pub ws_before: bool,
     /// Where it stands among its siblings (for `:first-child`, `:nth-child()` and the like).
     pub sib: Sib,
+    /// Identity of the element for the page's scripts (see [`number_elements`]); 0 = none.
+    pub uid: u32,
+}
+
+/// A `<script>` of the document, in document order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptRef {
+    /// `src` as written (entities decoded), `None` for an inline script.
+    pub src: Option<String>,
+    /// The text of an inline script (empty for an external one).
+    pub text: String,
+}
+
+/// The attribute that carries an element's [`Element::uid`] in the HTML the script process sends
+/// back (it is taken out of the attributes when read).
+pub const UID_ATTR: &str = "data-kjs";
+
+/// Give every element below `nodes` its [`Element::uid`]. A document from the network numbers its
+/// elements in document order from `*next` (`from_attr` false); one rebuilt from what the script
+/// process sent reads the number from [`UID_ATTR`] and drops the attribute (`from_attr` true;
+/// elements without it get 0).
+pub(crate) fn number_elements(nodes: &mut [Node], next: &mut u32, from_attr: bool, depth: usize) {
+    if depth > MAX_DEPTH + 4 {
+        return;
+    }
+    for n in nodes.iter_mut() {
+        if let Node::Element(e) = n {
+            e.uid = if from_attr {
+                e.attrs
+                    .remove(UID_ATTR)
+                    .and_then(|v| v.trim().parse::<u32>().ok())
+                    .unwrap_or(0)
+            } else {
+                let id = *next;
+                *next = next.saturating_add(1);
+                id
+            };
+            *next = (*next).max(e.uid.saturating_add(1));
+            number_elements(&mut e.children, next, from_attr, depth + 1);
+        }
+    }
 }
 
 /// Position of an element among the element children of its parent, 1-based.

@@ -228,15 +228,7 @@ pub(super) fn emit_obj(p: &mut Painter, obj: &Obj, x: i32, y: i32, w: i32, h: i3
                 }),
                 other => paint_missing(p, x, y, w, h, alt, *other),
             }
-            if let Some(l) = st.link {
-                p.hits.push(LinkHit {
-                    x,
-                    y,
-                    w,
-                    h,
-                    link: l,
-                });
-            }
+            p.push_hit(x, y, w, h, st.link, st.node);
         }
         Obj::Field {
             form, field, kind, ..
@@ -260,6 +252,7 @@ pub(super) fn emit_obj(p: &mut Painter, obj: &Obj, x: i32, y: i32, w: i32, h: i3
                 line_h: p.nat(f),
                 pad_y: p.z(8),
             });
+            p.push_hit(x, y, w, h, None, st.node);
         }
     }
 }

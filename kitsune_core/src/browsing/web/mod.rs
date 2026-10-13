@@ -7,7 +7,7 @@
 //!
 //! Scope is deliberately small: it renders simple, mostly-static HTML/CSS
 //! correctly and degrades real-world pages to a readable single column. It is
-//! NOT a standards browser -- no flexbox/grid/float/JS.
+//! NOT a standards browser. Scripts run outside it, in a ring 3 process (see [`script`]).
 
 mod css;
 mod dom;
@@ -18,6 +18,7 @@ mod layout;
 #[cfg(test)]
 mod layout_tests;
 pub mod metrics;
+pub mod script;
 pub mod sheets;
 mod style;
 #[cfg(test)]
@@ -25,7 +26,9 @@ mod tests_img_form;
 pub mod textops;
 
 pub use css::{Decl, MAX_RULES, MAX_SELECTORS, Rule, Selector, Specificity, Stylesheet, parse_css};
-pub use dom::{Element, MAX_DEPTH, MAX_NODES, Node, parse_html};
+pub use dom::{
+    Element, MAX_DEPTH, MAX_NODES, Node, Parsed, ScriptRef, UID_ATTR, parse_html, parse_html_full,
+};
 
 /// Text made fit for one line of display: whitespace and controls collapse to one space and
 /// characters that could spoof or break the text (bidirectional overrides, zero-width joiners)
@@ -34,9 +37,9 @@ pub fn fold_for_display(s: &str) -> alloc::string::String {
     dom::fold_display(s)
 }
 pub use layout::{
-    Cmd, DECO_STRIKE, DECO_UNDERLINE, Doc, FieldBox, ImgRef, Layout, LinkHit, MAX_CMDS, MAX_IMAGES,
-    MAX_LINKS, MAX_TEXT_CHARS, MAX_WORD_CHARS, MAX_ZOOM, MIN_ZOOM, Page, ZOOM_STEPS, render,
-    render_with, zoom_in, zoom_out,
+    Cmd, DECO_STRIKE, DECO_UNDERLINE, Doc, FieldBox, ImgRef, Layout, LinkHit, MAX_CMDS, MAX_HITS,
+    MAX_IMAGES, MAX_LINKS, MAX_TEXT_CHARS, MAX_WORD_CHARS, MAX_ZOOM, MIN_ZOOM, NO_LINK, Page,
+    ZOOM_STEPS, render, render_with, zoom_in, zoom_out,
 };
 pub use metrics::{FixedAdvance, Font, TextMetrics};
 

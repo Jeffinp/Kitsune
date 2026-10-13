@@ -22,7 +22,22 @@ pub(crate) fn layout_block<'a>(
 
 /// [`layout_block`], optionally in a box of exactly `fixed = (x, border-box width)`
 /// (a table cell: no margins, the width is the column's).
+/// What it lays out belongs to `el` (`p.node`).
 pub(crate) fn layout_block_in<'a>(
+    p: &mut Painter<'a>,
+    el: &'a Element,
+    c: &Computed,
+    area: Area,
+    y: i32,
+    fixed: Option<(i32, i32)>,
+) -> i32 {
+    let outer = core::mem::replace(&mut p.node, el.uid);
+    let y = block_box(p, el, c, area, y, fixed);
+    p.node = outer;
+    y
+}
+
+fn block_box<'a>(
     p: &mut Painter<'a>,
     el: &'a Element,
     c: &Computed,
@@ -266,6 +281,7 @@ pub(crate) fn layout_block_in<'a>(
         y = y.max(top + p.z(c.min_height));
     }
     let height = (y - top).max(0);
+    p.push_hit(bx, top, bw, height, None, el.uid);
 
     // Background behind the content, border on top of it.
     p.last_box = (None, None);

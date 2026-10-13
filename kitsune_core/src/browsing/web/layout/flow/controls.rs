@@ -84,8 +84,21 @@ pub(crate) fn collect_control(p: &mut Painter, el: &Element, c: &Computed) -> bo
             _ => return true,
         }
     };
-    let Some(form) = p.cur_form else {
-        return true; // a control outside any <form> has nowhere to go
+    let form = match (p.cur_form, p.formless) {
+        (Some(f), _) | (None, Some(f)) => f,
+        // Outside any form a control is drawn only on a page with scripts (they can make it do
+        // something); it joins a form of its own that is never submitted.
+        (None, None) if p.track && p.forms.len() < crate::browsing::web::form::MAX_FORMS => {
+            p.forms.push(FormInfo::formless());
+            p.formless = Some(p.forms.len() - 1);
+            p.forms.len() - 1
+        }
+        _ => return true, // a control outside any <form> has nowhere to go
+    };
+    let kind = if p.cur_form.is_none() && kind == FieldKind::Submit {
+        FieldKind::PushButton
+    } else {
+        kind
     };
     let f = &mut p.forms[form];
     if f.fields.len() >= crate::browsing::web::form::MAX_FIELDS {

@@ -13,60 +13,80 @@ pub struct Doc {
     pub(crate) ua_rules: usize,
     pub(crate) ext_rules: usize,
     pub(crate) quirks: bool,
+    /// The classic scripts of the document, in order (see [`super::super::script`]).
+    pub(crate) scripts: Vec<ScriptRef>,
+    /// The page's own `<style>` text and the text of each external sheet added, so the sheet can be
+    /// built again when a script changes the `<style>` elements.
+    pub(crate) own_css: String,
+    pub(crate) ext_css: Vec<String>,
+    /// Every box records its element ([`Doc::set_track`]).
+    pub(crate) track: bool,
+}
+
+/// Wrap a tree in `html` and `body` when it lacks them.
+fn rooted(mut dom: Vec<Node>) -> Vec<Node> {
+    // Every document has a root element and a body: fragments get them, so `:root` rules, the
+    // user-agent margins and the page's own `body { ... }` rules apply to them too.
+    let one = |i: u16| crate::browsing::web::dom::Sib {
+        index: i,
+        count: 1,
+        tindex: 1,
+        tcount: 1,
+    };
+    let wrap = |tag: &str, children: Vec<Node>| {
+        Node::Element(Element {
+            tag: String::from(tag),
+            attrs: Default::default(),
+            children,
+            ws_before: false,
+            sib: one(1),
+            uid: 0,
+        })
+    };
+    if !has_root(&dom) {
+        dom = alloc::vec![wrap("html", dom)];
+    }
+    if !has_body(&dom, 0)
+        && let Some(Node::Element(root)) = dom
+            .iter_mut()
+            .find(|n| matches!(n, Node::Element(e) if e.tag == "html"))
+    {
+        let inner = core::mem::take(&mut root.children);
+        root.children = alloc::vec![wrap("body", inner)];
+    }
+    dom
+}
+
+/// The user-agent sheet followed by the page's own `css`; returns it and how many rules are the
+/// user agent's.
+fn base_sheet(css: &str) -> (Stylesheet, usize) {
+    let mut sheet = parse_css(UA_CSS);
+    for r in &mut sheet.rules {
+        r.author = false;
+    }
+    let ua_rules = sheet.rules.len();
+    let own = parse_css(css);
+    let base = sheet.medias.len();
+    sheet.medias.extend(own.medias);
+    sheet.imports = own.imports;
+    sheet.has_pseudo |= own.has_pseudo;
+    sheet.rules.extend(own.rules.into_iter().map(|mut r| {
+        if r.media != 0 {
+            r.media += base as u16;
+        }
+        r
+    }));
+    sheet.build_index();
+    (sheet, ua_rules)
 }
 
 impl Doc {
-    /// Parse `html` (tolerant of any input, see [`parse_html`]).
+    /// Parse `html` (tolerant of any input, see [`super::super::parse_html`]).
     pub fn parse(html: &[u8]) -> Doc {
-        let (mut dom, css) = parse_html(html);
-        // Every document has a root element and a body: fragments get them, so `:root` rules, the
-        // user-agent margins and the page's own `body { ... }` rules apply to them too.
-        let one = |i: u16| crate::browsing::web::dom::Sib {
-            index: i,
-            count: 1,
-            tindex: 1,
-            tcount: 1,
-        };
-        if !has_root(&dom) {
-            dom = alloc::vec![Node::Element(Element {
-                tag: String::from("html"),
-                attrs: Default::default(),
-                children: dom,
-                ws_before: false,
-                sib: one(1),
-            })];
-        }
-        if !has_body(&dom, 0)
-            && let Some(Node::Element(root)) = dom
-                .iter_mut()
-                .find(|n| matches!(n, Node::Element(e) if e.tag == "html"))
-        {
-            let inner = core::mem::take(&mut root.children);
-            root.children = alloc::vec![Node::Element(Element {
-                tag: String::from("body"),
-                attrs: Default::default(),
-                children: inner,
-                ws_before: false,
-                sib: one(1),
-            })];
-        }
-        let mut sheet = parse_css(UA_CSS);
-        for r in &mut sheet.rules {
-            r.author = false;
-        }
-        let ua_rules = sheet.rules.len();
-        let own = parse_css(&css);
-        let base = sheet.medias.len();
-        sheet.medias.extend(own.medias);
-        sheet.imports = own.imports;
-        sheet.has_pseudo |= own.has_pseudo;
-        sheet.rules.extend(own.rules.into_iter().map(|mut r| {
-            if r.media != 0 {
-                r.media += base as u16;
-            }
-            r
-        }));
-        sheet.build_index();
+        let parsed = parse_html_full(html);
+        let mut dom = rooted(parsed.nodes);
+        number_elements(&mut dom, &mut 1, false, 0);
+        let (sheet, ua_rules) = base_sheet(&parsed.css);
         let title = find_title(&dom, 0)
             .map(|t| fold_display(&t))
             .unwrap_or_default();
@@ -80,7 +100,51 @@ impl Doc {
                 .to_ascii_lowercase()
                 .windows(9)
                 .any(|w| w == b"<!doctype"),
+            scripts: parsed.scripts,
+            own_css: parsed.css,
+            ext_css: Vec::new(),
+            track: false,
         }
+    }
+
+    /// The classic scripts of the document, in document order.
+    pub fn scripts(&self) -> &[ScriptRef] {
+        &self.scripts
+    }
+
+    /// Record which element every box belongs to (for a page whose scripts listen to clicks, see
+    /// [`Page::node_at`]); off by default, it costs a box per run of text.
+    pub fn set_track(&mut self, on: bool) {
+        self.track = on;
+    }
+
+    /// The document was rendered without a doctype.
+    pub fn quirks(&self) -> bool {
+        self.quirks
+    }
+
+    /// Take the document the page's script process sent (`html`, every element carrying its id in
+    /// [`super::super::UID_ATTR`]) in place of this one. The external sheets stay; the page's own `<style>` text is
+    /// read again (the sheet is rebuilt only when it changed). Scripts in it are not run again.
+    pub fn replace_from_script(&mut self, html: &[u8]) {
+        let parsed = parse_html_full(html);
+        let mut dom = rooted(parsed.nodes);
+        number_elements(&mut dom, &mut 1, true, 0);
+        if parsed.css != self.own_css {
+            let (sheet, ua_rules) = base_sheet(&parsed.css);
+            self.sheet = sheet;
+            self.ua_rules = ua_rules;
+            self.ext_rules = 0;
+            let ext = core::mem::take(&mut self.ext_css);
+            for css in &ext {
+                self.add_sheet(css);
+            }
+            self.own_css = parsed.css;
+        }
+        self.title = find_title(&dom, 0)
+            .map(|t| fold_display(&t))
+            .unwrap_or_default();
+        self.dom = dom;
     }
 
     /// Addresses of the style sheets the document asks for, in order: `<link rel=stylesheet href>`
@@ -130,6 +194,7 @@ impl Doc {
     /// `<style>` rules and after the external sheets added earlier. Returns the sheet's `@import`s.
     pub fn add_sheet(&mut self, css: &str) -> Vec<String> {
         let new = parse_css(css);
+        self.ext_css.push(String::from(css));
         let base = self.sheet.medias.len();
         let room = MAX_RULES.saturating_sub(self.sheet.rules.len());
         self.sheet.medias.extend(new.medias);
@@ -194,6 +259,9 @@ impl Doc {
             last_box: (None, None),
             floats: Vec::new(),
             quirks: self.quirks,
+            node: 0,
+            track: self.track,
+            formless: None,
         };
         let area = Area {
             x: 0,
