@@ -28,8 +28,11 @@ mod stats;
 pub(crate) const MAX_PLAYERS: usize = 2;
 /// Messages taken from one decoder per loop (the budget bounds what can be waiting anyway).
 const MAX_TAKE: usize = 48;
-/// How often the decoder hears the playback position (what it may forget behind it).
-const TIME_EVERY_MS: u64 = 1000;
+/// How often the decoder hears the playback position (what it may forget behind it, and which
+/// pictures are already late).
+const TIME_EVERY_MS: u64 = 250;
+/// How often the log hears how a playing player goes.
+const LOG_EVERY_MS: u64 = 1000;
 /// The budget of a player: pictures (a few frames of a 720p box) and sound (~2.7 s).
 const FLOW: Flow = Flow {
     video: 8 << 20,
@@ -61,6 +64,9 @@ pub(crate) struct MediaPlayer {
     /// Playback started once: the poster gives way to the picture.
     pub started: bool,
     last_time_ms: u64,
+    last_log_ms: u64,
+    /// The clock ran when the decoder last heard it.
+    told_running: bool,
     /// Bytes for the decoder that did not fit in its queue yet.
     backlog: VecDeque<Vec<u8>>,
     /// Where the current stretch of playback began (for the log).
@@ -274,6 +280,8 @@ impl MediaSet {
             size: (0, 0),
             started: false,
             last_time_ms: 0,
+            last_log_ms: 0,
+            told_running: false,
             backlog: VecDeque::new(),
             mark: None,
         };
@@ -342,10 +350,18 @@ impl MediaSet {
             if v > 0 || a > 0 {
                 p.post(proto::msg(proto::IN_ACK, &[Field::U32(v), Field::U32(a)]));
             }
-            if now.saturating_sub(p.last_time_ms) >= TIME_EVERY_MS {
+            let running = p.player.state().running();
+            if now.saturating_sub(p.last_time_ms) >= TIME_EVERY_MS || running != p.told_running {
                 p.last_time_ms = now;
+                p.told_running = running;
                 let t = p.player.position();
-                p.post(proto::msg(proto::IN_TIME, &[Field::I64(t)]));
+                p.post(proto::msg(
+                    proto::IN_TIME,
+                    &[Field::I64(t), Field::U8(u8::from(running))],
+                ));
+            }
+            if now.saturating_sub(p.last_log_ms) >= LOG_EVERY_MS {
+                p.last_log_ms = now;
                 // While it is supposed to play, how it goes (once a second).
                 if !p.player.state().paused {
                     let sink = p.sink().map_or((0, 0), |s| (s.queued(), s.played()));
@@ -367,7 +383,11 @@ impl MediaSet {
                     p.size = want;
                     p.post(proto::msg(
                         proto::IN_SIZE,
-                        &[Field::U32(want.0), Field::U32(want.1)],
+                        &[
+                            Field::U32(want.0),
+                            Field::U32(want.1),
+                            Field::U32(u32::from(paint::fb_bgr())),
+                        ],
                     ));
                 }
             }

@@ -321,7 +321,7 @@ impl<F> Player<F> {
         let ahead = self.audio_ahead(sink.as_deref());
         self.sync_clock(sound, now_ms, played);
         let t = self.clock.now(now_ms, played);
-        let changed = self.pick(t, self.st.running());
+        let changed = self.pick(t);
         if self.st.seeking.is_none() {
             self.position = t;
         }
@@ -362,8 +362,9 @@ impl<F> Player<F> {
         frames_ns(waiting + queued + self.silence)
     }
 
-    /// Show the picture whose time has come. Returns whether the picture changed.
-    fn pick(&mut self, t: i64, running: bool) -> bool {
+    /// Show the picture whose time has come (also while waiting: pictures the clock already passed
+    /// go, so the decoder's budget is not held by them). Returns whether the picture changed.
+    fn pick(&mut self, t: i64) -> bool {
         let mut changed = false;
         if self.show_next
             && self.st.marked()
@@ -374,7 +375,7 @@ impl<F> Player<F> {
             self.show_next = false;
             changed = true;
         }
-        if !running {
+        if self.st.seeking.is_some() || !self.st.marked() {
             return changed;
         }
         while self.frames.front().is_some_and(|q| q.pts <= t) {

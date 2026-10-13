@@ -5,6 +5,8 @@ use super::*;
 
 /// How far the decoded sound may run ahead of the decoded pictures.
 const AUDIO_LEAD_NS: i64 = 1_500_000_000;
+/// A picture that ends this long before the player's clock is not converted nor sent.
+const LATE_NS: i64 = 40_000_000;
 
 impl Server {
     /// The next video frame to decode (its index and time), if the budget allows it.
@@ -55,8 +57,8 @@ impl Server {
             && (self.next_video().is_some() || self.next_audio().is_some() || self.drain_due())
     }
 
-    /// Decode one frame (or tell the player the stream is drained).
-    pub(super) fn work(&mut self) {
+    /// Decode one frame (or tell the player the stream is drained); `now_ms` is the link's clock.
+    pub(super) fn work(&mut self, now_ms: u64) {
         if !self.pending.is_empty() {
             return;
         }
@@ -67,10 +69,10 @@ impl Server {
                 if at <= vt.saturating_add(AUDIO_LEAD_NS) {
                     self.decode_audio(j)
                 } else {
-                    self.decode_video(i)
+                    self.decode_video(i, now_ms)
                 }
             }
-            (Some((i, _)), None) => self.decode_video(i),
+            (Some((i, _)), None) => self.decode_video(i, now_ms),
             (None, Some((j, _))) => self.decode_audio(j),
             (None, None) => {
                 if self.drain_due() {
@@ -89,12 +91,21 @@ impl Server {
         }
     }
 
-    fn decode_video(&mut self, i: usize) {
+    /// The player's clock now, if it runs.
+    fn clock_now(&self, now_ms: u64) -> Option<i64> {
+        let (t, running, at) = self.clock;
+        running.then(|| t + (now_ms.saturating_sub(at).min(10_000) as i64) * 1_000_000)
+    }
+
+    fn decode_video(&mut self, i: usize, now_ms: u64) {
+        let clock = self.clock_now(now_ms);
         let Server {
             sources,
             video,
             size,
             target,
+            bgr,
+            late,
             ..
         } = self;
         let Some(v) = video.as_mut() else { return };
@@ -118,17 +129,22 @@ impl Server {
         if pts + dur <= *target {
             return;
         }
+        // Too late to be shown: the decoder has caught up only if this is not converted.
+        if clock.is_some_and(|c| pts + dur < c - LATE_NS) {
+            *late += 1;
+            return;
+        }
         let Some(pic) = v.dec.picture() else { return };
         let (w, h) = proto::fit(*size, pic.width(), pic.height());
         // The message as words, so the pixels are written in place (4-aligned after the head).
         let head_words = proto::FRAME_HEAD / 4;
         let mut words = vec![0u32; head_words + (w * h) as usize];
         let mut head = Vec::with_capacity(proto::FRAME_HEAD);
-        proto::frame_head(&mut head, pts, w, h);
+        proto::frame_head(&mut head, pts, w, h, *bgr);
         for (k, c) in head.chunks_exact(4).enumerate() {
             words[k] = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
         }
-        pic.to_rgba(&mut words[head_words..], w, h);
+        pic.to_pixels(&mut words[head_words..], w, h, *bgr);
         self.pictures += 1;
         self.pending.push_back((Msg::Words(words), KIND_VIDEO));
     }

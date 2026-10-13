@@ -194,6 +194,34 @@ fn a_thin_buffer_that_keeps_up_does_not_flap() {
 }
 
 #[test]
+fn late_pictures_go_even_while_waiting_for_the_end() {
+    // The sound ran to the end but the pictures are late (a slow decoder): the late ones are
+    // dropped (and paid back to the decoder) and the end comes once the decoder drained.
+    let mut p: Player<u32> = Player::new(Flow::default(), true);
+    let mut s = Sink::new();
+    p.header(header(true, true));
+    for k in 0..15 {
+        p.audio(k * 20 * MS, pcm(20, 1), 3840);
+    }
+    for n in 0..5 {
+        p.frame(n * 33 * MS, 1000, n as u32);
+    }
+    p.set_eos(true);
+    p.play();
+    p.step(0, Some(&mut s));
+    s.run(48_000);
+    p.step(400, Some(&mut s));
+    assert!(p.state().waiting, "dry and not drained");
+    assert_eq!(p.queued_frames(), 0, "the passed pictures went");
+    let (v, _) = p.take_acks();
+    assert!(v >= 3000);
+    p.drained(0);
+    p.take_events();
+    p.step(401, Some(&mut s));
+    assert!(p.state().ended, "{:?}", names(&mut p));
+}
+
+#[test]
 fn pause_stops_the_clock_and_play_resumes() {
     let mut p: Player<u32> = Player::new(Flow::default(), true);
     let mut s = Sink::new();

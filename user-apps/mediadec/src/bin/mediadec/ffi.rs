@@ -49,7 +49,7 @@ unsafe extern "C" {
     fn kmd_opus_reset(d: *mut RawOpus);
     fn kmd_opus_set_gain(d: *mut RawOpus, gain_q8: i32);
     fn kmd_opus_free(d: *mut RawOpus);
-    fn kmd_i420_to_rgba(f: *const RawFrame, dst: *mut u32, w: i32, h: i32, stride: i32);
+    fn kmd_i420_to_rgba(f: *const RawFrame, dst: *mut u32, w: i32, h: i32, stride: i32, bgr: i32);
 }
 
 /// `VPX_IMG_FMT_I420`: the only layout shown (VP9 profile 0).
@@ -192,12 +192,26 @@ impl Picture<'_> {
 
     /// Convert to RGBA bytes (R, G, B, 255) of `w` x `h`, scaled. `out` must hold `w * h` pixels.
     pub fn to_rgba(&self, out: &mut [u32], w: u32, h: u32) {
+        self.to_pixels(out, w, h, false);
+    }
+
+    /// Like [`Picture::to_rgba`]; with `bgr` the bytes are B, G, R, 255 (a framebuffer's order).
+    pub fn to_pixels(&self, out: &mut [u32], w: u32, h: u32, bgr: bool) {
         if w == 0 || h == 0 || w > 4096 || h > 4096 || out.len() < (w as usize) * (h as usize) {
             return;
         }
         // SAFETY: the frame's planes are valid (see `row`); `out` holds `w * h` pixels and the C
         // writes `h` rows of `w` pixels, `w` apart.
-        unsafe { kmd_i420_to_rgba(&self.raw, out.as_mut_ptr(), w as i32, h as i32, w as i32) }
+        unsafe {
+            kmd_i420_to_rgba(
+                &self.raw,
+                out.as_mut_ptr(),
+                w as i32,
+                h as i32,
+                w as i32,
+                i32::from(bgr),
+            )
+        }
     }
 }
 

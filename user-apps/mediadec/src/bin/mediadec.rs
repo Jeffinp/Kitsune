@@ -86,6 +86,10 @@ impl serve::Link for PageLink {
         }
     }
 
+    fn now_ms(&self) -> u64 {
+        uptime_ms()
+    }
+
     fn send(&mut self, msg: &[u8]) -> serve::Sent {
         match page_send(msg) {
             0 => serve::Sent::Done,

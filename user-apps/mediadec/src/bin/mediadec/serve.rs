@@ -58,6 +58,10 @@ pub trait Link {
     fn recv(&mut self, buf: &mut [u8], timeout_ms: u64) -> Result<Option<usize>, ()>;
     /// Send one message.
     fn send(&mut self, msg: &[u8]) -> Sent;
+    /// Milliseconds since some start (for the player's clock between its `IN_TIME`s).
+    fn now_ms(&self) -> u64 {
+        0
+    }
 }
 
 /// The video decoder, bound to the source that has the video track.
@@ -84,6 +88,12 @@ pub struct Server {
     video: Option<VideoDec>,
     audio: Option<AudioDec>,
     size: (u32, u32),
+    /// Pictures in B, G, R, A order.
+    bgr: bool,
+    /// The player's clock: its time, whether it runs, and when it was told (`Link::now_ms`).
+    clock: (i64, bool, u64),
+    /// Pictures decoded too late to show (not sent).
+    pub late: u32,
     /// Budget (pictures, sound) in bytes and what is out unpaid.
     flow: Option<(u32, u32)>,
     out_video: u32,
@@ -140,6 +150,9 @@ impl Server {
             video: None,
             audio: None,
             size: (0, 0),
+            bgr: false,
+            clock: (0, false, 0),
+            late: 0,
             flow: None,
             out_video: 0,
             out_audio: 0,
@@ -186,8 +199,8 @@ impl Server {
         true
     }
 
-    /// Handle one message from the player.
-    pub fn handle(&mut self, m: &[u8]) {
+    /// Handle one message from the player; `now_ms` is the link's clock.
+    pub fn handle(&mut self, m: &[u8], now_ms: u64) {
         let Some((&kind, body)) = m.split_first() else {
             return self.error(proto::ERR_MESSAGE, "empty message");
         };
@@ -206,7 +219,10 @@ impl Server {
                 _ => short(self),
             },
             proto::IN_SIZE => match (u32_at(0), u32_at(4)) {
-                (Some(w), Some(h)) => self.size = (w, h),
+                (Some(w), Some(h)) => {
+                    self.size = (w, h);
+                    self.bgr = u32_at(8) == Some(1);
+                }
                 _ => short(self),
             },
             proto::IN_EOS => {
@@ -243,6 +259,7 @@ impl Server {
             proto::IN_TIME => {
                 if let Some(t) = i64_at(0) {
                     self.now = t;
+                    self.clock = (t, u8_at(8) == Some(1), now_ms);
                 }
             }
             proto::IN_FLOW => match (u32_at(0), u32_at(4)) {
@@ -360,7 +377,8 @@ pub fn serve(link: &mut dyn Link) {
         match link.recv(&mut buf, timeout) {
             Err(()) => return,
             Ok(Some(n)) => {
-                server.handle(&buf[..n.min(buf.len())]);
+                let now = link.now_ms();
+                server.handle(&buf[..n.min(buf.len())], now);
                 if server.quit {
                     return;
                 }
@@ -368,7 +386,7 @@ pub fn serve(link: &mut dyn Link) {
             }
             Ok(None) => {}
         }
-        server.work();
+        server.work(link.now_ms());
     }
 }
 

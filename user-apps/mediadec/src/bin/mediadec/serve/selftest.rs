@@ -200,13 +200,13 @@ fn pump(s: &mut Server, link: &mut Loopback) {
     let mut buf = vec![0u8; MAX_MSG];
     loop {
         while let Ok(Some(n)) = link.recv(&mut buf, 0) {
-            s.handle(&buf[..n]);
+            s.handle(&buf[..n], 0);
         }
         s.flush(link);
         if !s.can_work() {
             break;
         }
-        s.work();
+        s.work(0);
     }
     s.flush(link);
 }

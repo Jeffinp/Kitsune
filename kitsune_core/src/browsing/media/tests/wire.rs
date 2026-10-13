@@ -120,7 +120,7 @@ fn decoder_messages_round_trip_and_hostile_ones_are_refused() {
     };
     assert_eq!(parse_out(&proto::header(&h)), Some(Out::Header(h)));
     let mut f = vec![];
-    proto::frame_head(&mut f, -7, 2, 1);
+    proto::frame_head(&mut f, -7, 2, 1, true);
     f.extend_from_slice(&[1, 2, 3, 255, 4, 5, 6, 255]);
     assert_eq!(
         parse_out(&f),
@@ -128,13 +128,14 @@ fn decoder_messages_round_trip_and_hostile_ones_are_refused() {
             pts: -7,
             w: 2,
             h: 1,
+            bgr: true,
             rgba: &[1, 2, 3, 255, 4, 5, 6, 255]
         })
     );
     // Pixels missing, or a size beyond the limits.
     assert_eq!(parse_out(&f[..f.len() - 1]), None);
     let mut big = vec![];
-    proto::frame_head(&mut big, 0, 5000, 1);
+    proto::frame_head(&mut big, 0, 5000, 1, false);
     assert_eq!(parse_out(&big), None);
     let mut a = vec![];
     proto::audio_head(&mut a, 9, 1);

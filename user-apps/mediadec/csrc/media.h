@@ -49,10 +49,10 @@ void kmd_opus_free(kmd_opus *d);
 
 /* ---- pixels ---- */
 
-/* Convert `f` to RGBA (bytes R, G, B, 255) scaled to dst_w x dst_h, rows dst_stride pixels apart.
- * Integer BT.601 or BT.709 (from the frame), studio or full range; bilinear luma, nearest chroma
- * when the size changes. */
+/* Convert `f` to RGBA (bytes R, G, B, 255; with `bgr`, B, G, R, 255) scaled to dst_w x dst_h, rows
+ * dst_stride pixels apart. Integer BT.601 or BT.709 (from the frame), studio or full range; nearest
+ * neighbour when the size changes. */
 void kmd_i420_to_rgba(const kmd_frame *f, uint32_t *dst, int32_t dst_w, int32_t dst_h,
-                      int32_t dst_stride);
+                      int32_t dst_stride, int32_t bgr);
 
 #endif

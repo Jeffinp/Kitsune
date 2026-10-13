@@ -11,7 +11,8 @@ use alloc::vec::Vec;
 /// `u8` source, `u32` sequence number, then WebM bytes for that source (init segment, clusters...).
 /// Answered with [`OUT_BUFFERED`] carrying the same sequence number.
 pub const IN_DATA: u8 = 0x01;
-/// `u32` width, `u32` height of the pictures sent (0, 0: the video's own size, within the limits).
+/// `u32` width, `u32` height of the pictures sent (0, 0: the video's own size, within the limits),
+/// and optionally `u32` 1 for pictures in B, G, R, A byte order (a framebuffer's).
 pub const IN_SIZE: u8 = 0x04;
 /// `u8` 1: no more data will come (the end of the stream: [`OUT_DRAINED`] once all is sent); 0: more
 /// data comes after all.
@@ -30,7 +31,8 @@ pub const IN_REMOVE: u8 = 0x08;
 pub const IN_RESET: u8 = 0x0A;
 /// `u8` source, `i64` ns added to the source's timestamps (`SourceBuffer.timestampOffset`).
 pub const IN_TSOFF: u8 = 0x0B;
-/// `i64` the playback position (ns): what was played long ago may be forgotten.
+/// `i64` the playback position (ns), and optionally `u8` 1 when the clock runs: what was played long
+/// ago may be forgotten, and a picture already late when decoded is not sent.
 pub const IN_TIME: u8 = 0x0C;
 /// `u32` bytes of pictures, `u32` bytes of sound the player may have waiting at most (0: no limit).
 pub const IN_FLOW: u8 = 0x0D;
@@ -42,8 +44,9 @@ pub const IN_CUE: u8 = 0x0F;
 /// `u64` duration (ns, 0 unknown), `u32` width, `u32` height, `u8` has video, `u8` has audio, `u8`
 /// channels of the stream, `u8` source, `u32` output rate (48000; the sound is always stereo).
 pub const OUT_HEADER: u8 = 0x81;
-/// Three zero bytes (the pixels start 4-aligned, at [`FRAME_HEAD`]), `i64` time (ns), `u32` width,
-/// `u32` height, then `width * height` pixels, 4 bytes each (R, G, B, 255).
+/// `u8` 1 for B, G, R, A pixels (else R, G, B, A), two zero bytes (the pixels start 4-aligned, at
+/// [`FRAME_HEAD`]), `i64` time (ns), `u32` width, `u32` height, then `width * height` pixels, 4 bytes
+/// each.
 pub const OUT_FRAME: u8 = 0x82;
 /// Where the pixels of an [`OUT_FRAME`] start.
 pub const FRAME_HEAD: usize = 20;
@@ -97,6 +100,8 @@ pub enum Out<'a> {
         pts: i64,
         w: u32,
         h: u32,
+        /// The pixels are B, G, R, A.
+        bgr: bool,
         rgba: &'a [u8],
     },
     /// Stereo 48 kHz s16le samples (`frames` per channel).
@@ -175,6 +180,7 @@ pub fn parse_out(m: &[u8]) -> Option<Out<'_>> {
                 pts: i64_at(b, 3)?,
                 w,
                 h,
+                bgr: b[0] == 1,
                 rgba: &m[FRAME_HEAD..],
             }
         }
@@ -304,8 +310,8 @@ pub fn error(code: u32, text: &str) -> Vec<u8> {
 }
 
 /// The head of an [`OUT_FRAME`] ([`FRAME_HEAD`] bytes; the pixels follow).
-pub fn frame_head(out: &mut Vec<u8>, pts: i64, w: u32, h: u32) {
-    out.extend_from_slice(&[OUT_FRAME, 0, 0, 0]);
+pub fn frame_head(out: &mut Vec<u8>, pts: i64, w: u32, h: u32, bgr: bool) {
+    out.extend_from_slice(&[OUT_FRAME, u8::from(bgr), 0, 0]);
     out.extend_from_slice(&pts.to_le_bytes());
     out.extend_from_slice(&w.to_le_bytes());
     out.extend_from_slice(&h.to_le_bytes());

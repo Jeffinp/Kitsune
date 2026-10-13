@@ -7,9 +7,17 @@ use kitsune_core::iconart::Glyph;
 use kitsune_core::media::controls::{self, Area};
 use kitsune_core::web::{Page, VideoBox};
 
+/// The framebuffer stores pixels as B, G, R (learnt at the first paint; the decoder is asked for
+/// that order so a picture is copied row by row).
+static FB_BGR: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+
+pub(super) fn fb_bgr() -> bool {
+    FB_BGR.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 /// Copy an RGBA picture (`sw` x `sh`, bytes R, G, B, A) into `dst` (screen coordinates), scaled by
 /// nearest neighbour, clipped to the canvas's clip.
-fn blit_rgba(c: &mut Canvas, src: &[u8], sw: u32, sh: u32, dst: Rect) {
+fn blit_rgba(c: &mut Canvas, src: &[u8], sw: u32, sh: u32, src_bgr: bool, dst: Rect) {
     let (sw, sh) = (sw as usize, sh as usize);
     if sw == 0 || sh == 0 || src.len() < sw * sh * 4 || dst.w <= 0 || dst.h <= 0 {
         return;
@@ -35,7 +43,10 @@ fn blit_rgba(c: &mut Canvas, src: &[u8], sw: u32, sh: u32, dst: Rect) {
         }
         return;
     }
-    let bgr = matches!(info.pixel_format, bootloader_api::info::PixelFormat::Bgr);
+    let fb_bgr = matches!(info.pixel_format, bootloader_api::info::PixelFormat::Bgr);
+    FB_BGR.store(fb_bgr, core::sync::atomic::Ordering::Relaxed);
+    // Swap R and B when the picture's order is not the framebuffer's.
+    let bgr = fb_bgr != src_bgr;
     let stride = info.stride;
     // The source column of every screen column, once.
     let cols: Vec<usize> = (r.x..r.right())
@@ -49,6 +60,11 @@ fn blit_rgba(c: &mut Canvas, src: &[u8], sw: u32, sh: u32, dst: Rect) {
         let Some(out) = buf.get_mut(start..start + cols.len() * 4) else {
             continue;
         };
+        if !bgr && sw == dw && r.x == dst.x && cols.len() == sw {
+            // The picture's size and order: the row as it is.
+            out.copy_from_slice(row);
+            continue;
+        }
         for (o, &sx) in out.as_chunks_mut::<4>().0.iter_mut().zip(&cols) {
             let p = &row[sx * 4..sx * 4 + 4];
             if bgr {
@@ -179,7 +195,7 @@ impl Desktop {
                     let fw = u32::from_le_bytes([f[12], f[13], f[14], f[15]]);
                     let fh = u32::from_le_bytes([f[16], f[17], f[18], f[19]]);
                     let a = controls::contain(r.w, r.h, fw, fh);
-                    blit_rgba(c, &f[proto::FRAME_HEAD..], fw, fh, at(r, a));
+                    blit_rgba(c, &f[proto::FRAME_HEAD..], fw, fh, f[1] == 1, at(r, a));
                 }
             }
             (_, Some(img)) => {

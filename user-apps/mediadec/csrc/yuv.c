@@ -64,7 +64,7 @@ static inline __m128i narrow(__m128i lo, __m128i hi)
 
 /* One row of `w` pixels at the frame's own size. */
 static void row(const matrix *m, const uint8_t *y, const uint8_t *u, const uint8_t *v,
-                uint32_t *out, int32_t w)
+                uint32_t *out, int32_t w, int32_t bgr)
 {
     const __m128i zero = _mm_setzero_si128();
     const __m128i yoff = _mm_set1_epi16(m->yoff), c128 = _mm_set1_epi16(128);
@@ -90,12 +90,16 @@ static void row(const matrix *m, const uint8_t *y, const uint8_t *u, const uint8
         __m128i g = narrow(
             _mm_add_epi32(_mm_add_epi32(_mm_madd_epi16(yu_lo, k_g), _mm_madd_epi16(v0_lo, k_gv)), round),
             _mm_add_epi32(_mm_add_epi32(_mm_madd_epi16(yu_hi, k_g), _mm_madd_epi16(v0_hi, k_gv)), round));
-        __m128i rg = _mm_unpacklo_epi8(r, g), ba = _mm_unpacklo_epi8(b, alpha);
+        /* Bytes R, G, B, A (or B, G, R, A: the framebuffer's order). */
+        __m128i rg = bgr ? _mm_unpacklo_epi8(b, g) : _mm_unpacklo_epi8(r, g);
+        __m128i ba = bgr ? _mm_unpacklo_epi8(r, alpha) : _mm_unpacklo_epi8(b, alpha);
         _mm_storeu_si128((__m128i *)(out + x), _mm_unpacklo_epi16(rg, ba));
         _mm_storeu_si128((__m128i *)(out + x + 4), _mm_unpackhi_epi16(rg, ba));
     }
-    for (; x < w; x++)
-        out[x] = pixel(m, y[x], u[x >> 1], v[x >> 1]);
+    for (; x < w; x++) {
+        uint32_t px = pixel(m, y[x], u[x >> 1], v[x >> 1]);
+        out[x] = bgr ? (px & 0xFF00FF00u) | (px >> 16 & 0xFFu) | (px & 0xFFu) << 16 : px;
+    }
 }
 
 /* Source index of output coordinate `i` of `dst` over `src` (centre-aligned, nearest). */
@@ -106,7 +110,7 @@ static inline int32_t nearest(int32_t i, int32_t src, int32_t dst)
 }
 
 void kmd_i420_to_rgba(const kmd_frame *f, uint32_t *dst, int32_t dst_w, int32_t dst_h,
-                      int32_t dst_stride)
+                      int32_t dst_stride, int32_t bgr)
 {
     const int32_t sw = f->width, sh = f->height;
     if (sw <= 0 || sh <= 0 || sw > MAX_SIDE || sh > MAX_SIDE || dst_w <= 0 || dst_h <= 0 ||
@@ -119,7 +123,7 @@ void kmd_i420_to_rgba(const kmd_frame *f, uint32_t *dst, int32_t dst_w, int32_t 
     if (sw == dst_w && sh == dst_h) {
         for (int32_t r = 0; r < sh; r++)
             row(m, py + (int64_t)r * sy, pu + (int64_t)(r >> 1) * su, pv + (int64_t)(r >> 1) * sv,
-                dst + (int64_t)r * dst_stride, sw);
+                dst + (int64_t)r * dst_stride, sw, bgr);
         return;
     }
     int32_t xs[MAX_SIDE];
@@ -135,7 +139,7 @@ void kmd_i420_to_rgba(const kmd_frame *f, uint32_t *dst, int32_t dst_w, int32_t 
             continue;
         }
         row(m, py + (int64_t)s * sy, pu + (int64_t)(s >> 1) * su, pv + (int64_t)(s >> 1) * sv,
-            line, sw);
+            line, sw, bgr);
         if (sw == dst_w)
             memcpy(out, line, (size_t)dst_w * 4);
         else
