@@ -88,7 +88,7 @@ pub(super) fn parse_complex_selector(s: &str) -> Option<Selector> {
         ancestors.push((parts[k + 1].0, parts[k].1.clone()));
     }
     let last = parts.pop()?.1;
-    Some(Selector {
+    let mut sel = Selector {
         tag: last.tag,
         id: last.id,
         classes: last.classes,
@@ -96,7 +96,10 @@ pub(super) fn parse_complex_selector(s: &str) -> Option<Selector> {
         pseudos: last.pseudos,
         pseudo_el: last.pseudo_el,
         ancestors,
-    })
+        need: Default::default(),
+    };
+    sel.finish();
+    Some(sel)
 }
 
 /// Parse one compound at the start of `s`; returns it and the bytes used.

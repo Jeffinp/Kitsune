@@ -207,9 +207,38 @@ pub struct Selector {
     pub pseudo_el: u8,
     /// Compounds to the left, nearest first, with how each relates to the one to its right.
     pub ancestors: Vec<(Comb, Compound)>,
+    /// What the compounds that must be ancestors need (their tags, ids and classes), see [`bloom`].
+    pub(crate) need: bloom::Bloom,
 }
 
 impl Selector {
+    /// Work out [`Selector::need`] from the ancestors (call once the selector is complete).
+    pub(super) fn finish(&mut self) {
+        let mut need = bloom::Bloom::default();
+        for (comb, c) in &self.ancestors {
+            // Only the compounds joined by `>` or a space sit on the path; the ones joined by `+` or `~`
+            // are siblings of something on it.
+            if matches!(comb, Comb::Child | Comb::Descendant) {
+                bloom::add_compound(&mut need, c);
+            }
+        }
+        self.need = need;
+    }
+
+    /// [`Selector::matches`] after a quick test against the Bloom filter of the ancestors' path.
+    pub(crate) fn matches_in(
+        &self,
+        el: &Element,
+        anc: &[&Element],
+        path: &bloom::Bloom,
+        budget: &mut u32,
+    ) -> bool {
+        if !self.ancestors.is_empty() && !bloom::may_hold(path, &self.need) {
+            return false;
+        }
+        self.matches(el, anc, budget)
+    }
+
     pub fn specificity(&self) -> Specificity {
         let mut s = (
             usize::from(self.id.is_some()),

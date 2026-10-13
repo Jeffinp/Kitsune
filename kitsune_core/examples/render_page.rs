@@ -11,7 +11,9 @@ fn main() {
     let html = std::fs::read(&args[1]).expect("read the page");
     let width: i32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(960);
     let zoom: u16 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(100);
+    let t0 = std::time::Instant::now();
     let mut doc = Doc::parse(&html);
+    eprintln!("parse: {:?}", t0.elapsed());
     // `--links`: print the style sheets the page asks for and stop. `--css FILE...` (after the
     // other arguments): add those files as external sheets, in order.
     if args.iter().any(|a| a == "--links") {
@@ -23,17 +25,21 @@ fn main() {
     if let Some(i) = args.iter().position(|a| a == "--css") {
         for f in &args[i + 1..] {
             if let Ok(css) = std::fs::read(f) {
+                let t = std::time::Instant::now();
                 doc.add_sheet(&String::from_utf8_lossy(&css));
+                eprintln!("sheet {f} ({} B): {:?}", css.len(), t.elapsed());
             }
         }
     }
     let m = FixedAdvance;
+    let t = std::time::Instant::now();
     let page = doc.layout(&Layout {
         width,
         zoom,
         images: &NoImages,
         metrics: &m,
     });
+    eprintln!("layout: {:?} ({} commands)", t.elapsed(), page.cmds.len());
     let out = std::io::stdout();
     let mut out = out.lock();
     let _ = writeln!(

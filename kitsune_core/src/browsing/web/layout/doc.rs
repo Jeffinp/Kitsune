@@ -238,6 +238,8 @@ impl Doc {
             (i64::from(opts.width) * 100 / i64::from(zoom)) as i32,
             crate::browsing::web::css::DEFAULT_H,
         );
+        // What matched each element is only good for one layout (the viewport sets the `@media` rules).
+        self.sheet.clear_memo();
         let root = Computed::root();
         let mut p = Painter {
             cmds: Vec::new(),
@@ -279,6 +281,8 @@ impl Doc {
         y = adv(y, core::mem::take(&mut p.pending));
         // A float may reach below the last line.
         y = y.max(floats_bottom(&p, 0));
+        // Elements can move or go away before the next layout: keep nothing keyed by their address.
+        self.sheet.clear_memo();
         Page {
             cmds: p.cmds,
             height: y.clamp(0, MAX_PAGE_H),

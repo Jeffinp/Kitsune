@@ -5,22 +5,26 @@ use super::*;
 /// Collect the declarations matching `el`, split into the user-agent sheet's and the
 /// page's: normal ones lowest specificity first, then the `!important` ones, so later
 /// declarations override earlier ones.
-pub(super) fn matched_decls<'a>(
+/// The rules that match `el` (for the `pseudo` kind), with their specificity, lowest first.
+fn match_rules(
     el: &Element,
     anc: &[&Element],
-    sheet: &'a Stylesheet,
+    sheet: &Stylesheet,
     budget: &mut u32,
     pseudo: u8,
-) -> (Vec<&'a Decl>, Vec<&'a Decl>) {
-    let mut hit: Vec<(Specificity, &'a super::super::css::Rule)> = Vec::new();
-    let mut test = |r: &'a super::super::css::Rule| {
+) -> Vec<(Specificity, u32)> {
+    let mut hit: Vec<(Specificity, u32)> = Vec::new();
+    // Most selectors with ancestors name one that is not on this element's path at all.
+    let path = sheet.path_bloom(anc);
+    let mut test = |i: u32| {
+        let r = &sheet.rules[i as usize];
         if r.pseudo != pseudo || !sheet.rule_applies(r) {
             return;
         }
         let mut best: Option<Specificity> = None;
         for s in &r.selectors {
             // The cheap test first: most selectors fail on the element itself.
-            if s.matches(el, anc, budget) {
+            if s.matches_in(el, anc, &path, budget) {
                 let sp = s.specificity();
                 if best.is_none_or(|b| sp > b) {
                     best = Some(sp);
@@ -28,20 +32,56 @@ pub(super) fn matched_decls<'a>(
             }
         }
         if let Some(sp) = best {
-            hit.push((sp, r));
+            hit.push((sp, i));
         }
     };
     let mut ix: Vec<u32> = Vec::new();
     if sheet.candidates(el, &mut ix) {
         for &i in &ix {
-            test(&sheet.rules[i as usize]);
+            test(i);
         }
     } else {
-        for r in &sheet.rules {
-            test(r);
+        for i in 0..sheet.rules.len() as u32 {
+            test(i);
         }
     }
     hit.sort_by_key(|(sp, _)| *sp);
+    hit
+}
+pub(super) fn matched_decls<'a>(
+    el: &Element,
+    anc: &[&Element],
+    sheet: &'a Stylesheet,
+    budget: &mut u32,
+    pseudo: u8,
+) -> (Vec<&'a Decl>, Vec<&'a Decl>) {
+    // The same element is styled several times in one layout (intrinsic widths, pseudo-elements,
+    // flex and table passes); what matches it only depends on the element and its ancestor path.
+    let key = (el as *const Element as usize, pseudo);
+    let depth = anc.len();
+    let parent = anc.last().map_or(0, |a| *a as *const Element as usize);
+    let memo = sheet.memo.borrow().get(&key).and_then(|m| {
+        (m.depth == depth && m.parent == parent).then(|| alloc::rc::Rc::clone(&m.hits))
+    });
+    let hit = match memo {
+        Some(h) => h,
+        None => {
+            let h = alloc::rc::Rc::new(match_rules(el, anc, sheet, budget, pseudo));
+            sheet.memo.borrow_mut().insert(
+                key,
+                crate::browsing::web::css::Memo {
+                    depth,
+                    parent,
+                    hits: alloc::rc::Rc::clone(&h),
+                },
+            );
+            h
+        }
+    };
+    let hit: Vec<(Specificity, &'a super::super::css::Rule)> = hit
+        .iter()
+        .map(|&(sp, i)| (sp, &sheet.rules[i as usize]))
+        .collect();
     let group = |author: bool| -> Vec<&'a Decl> {
         let mut out: Vec<&Decl> = Vec::new();
         for (_, r) in hit.iter().filter(|(_, r)| r.author == author) {

@@ -12,6 +12,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 pub use media::{DEFAULT_H, DEFAULT_W, Media, set_viewport, viewport_h, viewport_w};
 
+pub(crate) mod bloom;
 mod decls;
 mod selector;
 mod selector_parse;
@@ -58,8 +59,50 @@ pub struct Stylesheet {
     /// The rules that name nothing to index by (`*`, `[attr]`, `:root`...).
     generic: Vec<u32>,
     indexed: bool,
+    /// The rules matched by each element during the layout in progress, so an element that is
+    /// styled again (box measuring, pseudo-elements, a second pass) is not matched again. The key is
+    /// the element's address and the pseudo-element kind; [`Stylesheet::clear_memo`] empties it at
+    /// the start of every layout (the document or the viewport may have changed since).
+    pub(crate) memo: core::cell::RefCell<alloc::collections::BTreeMap<(usize, u8), Memo>>,
+    /// For an element's address, the Bloom filter of the path from the root down to it (itself
+    /// included); emptied with `memo`.
+    pub(crate) paths: core::cell::RefCell<alloc::collections::BTreeMap<usize, bloom::Bloom>>,
+}
+/// The memoized matches of one element: the rules (index into `rules`) with their specificity, in
+/// cascade order, and the ancestor path they were found for (its length and its last element).
+#[derive(Debug)]
+pub(crate) struct Memo {
+    pub(crate) depth: usize,
+    pub(crate) parent: usize,
+    pub(crate) hits: alloc::rc::Rc<Vec<(Specificity, u32)>>,
 }
 impl Stylesheet {
+    /// Forget the memoized matches (see [`Stylesheet::memo`]).
+    pub fn clear_memo(&self) {
+        self.memo.borrow_mut().clear();
+        self.paths.borrow_mut().clear();
+    }
+
+    /// The Bloom filter of the path `anc` (outermost first): every ancestor's tag, id and classes.
+    pub(crate) fn path_bloom(&self, anc: &[&Element]) -> bloom::Bloom {
+        let mut paths = self.paths.borrow_mut();
+        // The deepest ancestor whose filter is already known; the rest are folded in from there.
+        let mut from = 0;
+        let mut f = bloom::Bloom::default();
+        for (i, a) in anc.iter().enumerate().rev() {
+            if let Some(known) = paths.get(&(*a as *const Element as usize)) {
+                f = *known;
+                from = i + 1;
+                break;
+            }
+        }
+        for a in &anc[from..] {
+            bloom::add_element(&mut f, a);
+            paths.insert(*a as *const Element as usize, f);
+        }
+        f
+    }
+
     /// Index the rules by the tag, id or class their selectors end in, so the cascade tests an
     /// element against the few rules that can match it instead of every rule. Call after the
     /// rule list is final.
