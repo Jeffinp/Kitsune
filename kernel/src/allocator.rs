@@ -1,14 +1,18 @@
 //! Kernel heap: a linked-list free allocator behind a spin lock, exposed as the
 //! global allocator so `alloc` (Vec/String/Box) works. The fiddly alignment and
 //! region-fit math is in `kitsune_core::heap` (unit-tested); this file is the
-//! thin `unsafe` glue that threads free nodes through the heap memory.
+//! thin `unsafe` glue that threads free nodes through the heap memory. Small
+//! blocks (up to `kitsune_core::heap::SLAB_MAX` bytes) come from size classes
+//! (`slab.rs`) carved out of the same list.
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::cell::UnsafeCell;
 use core::mem;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
-use kitsune_core::heap::{adjust_request, fit_region_split, regions_adjacent};
+use kitsune_core::heap::{adjust_request, fit_region_split, regions_adjacent, slab_class};
+
+mod slab;
 
 // ---- minimal spin lock ----
 
@@ -278,11 +282,40 @@ impl Default for LinkedListAllocator {
 
 // ---- global allocator ----
 
-pub struct LockedHeap(SpinLock<LinkedListAllocator>);
+/// The linked list (big blocks and the slabs themselves) and the size classes (small blocks).
+pub struct Heap {
+    list: LinkedListAllocator,
+    slabs: slab::Slabs,
+}
+
+impl Heap {
+    fn alloc(&mut self, layout: Layout) -> *mut u8 {
+        match slab_class(layout.size(), layout.align()) {
+            Some(c) => self.slabs.alloc(c, &mut self.list),
+            None => self.list.alloc(layout),
+        }
+    }
+
+    /// # Safety
+    /// `ptr` and `layout` must be a live block of this heap and the layout it was allocated with.
+    unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
+        match slab_class(layout.size(), layout.align()) {
+            // SAFETY: the same layout picked the same class when the block was allocated (the
+            // caller's contract), so it is a live block of that class.
+            Some(c) => unsafe { self.slabs.dealloc(ptr, c, &mut self.list) },
+            None => self.list.dealloc(ptr, layout),
+        }
+    }
+}
+
+pub struct LockedHeap(SpinLock<Heap>);
 
 impl LockedHeap {
     pub const fn new() -> Self {
-        Self(SpinLock::new(LinkedListAllocator::new()))
+        Self(SpinLock::new(Heap {
+            list: LinkedListAllocator::new(),
+            slabs: slab::Slabs::new(),
+        }))
     }
 
     /// # Safety
@@ -290,12 +323,14 @@ impl LockedHeap {
     pub unsafe fn init(&self, start: usize, size: usize) {
         // SAFETY: the caller's contract (see `LinkedListAllocator::init`) is forwarded unchanged;
         // the lock gives exclusive access to the allocator.
-        unsafe { self.0.lock().init(start, size) };
+        unsafe { self.0.lock().list.init(start, size) };
     }
 
-    /// Bytes currently free on the heap (for the perf HUD).
+    /// Bytes currently free on the heap (for the perf HUD): the list's, and the free blocks of
+    /// the slabs.
     pub fn free_bytes(&self) -> usize {
-        self.0.lock().free_bytes()
+        let h = self.0.lock();
+        h.list.free_bytes() + h.slabs.held.saturating_sub(h.slabs.used)
     }
 }
 
@@ -322,11 +357,13 @@ unsafe impl GlobalAlloc for LockedHeap {
         if crate::trace::ON {
             use core::sync::atomic::Ordering::Relaxed;
             let t0 = crate::io::rdtsc();
-            self.0.lock().dealloc(ptr, layout);
+            // SAFETY: `GlobalAlloc::dealloc`'s contract: a live block of this allocator and its layout.
+            unsafe { self.0.lock().dealloc(ptr, layout) };
             crate::trace::FREE_N.fetch_add(1, Relaxed);
             crate::trace::FREE_CYC.fetch_add(crate::io::rdtsc().wrapping_sub(t0), Relaxed);
             return;
         }
-        self.0.lock().dealloc(ptr, layout);
+        // SAFETY: `GlobalAlloc::dealloc`'s contract: a live block of this allocator and its layout.
+        unsafe { self.0.lock().dealloc(ptr, layout) };
     }
 }

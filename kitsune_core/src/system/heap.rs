@@ -1,6 +1,8 @@
 //! Pure arithmetic for a linked-list heap allocator. The error-prone part —
 //! alignment and region-fit math — lives here and is unit-tested. The kernel
 //! provides the thin `unsafe` glue that writes free-list nodes into memory.
+//! Small blocks come from size classes ([`slab_class`]): slabs of [`SLAB_SIZE`] bytes cut into
+//! blocks of one size, so the list only holds the big ones.
 
 /// Round `addr` up to a multiple of `align` (which must be a power of two).
 pub const fn align_up(addr: usize, align: usize) -> usize {
@@ -113,6 +115,45 @@ pub fn adjust_request(
     let align = align.max(node_align);
     let size = align_up(size.max(node_size), node_align);
     (size, align)
+}
+
+// ---- size classes (slabs) ----
+
+/// Bytes of one slab: a chunk of the heap, aligned to its size, cut into blocks of one size class.
+/// The owner of a small block is found by masking its address.
+pub const SLAB_SIZE: usize = 64 * 1024;
+/// Bytes at the start of a slab kept for its header (the blocks start after it, 16-aligned).
+pub const SLAB_HEADER: usize = 64;
+/// The block sizes of the classes: steps of 16 up to 128, then four classes per doubling.
+pub const SLAB_CLASSES: [usize; 24] = [
+    16, 32, 48, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 448, 512, 640, 768, 896, 1024,
+    1280, 1536, 1792, 2048,
+];
+/// The largest request a slab serves; bigger ones go to the linked list.
+pub const SLAB_MAX: usize = 2048;
+
+/// The class for a request of `size` bytes aligned to `align`, or `None` when it goes to the list
+/// (too big, or aligned beyond 16). A zero size takes the smallest class.
+pub fn slab_class(size: usize, align: usize) -> Option<usize> {
+    if align > 16 || size > SLAB_MAX {
+        return None;
+    }
+    let size = size.max(1);
+    Some(if size <= 128 {
+        (size - 1) / 16
+    } else {
+        // Four classes per doubling above 128: 160, 192, 224, 256, 320, ...
+        let top = usize::BITS - 1 - (size - 1).leading_zeros(); // 2^top <= size-1 < 2^(top+1)
+        let step = 1usize << (top - 2);
+        let base = 1usize << top;
+        let k = (size - 1 - base) / step; // 0..=3
+        8 + (top as usize - 7) * 4 + k
+    })
+}
+
+/// How many blocks of class `c` a slab holds.
+pub const fn slab_blocks(c: usize) -> usize {
+    (SLAB_SIZE - SLAB_HEADER) / SLAB_CLASSES[c]
 }
 
 #[cfg(test)]

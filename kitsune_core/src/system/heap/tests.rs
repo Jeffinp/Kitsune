@@ -272,3 +272,34 @@ fn adjust_request_keeps_larger_values() {
     assert_eq!(size, align_up(100, 8));
     assert_eq!(align, 64);
 }
+
+#[test]
+fn slab_classes_fit_every_small_request() {
+    for size in 0..=SLAB_MAX {
+        for align in [1, 2, 4, 8, 16] {
+            let c = slab_class(size, align).expect("small requests have a class");
+            assert!(SLAB_CLASSES[c] >= size.max(1), "size {size} class {c}");
+            // The smallest class that fits.
+            assert!(
+                c == 0 || SLAB_CLASSES[c - 1] < size.max(1),
+                "size {size} class {c}"
+            );
+        }
+    }
+    assert_eq!(slab_class(SLAB_MAX + 1, 8), None);
+    assert_eq!(slab_class(64, 32), None);
+    assert_eq!(slab_class(0, 1), Some(0));
+    assert_eq!(slab_class(129, 8), Some(8));
+    assert_eq!(slab_class(2048, 16), Some(23));
+}
+
+#[test]
+fn slab_classes_are_16_aligned_and_fill_a_slab() {
+    for (c, &size) in SLAB_CLASSES.iter().enumerate() {
+        assert_eq!(size % 16, 0);
+        assert!(slab_blocks(c) >= 31, "class {c} holds {}", slab_blocks(c));
+        assert!(SLAB_HEADER + slab_blocks(c) * size <= SLAB_SIZE);
+    }
+    assert!(SLAB_CLASSES.windows(2).all(|w| w[0] < w[1]));
+    assert!(SLAB_SIZE.is_power_of_two() && SLAB_HEADER % 16 == 0);
+}
