@@ -1,0 +1,23 @@
+# `mediadec`: WebM (VP9 + Opus) decoding in a ring 3 program (`run mediadec file.webm`), and the
+# message server a future player talks to. libvpx's VP9 decoder and libopus (fixed point), vendored
+# in vendor/, with the project's glue and small C library in csrc/, all compiled by build.rs with
+# clang; the WebM demuxer is kitsune_core's. See docs/design/midia.md.
+[package]
+name = "mediadec"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+kitsune-user = { path = "../sdk", features = ["heap"] }
+kitsune-userabi = { path = "../abi" }
+kitsune_core = { path = "../../kitsune_core" }
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+codegen-units = 1
+strip = true
+
+[workspace]

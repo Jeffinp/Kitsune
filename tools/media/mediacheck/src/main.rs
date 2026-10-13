@@ -12,6 +12,9 @@ extern crate alloc;
 mod ffi;
 #[path = "../../../../user-apps/mediadec/src/bin/mediadec/pipeline.rs"]
 mod pipeline;
+#[path = "../../../../user-apps/mediadec/src/bin/mediadec/serve.rs"]
+#[allow(dead_code)]
+mod serve;
 
 use kitsune_core::md5;
 use pipeline::{Media, Out};
@@ -34,11 +37,24 @@ fn main() {
                     Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?))
                 })
             }
+            "--serve-test" => {}
             _ => file = Some(a.clone()),
         }
     }
     let file = file.expect("usage: mediacheck FILE.webm [--vmd5 REF] [--aref REF.raw] ...");
     let data = std::fs::read(&file).expect("read the file");
+    if args.iter().any(|a| a == "--serve-test") {
+        // The message server over an in-memory link, as `mediadec --serve-test` runs it.
+        let r = serve::selftest(&data);
+        println!("{r:?}");
+        let ok = r.header
+            && r.picture_size == (160, 90)
+            && r.end_pictures == r.pictures
+            && r.errors == 0
+            && r.first_after_seek_ns == 1_000_000_000;
+        println!("serve-test: {}", if ok { "PASS" } else { "FAIL" });
+        std::process::exit(i32::from(!ok));
+    }
     let want: Option<Vec<String>> = vmd5.map(|p| {
         std::fs::read_to_string(p)
             .expect("read the framemd5")

@@ -92,6 +92,11 @@ impl Media {
         &self.demux
     }
 
+    /// libvpx's text for the last video error.
+    pub fn video_error(&self) -> &str {
+        self.vp9.as_ref().map_or("", |v| v.error())
+    }
+
     /// Prepare to continue from `time_ns`: returns the file offset of the cluster to feed from
     /// (from the cues), and from then on output before `time_ns` is dropped. `None` without cues.
     pub fn seek(&mut self, time_ns: u64) -> Option<u64> {

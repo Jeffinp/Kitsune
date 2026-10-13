@@ -15,5 +15,6 @@ for n in v180 v360 v720; do
   [ -f "$media/$n.webm" ] || continue
   echo "== $n"
   "$target/release/mediacheck" "$media/$n.webm" --vmd5 "$media/$n.vmd5" --aref "$media/$n.ref.raw" "$@" || fail=1
+  "$target/release/mediacheck" "$media/$n.webm" --serve-test || fail=1
 done
 exit $fail

@@ -123,11 +123,21 @@ const OPUS: &[&str] = &[
 /// The project's own C: the decoder wrappers and the colour conversion.
 const OWN: &[&str] = &["csrc/media.c", "csrc/yuv.c"];
 
-/// Every C file with the extra flags of its group (include paths relative to `root`).
-fn c_jobs(root: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<String>)> {
+/// The small C library of the ring 3 build (the host uses its own).
+const LIBC: &[&str] = &["csrc/libc/libc.c"];
+
+/// Every C file with the extra flags of its group (include paths relative to `root`); `freestanding`
+/// adds the project's C library. The codecs are built with `NDEBUG`, as their release builds are.
+fn c_jobs(root: &std::path::Path, freestanding: bool) -> Vec<(std::path::PathBuf, Vec<String>)> {
     let inc = |p: &str| format!("-I{}", root.join(p).display());
-    let vpx_flags = vec![inc("vendor/libvpx"), inc("csrc/vpx"), "-w".to_string()];
+    let vpx_flags = vec![
+        "-DNDEBUG".to_string(),
+        inc("vendor/libvpx"),
+        inc("csrc/vpx"),
+        "-w".to_string(),
+    ];
     let opus_flags = vec![
+        "-DNDEBUG".to_string(),
         "-DHAVE_CONFIG_H".to_string(),
         inc("csrc/opus"),
         inc("vendor/opus/include"),
@@ -152,6 +162,11 @@ fn c_jobs(root: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<String>)> {
     }
     for f in OWN {
         jobs.push((root.join(f), own_flags.clone()));
+    }
+    if freestanding {
+        for f in LIBC {
+            jobs.push((root.join(f), vec!["-Wall".to_string()]));
+        }
     }
     jobs
 }

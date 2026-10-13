@@ -18,7 +18,7 @@ fn main() {
     let parallel = std::thread::available_parallelism().map_or(4, |n| n.get());
     let mut running: Vec<(Child, PathBuf)> = Vec::new();
     let mut objects = Vec::new();
-    for (i, (src, extra)) in c_jobs(&root).into_iter().enumerate() {
+    for (i, (src, extra)) in c_jobs(&root, false).into_iter().enumerate() {
         let obj = out.join(format!(
             "{i}-{}.o",
             src.file_stem().unwrap().to_string_lossy()
