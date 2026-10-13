@@ -434,9 +434,11 @@ impl Computed {
 
 fn default_display(tag: &str) -> Disp {
     match tag {
-        "script" | "style" | "head" | "title" | "meta" | "link" | "option" | "datalist" => {
-            Disp::None
-        }
+        // `<noscript>` too: the browser runs scripts, so (as in any browser with scripting on) what a
+        // page shows to browsers without them stays hidden (YouTube's embed has an error message
+        // there that sat under the player).
+        "script" | "style" | "head" | "title" | "meta" | "link" | "option" | "datalist"
+        | "noscript" => Disp::None,
         _ => Disp::Inline,
     }
 }

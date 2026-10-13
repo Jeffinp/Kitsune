@@ -133,12 +133,24 @@ pub(super) fn sys_brk(slot: usize, want: u64) -> u64 {
         return p.heap_end;
     }
     let target = want.div_ceil(PAGE_SIZE) * PAGE_SIZE;
+    let before = p.heap_end;
     while p.heap_end < target {
         if asp.map_new(p.heap_end, true, false).is_err() {
             break; // out of memory: keep what was mapped
         }
         p.heap_end += PAGE_SIZE;
         p.pages += 1;
+    }
+    // How big a process's heap gets, in the log every 16 MiB (what a page's scripts cost).
+    const MARK: u64 = 16 * 1024 * 1024;
+    if (p.heap_end - HEAP_BASE) / MARK != (before - HEAP_BASE) / MARK {
+        crate::klog!(
+            Info,
+            "proc: '{}' pid {} heap {} MiB",
+            p.name,
+            p.pid,
+            (p.heap_end - HEAP_BASE) / (1024 * 1024)
+        );
     }
     p.heap_end
 }

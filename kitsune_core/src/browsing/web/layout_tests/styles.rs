@@ -61,6 +61,18 @@ fn display_none_hides_content() {
 }
 
 #[test]
+fn noscript_is_hidden_and_scripts_take_no_room() {
+    // The browser runs scripts: what a page has for browsers without them is not shown, and the
+    // (empty) <script> elements kept in the tree lay out to nothing.
+    let p = lay(
+        "<p>a <script>var x</script>b</p><noscript><p>enable JavaScript</p></noscript>",
+        600,
+    );
+    assert!(!texts(&p).iter().any(|s| s.contains("JavaScript")));
+    assert!(texts(&p).iter().any(|s| s.contains('b')));
+}
+
+#[test]
 fn text_align_center_and_right() {
     let body = "<body style='margin:0'>";
     let p = lay(
