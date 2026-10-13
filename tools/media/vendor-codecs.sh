@@ -32,7 +32,7 @@ vpx_dsp/bitreader.c vpx_dsp/bitreader_buffer.c vpx_dsp/intrapred.c vpx_dsp/inv_t
 vpx_dsp/loopfilter.c vpx_dsp/prob.c vpx_dsp/vpx_convolve.c vpx_dsp/vpx_dsp_rtcd.c vpx_mem/vpx_mem.c
 vpx_scale/vpx_scale_rtcd.c vpx_scale/generic/yv12config.c vpx_scale/generic/yv12extend.c
 vpx_util/vpx_thread.c
-vpx_dsp/x86/inv_txfm_sse2.c vpx_dsp/x86/loopfilter_sse2.c"
+vpx_dsp/x86/inv_txfm_sse2.c vpx_dsp/x86/loopfilter_sse2.c vp9/common/x86/vp9_idct_intrin_sse2.c"
 
 OPUS_C="celt/bands.c celt/celt.c celt/celt_decoder.c celt/celt_lpc.c celt/cwrs.c celt/entcode.c
 celt/entdec.c celt/entenc.c celt/kiss_fft.c celt/laplace.c celt/mathops.c celt/mdct.c celt/modes.c

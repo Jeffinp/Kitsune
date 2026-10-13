@@ -51,7 +51,9 @@ mod syscall;
 use files::*;
 pub use host::*;
 use page::*;
-pub use page::{page_post, page_take, spawn_media, spawn_page};
+#[allow(unused_imports)] // spawn_media: the caller (the browser's player) is the next step
+pub use page::spawn_media;
+pub use page::{page_post, page_take, spawn_page};
 pub(crate) use queue::*;
 pub use syscall::syscall_entry;
 use syscall::*;

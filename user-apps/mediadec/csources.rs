@@ -51,7 +51,11 @@ const VPX: &[&str] = &[
 ];
 
 /// libvpx's SSE2 intrinsics (C, no assembly) that the hand-trimmed `csrc/vpx/*_rtcd.h` point to.
-const VPX_SSE2: &[&str] = &[];
+const VPX_SSE2: &[&str] = &[
+    "vpx_dsp/x86/inv_txfm_sse2.c",
+    "vpx_dsp/x86/loopfilter_sse2.c",
+    "vp9/common/x86/vp9_idct_intrin_sse2.c",
+];
 
 /// libopus 1.5.2, fixed-point decoder: CELT, SILK and the Opus layer.
 const OPUS: &[&str] = &[
