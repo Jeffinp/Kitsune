@@ -25,6 +25,11 @@ if wait_for "media: element [0-9]* playing at" "$WAITPLAY"; then
   while [ "$(echo "$(date +%s.%N) - $t0 < $REC" | bc)" = 1 ]; do
     mon "screendump $OUT/rec-$(printf %04d $n).ppm"
     date +%s.%N >> "$OUT/rec-times.txt"
+    # MOUSE=1: the pointer moves while the video plays (the [trace] input lines of a perf-trace
+    # build then say how long the screen took to follow it).
+    if [ "${MOUSE:-0}" = 1 ]; then
+      if [ $((n % 2)) = 0 ]; then move 40 0; else move -40 0; fi
+    fi
     n=$((n + 1)); sleep 0.2
   done
   echo "frames $n" >> "$OUT/rec-status.txt"

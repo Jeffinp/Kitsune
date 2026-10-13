@@ -6,7 +6,7 @@
 // a layout box. Made for bringing up YouTube (docs/design/tls-browser.md §16), useful for any page.
 //
 //   node tools/yt-probe.js [URL] [--engine qjs|node] [--secs N] [--cache DIR] [--referer URL] [--play]
-//     [--spy] [--direct CA.pem] [-v] [--net-log] [--save-docs]
+//     [--spy] [--direct CA.pem] [-v] [--net-log] [--save-docs] [--timers]
 //
 // --engine qjs (the default) runs the real page process: QuickJS with glue.c and page.c, built for the
 // host from tools/jsrun-host.c (needs clang), talking over pipes; its times are native ones (the QEMU
@@ -35,6 +35,9 @@ const NETLOG = flag('--net-log');
 const SPY = flag('--spy');
 // --save-docs: every document the page sends is kept as CACHE/doc-N.html (to see what changes).
 const SAVE_DOCS = flag('--save-docs');
+// --timers (with --engine node): every 10 s, the timers and animation frames the page asked for,
+// counted by delay and by the start of the function's source (what keeps the page busy).
+const TIMERS = flag('--timers');
 // --direct CA.pem: no HTTP proxy (the path a QEMU guest's traffic takes), trusting CA.pem.
 const DIRECT = opt('--direct', '');
 const W = +opt('--w', '960');
@@ -177,6 +180,22 @@ function nodeEngine() {
   };
   vm.runInContext(prelude, ctx, { filename: 'prelude' });
   const kjs = ctx.__kjs;
+  if (TIMERS) {
+    const counts = new Map();
+    const note = (kind, fn, ms) => {
+      const k = kind + ' ' + (ms | 0) + 'ms ' + String(fn).replace(/\s+/g, ' ').slice(0, 70);
+      counts.set(k, (counts.get(k) || 0) + 1);
+    };
+    for (const [name, kind] of [['setTimeout', 't'], ['setInterval', 'i'], ['requestAnimationFrame', 'raf']]) {
+      const orig = ctx[name];
+      ctx[name] = function (fn, ms, ...rest) { note(kind, fn, kind === 'raf' ? 16 : ms); return orig.call(this, fn, ms, ...rest); };
+    }
+    setInterval(() => {
+      const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+      out('probe: timers in 10 s: ' + top.map(([k, n]) => n + 'x ' + k).join('\n    '));
+      counts.clear();
+    }, 10000).unref();
+  }
   return {
     message: (text) => kjs.onMessage(text),
     data: (id, buf) => kjs.onData(id, buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length)),
