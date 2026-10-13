@@ -28,7 +28,7 @@ wait_for "js: interval done" 60
 sleep 2
 shot a-loaded
 # The button "Clique aqui", twice.
-goto "${BTN_X:-470}" "${BTN_Y:-370}"; click
+goto "${BTN_X:-219}" "${BTN_Y:-389}"; click
 wait_for "js: click 1 " 30
 sleep 2
 shot b-click1
@@ -36,22 +36,22 @@ click
 wait_for "js: click 2 " 30
 sleep 2
 # The link whose handler calls preventDefault: the page must stay.
-goto "${LINK_X:-460}" "${LINK_Y:-480}"; click
+goto "${LINK_X:-250}" "${LINK_Y:-536}"; click
 wait_for "js: mark link segurado" 30
 sleep 3
 shot c-prevented
 # The `javascript:` link.
-goto "${JSLINK_X:-640}" "${JSLINK_Y:-480}"; click
+goto "${JSLINK_X:-415}" "${JSLINK_Y:-536}"; click
 wait_for "js: mark js-link" 30
 sleep 2
 # The endless loop: stopped after 3 s; the desktop keeps drawing meanwhile.
-goto "${LOOP_X:-580}" "${LOOP_Y:-370}"; click
+goto "${LOOP_X:-329}" "${LOOP_Y:-389}"; click
 wait_for "js: entering an endless loop" 30
 sleep 1
 snap d-during-loop
 wait_for "ran for too long and was stopped" 60
 sleep 1
-goto "${BTN_X:-470}" "${BTN_Y:-370}"; click
+goto "${BTN_X:-219}" "${BTN_Y:-389}"; click
 wait_for "js: click 3 " 30
 sleep 2
 shot e-after-loop
