@@ -27,15 +27,22 @@ wait_for() { # wait_for PATTERN SECONDS
   for ((i = 0; i < $2 * 2; i++)); do grep -aq -- "$1" "$OUT/serial.log" && return 0; sleep 0.5; done
   return 1
 }
+count() { grep -ac -- "$1" "$OUT/serial.log" 2>/dev/null || true; }
+wait_n() { # wait_n PATTERN N SECONDS
+  local i
+  for ((i = 0; i < $3 * 2; i++)); do [ "$(count "$1")" -ge "$2" ] && return 0; sleep 0.5; done
+  return 1
+}
 open_url() { key ctrl-l; sleep 0.3; typestr "$1"; key ret; }
 
 wait_first_frame
 dock_icon browser; click; sleep 3
 open_url "http://203.0.113.5:$PORT/yt?go=1&v=$VIDEO&p=$PARAMS"
 wait_for "fetch: GET https://www.youtube.com/embed/" 60
-wait_for "handed to pid" 240
+# The launch page had its own script process: the embed's is the second.
+wait_n "handed to pid" 2 300
 shot yt-0-scripts
-wait_for "jsrun: page ready" 240
+wait_n "jsrun: page ready" 2 300
 t_ready=$(date +%s)
 shot yt-1-ready
 # The page's box on screen: "page at X,Y size WxH" (the player fills it).
@@ -82,8 +89,8 @@ fi
   }
   stage "HTML of the embed loaded" "fetch: GET https://www.youtube.com/embed/"
   stage "the player's script (base.js) downloaded" "js: https://www.youtube.com/s/player/.*base.js -> "
-  stage "the scripts handed to the page process" "handed to pid"
-  stage "the scripts ran (page ready)" "jsrun: page ready"
+  stage "the scripts handed to the page process" "script(s), [0-9]* KiB, handed to pid"
+  stage "the scripts ran (page ready)" "jsrun: page ready ([0-9][0-9] scripts)"
   stage "scripts added by the page loaded (BotGuard, modules)" "jsfetch: [0-9]* GET https://www.google.com/js/th/"
   stage "the player asked the API (youtubei/v1/player)" "jsfetch: [0-9]* POST https://www.youtube.com/youtubei/v1/player"
   stage "the player asked googlevideo.com for the video" "jsfetch: [0-9]* POST https://[^ ]*googlevideo.com/videoplayback"

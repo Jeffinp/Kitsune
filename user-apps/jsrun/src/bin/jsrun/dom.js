@@ -954,7 +954,12 @@
         top().appendChild(el);
         if (VOID.has(name) || selfClose) continue;
         if (RAW.has(name) || RCDATA.has(name)) {
-          const end = html.toLowerCase().indexOf('</' + name, i);
+          // Case-insensitive search from i (lower-casing the whole text could change its length:
+          // 'İ' becomes two code units, and every index after it would be off).
+          const re = new RegExp('</' + name, 'ig');
+          re.lastIndex = i;
+          const found = re.exec(html);
+          const end = found ? found.index : -1;
           const stop = end < 0 ? n : end;
           const text = html.slice(i, stop);
           if (text) el.appendChild(new Text(RAW.has(name) ? text : decode(text)));

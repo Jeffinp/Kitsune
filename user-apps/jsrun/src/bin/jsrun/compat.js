@@ -33,6 +33,14 @@
   Option.prototype = global.HTMLOptionElement.prototype;
   define('Option', Option);
 
+  // Node classes an HTML document never makes but polyfills patch (the Shady DOM of webcomponents.js).
+  class CDATASection extends D.Text {}
+  class ProcessingInstruction extends D.CharacterData {
+    get target() { return this._target || ''; }
+  }
+  define('CDATASection', CDATASection);
+  define('ProcessingInstruction', ProcessingInstruction);
+
   // ---- canvas: not drawn yet ----
 
   const CP = global.HTMLCanvasElement.prototype;

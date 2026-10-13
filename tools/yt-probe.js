@@ -5,7 +5,8 @@
 // elements get a fake decoder that reads the WebM timestamps of what is appended, and every element gets
 // a layout box. Made for bringing up YouTube (docs/design/tls-browser.md §16), useful for any page.
 //
-//   node tools/yt-probe.js [URL] [--engine qjs|node] [--secs N] [--cache DIR] [--play] [-v] [--net-log]
+//   node tools/yt-probe.js [URL] [--engine qjs|node] [--secs N] [--cache DIR] [--referer URL] [--play]
+//     [--spy] [--direct CA.pem] [-v] [--net-log]
 //
 // --engine qjs (the default) runs the real page process: QuickJS with glue.c and page.c, built for the
 // host from tools/jsrun-host.c (needs clang), talking over pipes; its times are native ones (the QEMU
@@ -32,6 +33,8 @@ const VERBOSE = flag('-v');
 const PLAY = flag('--play');
 const NETLOG = flag('--net-log');
 const SPY = flag('--spy');
+// --direct CA.pem: no HTTP proxy (the path a QEMU guest's traffic takes), trusting CA.pem.
+const DIRECT = opt('--direct', '');
 const W = +opt('--w', '960');
 const H = +opt('--h', '540');
 const REFERER = opt('--referer', '');
@@ -95,6 +98,7 @@ function curl(method, url, headers, body, follow) {
     const tag = nodeCrypto.randomBytes(6).toString('hex');
     const hf = path.join(CACHE, 'h-' + tag), bf = path.join(CACHE, 'b-' + tag), qf = path.join(CACHE, 'q-' + tag);
     const a = ['-sS', '-X', method, '-D', hf, '-o', bf, '-w', '%{http_code} %{url_effective}', '--max-time', '60', '-A', UA, '-H', 'Accept-Encoding: identity'];
+    if (DIRECT) a.push('--noproxy', '*', '--cacert', DIRECT);
     if (follow) a.push('-L', '--max-redirs', '10');
     for (const [k, v] of headers) a.push('-H', k + ': ' + v);
     if (body && body.length) { fs.writeFileSync(qf, body); a.push('--data-binary', '@' + qf); }
