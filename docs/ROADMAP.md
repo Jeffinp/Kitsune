@@ -125,9 +125,21 @@ abaixo, e nenhuma existe ainda. Ordem proposta, cada etapa com aceite próprio:
    `AbortController`), `XMLHttpRequest`, `sendBeacon`, `Headers`/`Request`/`Response`, `Blob`/`FormData`,
    `TextEncoder`/`TextDecoder`, `crypto.getRandomValues` (chamada 66), `structuredClone`, pelo `fetcher` (fila de
    pedidos dos scripts) e pelo bloqueador; provado no QEMU (`w55-net-js.sh`, 23/23). Ver `tls-browser.md` §13.
-   **Falta para o aceite desta etapa** (um app pequeno de React/Preact aparece certo, não testado): teclado e texto
-   dos campos visíveis ao script, eventos de mouse além do clique, medidas de layout, módulos, e um envio do DOM mais
-   barato que o documento inteiro.
+   **DOM para frameworks: feito (2026-10), aceite da etapa cumprido.** Teclado (`keydown`/`keypress`/`keyup`), o
+   texto digitado nos campos com `input`/`change` e `value`/`checked`/`selectedIndex` que o script lê e atribui (o
+   documento devolvido manda nos controles; o que se digita e a página ainda não viu não se perde), foco
+   (`focus`/`blur`/`focusin`/`focusout`, `activeElement`, `.focus()`), mouse (`mousedown`/`up`, `dblclick`,
+   `contextmenu`, `wheel`, e `mousemove`/`over`/`out`/`enter`/`leave` só quando a página escuta), `submit` com
+   `preventDefault` (Enter num formulário espera o veredito), medidas de layout (um retrato das caixas e do estilo
+   calculado de cada elemento depois de cada layout: `getBoundingClientRect`, `offset*`, `client*`, `scroll*`,
+   `getComputedStyle`, `matchMedia`), `MutationObserver`/`IntersectionObserver`/`ResizeObserver` de verdade,
+   `<template>`, classes dos elementos, `TreeWalker`, `Range`, custom elements e shadow DOM básico (desenhado no lugar
+   dos filhos), `localStorage` persistente por origem (`~/.webstorage`), `history.pushState`/`popstate` com a barra de
+   endereço acompanhando, links `#fragmento` sem recarregar, `window.open` (nova aba), `Intl` pequeno (pt-BR/en) e
+   **Web Workers** num processo próprio (`jsrun --worker`, até 2 por página). **Aceite provado no QEMU**
+   (`w59-spa.sh`, 24/24): um TodoMVC de **Preact + htm** e um app de **Vue 3** (template no DOM) funcionam digitando e
+   clicando de verdade. Ver `docs/design/tls-browser.md` §14. **Falta:** módulos (`type=module`), canvas, um envio do
+   DOM mais barato que o documento inteiro (diferenças), `WebSocket`, `importScripts`.
 3. **Rede para o que o YouTube pede. Feita em parte (2026-10):** **cookies** (pote com `Domain`/`Path`/`Expires`/
    `Max-Age`/`Secure`/`HttpOnly`/`SameSite`, `document.cookie`, `~/.cookies`, terceiros bloqueados com o escudo
    ligado), **HTTP/1.1 keep-alive** com a sessão TLS reutilizada (até 4 conexões, 15 s ociosas; uma página de 25
@@ -156,7 +168,10 @@ abaixo, e nenhuma existe ainda. Ordem proposta, cada etapa com aceite próprio:
    no Windows e em hardware real.
 6. **O próprio YouTube:** o player pede dezenas de APIs (Web Workers, `requestAnimationFrame`, `MutationObserver`,
    `IntersectionObserver`, Canvas, WebAudio, DRM não, mas vários recursos de segurança). Aceite: abrir um vídeo e vê-lo
-   e ouvi-lo por um minuto.
+   e ouvi-lo por um minuto. **Preparo feito (2026-10):** Workers, os três observers, custom elements e shadow DOM
+   (o YouTube usa Web Components), `history.pushState` (a navegação do YouTube é uma SPA), `localStorage`,
+   `matchMedia`, `getComputedStyle`, medidas de layout e `Intl` existem (§14 do `tls-browser.md`). **Falta:** módulos
+   ES, canvas, WebAudio, `<video>`/MSE (outra frente), `WebSocket`, e testar o código do próprio YouTube.
 
 Sem a etapa 1 nada do resto roda; a ordem acima é a mínima. Enquanto isso o navegador continua ganhando o que páginas
 sem JavaScript pedem (itens do §10 do `tls-browser.md`).

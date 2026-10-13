@@ -4,6 +4,48 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — O DOM para frameworks: Preact e Vue de verdade (etapa 2 do YouTube)
+
+O JavaScript das páginas ganhou o que React/Preact/Vue e, depois, o player do YouTube usam. Projeto em
+`docs/design/tls-browser.md` §14.
+
+- **Entrada para o script** (`events.js`, `forms.js`; kernel `browser/jsinput.rs`): cada tecla num campo vai ao
+  processo da página com o texto do campo depois dela (`keydown`, `keypress`, `input`, `keyup`, `change`), o estado
+  dos controles vive na página (`value`, `checked`, `selectedIndex`, `defaultValue`, `form.elements`, validação) e o
+  documento devolvido o leva ao navegador (o que o script atribui aparece; o que se digitou e a página ainda não viu
+  é mantido, pela numeração `n`/`Q`). Foco nos dois sentidos (`focus`/`blur`/`focusin`/`focusout`,
+  `activeElement`, `.focus()` põe o cursor), `submit` com `preventDefault` (Enter num formulário espera o veredito),
+  ações padrão do clique (caixa, rádio, `label`, `summary`, links `#fragmento`), mouse (`mousedown`/`up`,
+  `dblclick`, `contextmenu`, `wheel`; `mousemove`/`over`/`out`/`enter`/`leave` só quando a página escuta: mensagem
+  `W`), `scroll`/`resize`, `visibilitychange`, construtores de evento e `addEventListener` com `once`/`passive`/
+  `signal`.
+- **Medidas de layout** (`layoutapi.js`; `kitsune_core::web::script::boxes_message`): depois de cada layout o
+  navegador manda um retrato binário (caixa e estilo calculado de cada elemento, `Page::styles`/`StyleRec`, 52
+  bytes por elemento); `getBoundingClientRect`, `offset*`, `client*`, `scroll*`, `scrollTo`/`scrollIntoView`,
+  `innerWidth`, `scrollY`, `devicePixelRatio`, `elementFromPoint`, `getComputedStyle`, `matchMedia` com `change`.
+- **Observers** (`observers.js`): `MutationObserver` de verdade sobre um gancho do `dom.js`, `IntersectionObserver`
+  e `ResizeObserver` a partir do retrato e da rolagem, `requestIdleCallback`, `PerformanceObserver`.
+- **Estrutura** (`structure.js`): `<template>`/`content`, classes dos elementos (`HTMLInputElement`...), `style`
+  como `CSSStyleDeclaration`, `TreeWalker`, `NodeIterator`, `Range`, `Selection`, `compareDocumentPosition`,
+  **custom elements** (`define`, upgrade, callbacks) e **shadow DOM** básico (`attachShadow`, slots; o navegador
+  desenha a árvore sombra no lugar dos filhos).
+- **Armazenamento e navegação**: `localStorage` persistente por origem em `~/.webstorage` (`WebStorage`, cotas),
+  `sessionStorage`; `history.pushState`/`replaceState`/`back`/`forward`/`go` com `popstate` e a barra de endereço
+  acompanhando (`Browser::push_state`, entradas do mesmo documento), `location.hash` e links `#fragmento` sem
+  recarregar (`hashchange`); `window.open` (nova aba), `postMessage`, `MessageChannel`, `navigator` mais completo,
+  `Intl` pequeno em pt-BR e inglês (`intl.js`), `Notification`/service workers/`WebSocket` que recusam sem quebrar.
+- **Web Workers** (`workers.js`, `workerscope.js`, `msgcodec.js`; kernel `jsworker.rs`, `userproc::spawn_worker`):
+  `new Worker(url)` roda num processo `jsrun --worker` próprio, com `postMessage` (clone estruturado em texto),
+  `fetch`, timers e `Intl`, até 2 por página.
+- **Parser HTML**: nomes de atributo como os do tokenizador (`@click`, `:class`, `v-model.trim` chegavam cortados).
+- **Provado no QEMU** (BIOS, 256 MiB, TCG; `w59-spa.sh`, **24/24**): um TodoMVC de **Preact 10 + htm** (digitar,
+  Enter, marcar, filtrar por `#/active` com a barra mostrando o endereço, remover, a lista de volta depois de
+  recarregar) e um app de **Vue 3.5** com o template no DOM (`@click`, `v-model`, `v-if`, `v-for`,
+  `@keyup.enter`, caixa, `<select>`, `@submit.prevent`), sem erros, e um Worker que conta primos, busca um arquivo e
+  responde. Sem regressão: `w52-browser-js.sh` 19/19, `w55-net-js.sh` 31/31. No hospedeiro: `tools/js-dom-check.js`
+  (o DOM no Node com o navegador simulado: APIs, os dois apps e os workers) e 13 testes novos no `kitsune_core`.
+  Preact e Vue (MIT) e htm (Apache 2.0) ficam só no site de teste (`tools/site-assets`, `THIRD-PARTY.md`).
+
 ## 2026-10 — Som (etapa 5 do YouTube)
 
 O sistema tem som. Projeto em `docs/design/audio.md`.

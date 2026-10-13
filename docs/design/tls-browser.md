@@ -620,9 +620,9 @@ eventos (`addEventListener` com `capture`/`once`, `removeEventListener`, `dispat
 
 A rede (`fetch`, `XMLHttpRequest`, cookies, CORS, `TextEncoder`, `Blob`, `crypto`...) está no §13; o teclado, os campos,
 o foco, o mouse, as medidas de layout, os observers, `<template>`, custom elements e shadow DOM, `localStorage`
-persistente, `history.pushState`, `Intl` e o resto que os frameworks usam estão no §14.
+persistente, `history.pushState`, `Intl`, Web Workers e o resto que os frameworks usam estão no §14.
 
-**Ainda não**: módulos (`type=module`, `import`), Web Workers, canvas, `<link>` acrescentado por script depois do
+**Ainda não**: módulos (`type=module`, `import`), canvas, `<link>` acrescentado por script depois do
 início (as imagens novas são buscadas; folhas novas não). Os scripts rodam todos depois do documento inteiro (como
 `defer`), não no meio do parse; `document.write` acrescenta ao fim. O documento volta inteiro a cada mudança: barato
 em páginas pequenas, caro numa SPA grande (cada envio é um parse e um layout). Os scripts só começam na aba ativa.
@@ -807,7 +807,8 @@ cópia do navegador leva de um elemento) e `hooks.created` (classe do elemento, 
 
 | Arquivo | O quê |
 |---|---|
-| `events.js` | classes de evento (`KeyboardEvent`, `MouseEvent`, `PointerEvent`, `WheelEvent`, `InputEvent`, `FocusEvent`, `SubmitEvent`, `PopStateEvent`...), `addEventListener` com `once`/`passive`/`signal`, o estado dos controles (`value`, `checked`, `selectedIndex`, `defaultValue`, `form.elements`, validação), foco (`focus()`/`blur()`, `activeElement`, `autofocus`), ações padrão de um clique (caixa e rádio, `label`, `summary`, link, envio com `submit`), `form.submit()`/`requestSubmit()`/`reset()` e as mensagens de entrada |
+| `forms.js` | o estado dos controles (`value`, `checked`, `selectedIndex`, `defaultValue`, `type`, `form`, `form.elements`, `labels`, validação, seleção do texto) e o que a cópia do navegador leva deles |
+| `events.js` | classes de evento (`KeyboardEvent`, `MouseEvent`, `PointerEvent`, `WheelEvent`, `InputEvent`, `FocusEvent`, `SubmitEvent`, `PopStateEvent`...), `addEventListener` com `once`/`passive`/`signal`, foco (`focus()`/`blur()`, `activeElement`, `autofocus`), ações padrão de um clique (caixa e rádio, `label`, `summary`, link, envio com `submit`), `form.submit()`/`requestSubmit()`/`reset()` e as mensagens de entrada |
 | `layoutapi.js` | o retrato do layout: `getBoundingClientRect`, `offset*`, `client*`, `scroll*`, `scrollTo`/`scrollBy`/`scrollIntoView`, `innerWidth`/`scrollY`/`devicePixelRatio`, `visualViewport`, `elementFromPoint`, `getComputedStyle`, `matchMedia` (com `change`), `CSS.supports`, `DOMRect` |
 | `observers.js` | `MutationObserver` de verdade, `IntersectionObserver`, `ResizeObserver`, `requestIdleCallback`, `PerformanceObserver` |
 | `structure.js` | classes dos elementos (`HTMLInputElement`...; `instanceof` funciona), `<template>`/`content`, `style` como `CSSStyleDeclaration`, `TreeWalker`/`NodeIterator`, `Range`, `Selection`, `compareDocumentPosition`, `normalize`, `splitText`, custom elements e shadow DOM |
@@ -815,6 +816,8 @@ cópia do navegador leva de um elemento) e `hooks.created` (classe do elemento, 
 | `history.js` | `history.pushState`/`replaceState`/`back`/`forward`/`go`/`state`/`length`, `popstate`, `hashchange`, `location` (`hash`, `search`, `pathname`... que navegam) |
 | `intl.js` | um `Intl` pequeno (pt-BR e en): `DateTimeFormat`, `NumberFormat`, `PluralRules`, `Collator`, `RelativeTimeFormat`, `ListFormat`, `Segmenter`, e os `toLocale*String`/`localeCompare` |
 | `webapis.js` | `window.open` (nova aba), `postMessage` na mesma janela, `MessageChannel`, `BroadcastChannel` (só a página), `a.pathname` e afins, `href`/`src` absolutos, `navigator` (`clipboard`, `permissions`, `serviceWorker`, `storage`...), e os que recusam sem quebrar: `Notification` (negada), service workers (rejeitados), `WebSocket` (falha como servidor inalcançável) |
+| `msgcodec.js`, `workers.js` | o clone estruturado em texto (`Date`, `RegExp`, `Map`, `Set`, `ArrayBuffer`, arrays tipados, `Blob`/`File`, `Error`, referências repetidas) e `Worker` do lado da página (§14.5) |
+| `workerscope.js` | o escopo global do worker (prelúdio do `jsrun --worker`: `dom.js` só pelos timers e pelo laço, `net.js`, `intl.js`, `msgcodec.js` e ele) |
 
 ### 14.1 Entrada: quem manda nos controles
 
@@ -899,21 +902,40 @@ clique num link `#fragmento` da própria página viram entradas do mesmo documen
 alvo) em vez de recarregar a página: é o roteamento de muitos apps (o TodoMVC). `history.go(n)` manda `B<n>`.
 `beforeunload` nunca dispara (o navegador não pergunta antes de sair).
 
-### 14.5 Limites
+### 14.5 Web Workers
 
-Sem `Worker` (o construtor não existe: as páginas testam e seguem sem), `WebSocket` só recusa, `Notification` e
-service workers recusam, `navigator.clipboard` recusa (a área de transferência do sistema não é dada à página),
+`new Worker(url)` (clássico; `type: 'module'` recusa) roda num **processo próprio**: outro `jsrun`, iniciado pelo
+navegador com `--worker` (`userproc::spawn_worker`, a mesma ligação de mensagens da página, chamadas 56/57; nenhuma
+chamada nova). A página busca o script com o seu `fetch` (mesma origem, `blob:` ou `data:`; outra origem é
+`SecurityError`) e manda `K new` com o código; o navegador (`kernel/.../browser/jsworker.rs`) inicia o processo e lhe
+entrega `winit`. `postMessage` vai e volta como texto (`msgcodec.js`), carregado pelo navegador sem ler (`K msg` →
+`wmsg`; `M` → `worker`). O worker tem `self`, `postMessage`, `onmessage`, `close()`, `name`, `location` (só leitura),
+timers, `requestAnimationFrame`, `fetch`/XHR (pelo mesmo bloqueador e fetcher da página, as respostas vão direto ao
+processo do worker), `Intl`, `TextEncoder`, `crypto`, e não tem `document` nem `window`. **No máximo 2 por página**
+(`MAX_WORKERS`; o terceiro recebe `error` e não começa: o sistema tem 8 processos de anel 3 ao todo). `terminate()`
+mata o processo; `close()` pede ao navegador que o termine; a página que sai leva os seus workers junto. Limites:
+`importScripts` recusa (`NotSupportedError`; buscar síncrono exigiria uma espera bloqueante no meio de uma tarefa),
+sem transferência de posse (`transfer` copia), sem `SharedWorker`, um erro não capturado num `onmessage` do worker
+chega à página como `error`, um erro numa tarefa qualquer só no log.
+
+### 14.6 Limites
+
+`WebSocket` só recusa (ainda não há conexão persistente bidirecional na pilha para scripts), `Notification` e service
+workers recusam, `navigator.clipboard` recusa (a área de transferência do sistema não é dada à página),
 `BroadcastChannel` e `postMessage` só dentro da página. `Intl` cobre pt-BR e inglês; fusos: UTC e os fixos do Brasil.
 Sem `contenteditable` editável, sem seleção de texto da página visível ao script (`getSelection` é um objeto que o
 script pode preencher), sem `:hover`/`:focus` nos seletores do script. O documento continua indo inteiro ao
-navegador a cada lote de mudanças (§12.2).
+navegador a cada lote de mudanças (§12.2). Os botões continuam sendo desenhados como controles do navegador (sem o
+fundo e a borda do CSS da página).
 
-### 14.6 Provas
+### 14.7 Provas
 
 | O quê | Evidência |
 |---|---|
 | Mensagens de entrada, `Subs`, `Inputs`/`Q`, `view`, o retrato do layout (caixa e estilo por elemento, `display:none`), `WebStorage` (cotas, arquivo, origens), o parser das operações `L` (escapes, surrogates, entrada hostil), `FieldInfo::uid`/`field_by_uid`, `FormState::set_text` | `kitsune_core` `web::script::tests_input` (8 testes) |
 | Histórico do mesmo documento: `push_state`, `replace`, `go`, `take_pop`, outra origem recusada, recarga é documento novo | `browser::ui_tests::same_document` (4 testes) |
 | Nomes de atributo dos templates (`@click`, `:class`, `v-model.trim`) | `web::dom::html_tests` |
-| O DOM inteiro em JavaScript no hospedeiro, com o navegador simulado (inclusive com a árvore do parser do navegador: `KITSUNE_INIT=script_init`): 34 verificações de API (MutationObserver, template, classes, formulários, valores no documento, custom elements com slots, shadow DOM, retrato, `getComputedStyle`, `matchMedia`, observers, `once`/`signal`, mouse, teclas, `localStorage`, `pushState`, `Intl`, `Range`, `TreeWalker`, `postMessage`, `window.open`), o TodoMVC de Preact + htm (24) e o app Vue 3 (15) | `node tools/js-dom-check.js user-apps/jsrun/src/bin/jsrun tools/site-assets` |
-| Preact e Vue no QEMU (BIOS, 256 MiB, TCG), digitando e clicando pelo monitor | `tools/perf/scen/w59-spa.sh` com as páginas `/preact` e `/vue` de `tools/w24-site.py` (ver abaixo) |
+| Mensagens dos workers | `web::script::tests_input::worker_messages` |
+| O DOM inteiro em JavaScript no hospedeiro, com o navegador simulado (inclusive com a árvore do parser do navegador: `KITSUNE_INIT=script_init`): 34 verificações de API (MutationObserver, template, classes, formulários, valores no documento, custom elements com slots, shadow DOM, retrato, `getComputedStyle`, `matchMedia`, observers, `once`/`signal`, mouse, teclas, `localStorage`, `pushState`, `Intl`, `Range`, `TreeWalker`, `postMessage`, `window.open`), o TodoMVC de Preact + htm (24), o app Vue 3 (15) e os workers num segundo contexto (6: escopo sem `document`, clone estruturado nos dois sentidos, `fetch` no worker, limite de 2, `close()`, outra origem) | `node tools/js-dom-check.js user-apps/jsrun/src/bin/jsrun tools/site-assets` |
+| **Preact, Vue e um Worker no QEMU** (BIOS, 256 MiB, TCG, sem KVM), digitando e clicando de verdade pelo monitor nas páginas `/preact`, `/vue` e `/worker` de `tools/w24-site.py` | `tools/perf/scen/w59-spa.sh`: **24/24**. Preact + htm: carrega, `input.focus()` num efeito põe o cursor no campo, `getBoundingClientRect` depois do layout (num `ResizeObserver`), o texto digitado chega (`input`, `value`), Enter (`keydown`) acrescenta e o campo é limpo (`value = ''` aparece na tela), três itens, a caixa marca um (`click`, `change`), o link `#/active` filtra (`hashchange`) e a barra mostra `.../preact#/active` (`pushState`), remover, `localStorage` gravado em `~/.webstorage` e a lista de volta depois de Ctrl+R. Vue 3.5 (template no DOM compilado pelo `vue.global.prod.js`): monta, `@click` conta, `v-model` + `v-if` com o nome digitado, `@keyup.enter` + `v-for`, caixa com `v-model`, `<select>` com `v-model`, formulário com `@submit.prevent` (não navega), nenhum erro nem aviso do Vue. Worker: processo próprio, conta 2262 primos até 20000, busca um arquivo e responde (~0,7 s no TCG). Capturas: `docs/img/browser-preact-todomvc.png`, `docs/img/browser-vue.png` |
+| Nada quebrou | com o mesmo build: `w52-browser-js.sh` 19/19 e `w55-net-js.sh` 31/31 (23 do script e 8 do log) |

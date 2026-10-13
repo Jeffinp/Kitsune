@@ -634,6 +634,30 @@ Projeto em [`design/midia.md`](design/midia.md). Três camadas:
    bytes são os mesmos), depois `--serve-test`, um arquivo cortado e um corrompido (terminam sozinhos, o sistema segue),
    `--info`, `--rgb 1280x720` e `--show` (captura `d-show.png`). Veredito em `OUT/verdict.txt`, com os fps de cada
    tamanho.
+### DOM para frameworks (W59): Preact, Vue e Workers
+
+Host: `cargo test -p kitsune_core script:: same_document html_tests` (mensagens de entrada, retrato do layout,
+`WebStorage`, workers, histórico do mesmo documento, nomes de atributo) e `node tools/js-dom-check.js
+user-apps/jsrun/src/bin/jsrun tools/site-assets`: carrega os arquivos do prelúdio na ordem do `jsrun.rs` num `vm` do
+Node (sem `Intl`, como o QuickJS), faz o papel do navegador (o `init` montado de cada página, teclas com o texto do
+campo, cliques, foco, retratos de layout, `store`, `pop`, e um segundo contexto para cada worker) e confere 34 APIs,
+o TodoMVC de Preact + htm e o app Vue 3 de `tools/site-assets`, e os workers. Com
+`KITSUNE_INIT=<binário do exemplo script_init>` (`cargo build -p kitsune_core --example script_init`) a árvore vem do
+parser HTML do navegador em vez do parser de fragmentos do `dom.js`. QEMU:
+
+```bash
+python3 tools/w24-site.py 8279 &        # porta própria (também usa 8278); /preact, /vue, /worker, /assets/...
+PORT=8279 QEMU_MEM=256M QEMU_NETDEV="user,id=n0,net=203.0.113.0/24,host=203.0.113.5,dhcpstart=203.0.113.15,dns=203.0.113.3" \
+  tools/perf/run.sh <img> bios /tmp/w59 1000 tools/perf/scen/w59-spa.sh     # ONLY=preact|vue|worker roda uma parte
+```
+
+O cenário digita (`typestr`, `key`) e clica (`goto` + `click`) pelo monitor: as páginas imprimem onde estão os seus
+controles (`... at nome=x,y`, de `getBoundingClientRect` num `ResizeObserver`) e o navegador imprime onde a página
+está na tela (`page at X,Y zoom Z`). Veredito em `$OUT/verdict.txt` (24 verificações: o estado que as páginas
+imprimem depois de cada ação, o `pushState` e o `webstorage: saved` do log), passos em `steps.txt`, capturas `a`–`h`.
+As páginas cabem na janela do navegador como ela abre (BIOS, 1280x720); o cenário não rola. Projeto:
+[`design/tls-browser.md`](design/tls-browser.md) §14.
+
 ### Rede dos scripts (W55): fetch, XHR, cookies, CORS, keep-alive
 
 Host: `cargo test -p kitsune_core http1 cookies cors script` (leitor HTTP/1.1 e chunked, Range, cookies, CORS, as
