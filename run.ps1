@@ -46,6 +46,15 @@ function Build-Kitsune {
         if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
             throw "cargo nao encontrado no Windows. Instale o Rust: https://rustup.rs (rustup-init.exe)"
         }
+        # user-apps/jsrun compiles QuickJS with clang (build.rs reads $env:CLANG). The LLVM installer
+        # does not put clang on PATH by default, so fall back to its usual install dir.
+        if (-not $env:CLANG -and -not (Get-Command clang -ErrorAction SilentlyContinue)) {
+            $llvmClang = 'C:\Program Files\LLVM\bin\clang.exe'
+            if (-not (Test-Path $llvmClang)) {
+                throw "clang nao encontrado (necessario para o jsrun). Instale: winget install LLVM.LLVM"
+            }
+            $env:CLANG = $llvmClang
+        }
         Write-Host "Compilando Kitsune (release) no Windows ..." -ForegroundColor Cyan
         Push-Location $PSScriptRoot
         try {
