@@ -5,8 +5,10 @@ use super::*;
 
 /// How far the decoded sound may run ahead of the decoded pictures.
 const AUDIO_LEAD_NS: i64 = 1_500_000_000;
-/// A picture that ends this long before the player's clock is not converted nor sent.
+/// A picture that ends this long before the player's clock is not converted nor sent...
 const LATE_NS: i64 = 40_000_000;
+/// ...unless no picture went for this long (a decoder slower than the video still shows some).
+const LATE_EVERY_MS: u64 = 200;
 
 impl Server {
     /// The next video frame to decode (its index and time), if the budget allows it.
@@ -106,6 +108,7 @@ impl Server {
             target,
             bgr,
             late,
+            last_frame_ms,
             ..
         } = self;
         let Some(v) = video.as_mut() else { return };
@@ -130,10 +133,13 @@ impl Server {
             return;
         }
         // Too late to be shown: the decoder has caught up only if this is not converted.
-        if clock.is_some_and(|c| pts + dur < c - LATE_NS) {
+        if clock.is_some_and(|c| pts + dur < c - LATE_NS)
+            && now_ms.saturating_sub(*last_frame_ms) < LATE_EVERY_MS
+        {
             *late += 1;
             return;
         }
+        *last_frame_ms = now_ms;
         let Some(pic) = v.dec.picture() else { return };
         let (w, h) = proto::fit(*size, pic.width(), pic.height());
         // The message as words, so the pixels are written in place (4-aligned after the head).

@@ -389,7 +389,10 @@
       if (m.w) { s.vw = m.w; s.vh = m.h; }
       if (m.d === -1) s.duration = Infinity; else if (m.d >= 0) s.duration = m.d / NS;
       if (has('volumechange')) { s.volume = (m.vol | 0) / 100; s.muted = !!m.mu; }
-      if (m.err && !s.error) { s.error = new MediaError(m.err, 'decoder error'); s.networkState = 1; }
+      if (m.err && !s.error) {
+        s.error = new MediaError(m.err, ['', 'aborted', 'network error', 'decode error', 'format not supported'][m.err] || 'error');
+        s.networkState = m.err === 4 ? 3 : 1;
+      }
       if (has('loadedmetadata') && s.startAt > 0) { const t = s.startAt; s.startAt = 0; later(() => this._seek(t)); }
       for (const e of ev) {
         if (e === 'loadeddata' || e === 'canplaythrough') s.networkState = s.loader && !s.loader.done ? 2 : 1;

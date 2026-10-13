@@ -29,6 +29,8 @@ pub const START_AHEAD_NS: i64 = 300_000_000;
 const AUDIO_SLACK_NS: i64 = 40_000_000;
 /// The longest silence put in for a gap in the sound.
 const MAX_GAP_NS: i64 = 2_000_000_000;
+/// Without sound, the clock waits only when no picture came for this long past the last one.
+const VIDEO_GRACE_NS: i64 = 1_000_000_000;
 /// `timeupdate` while playing, at most this often.
 const TIMEUPDATE_MS: u64 = 250;
 
@@ -462,7 +464,9 @@ impl<F> Player<F> {
         let dry = if sound {
             ahead <= 0 && !self.st.drained
         } else if self.has_video() {
-            self.frames.is_empty() && !self.st.drained && t >= self.video_end
+            // A slow decoder sends only some pictures (the late ones are skipped): give it a second
+            // before calling the pictures run out.
+            self.frames.is_empty() && !self.st.drained && t >= self.video_end + VIDEO_GRACE_NS
         } else {
             false
         };

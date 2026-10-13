@@ -94,6 +94,8 @@ pub struct Server {
     clock: (i64, bool, u64),
     /// Pictures decoded too late to show (not sent).
     pub late: u32,
+    /// When the last picture was sent (`Link::now_ms`).
+    last_frame_ms: u64,
     /// The request of the fetcher whose bytes come now (the `src`), and how many came.
     fetch: Option<(u32, u64)>,
     /// Budget (pictures, sound) in bytes and what is out unpaid.
@@ -155,6 +157,7 @@ impl Server {
             bgr: false,
             clock: (0, false, 0),
             late: 0,
+            last_frame_ms: 0,
             fetch: None,
             flow: None,
             out_video: 0,
