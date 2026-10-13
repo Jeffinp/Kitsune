@@ -29,7 +29,7 @@ pub(crate) enum JsAction {
     Open(Vec<u8>),
 }
 
-/// The script process of a tab.
+/// The script process of a tab, and the players of its media elements.
 pub(crate) struct JsProc {
     pub pid: u32,
     pub session: Session<JsAction>,
@@ -49,6 +49,7 @@ pub(crate) struct JsProc {
     pub visible: bool,
     /// The page's Web Workers (`jsworker.rs`); dropped (killed) with the page.
     pub workers: Vec<super::jsworker::WorkerProc>,
+    pub media: super::media::MediaSet,
 }
 
 impl Drop for JsProc {
@@ -139,6 +140,8 @@ impl Desktop {
         super::jsnet::save_cookies();
         b.webstore.save_due();
         let mut redraw = false;
+        let mut media_relayout = false;
+        let mut media_redraw = false;
         let mut actions: Vec<(u32, JsAction)> = Vec::new();
         let mut title: Option<String> = None;
         let BrowserState {
@@ -223,11 +226,36 @@ impl Desktop {
                     FromScript::ToPage(_)
                     | FromScript::WorkerFailed(_)
                     | FromScript::WorkerClose => {}
+                    FromScript::Media(c) => js.media.command(js.pid, c),
+                    FromScript::MediaData {
+                        id,
+                        src,
+                        seq,
+                        bytes,
+                    } => js.media.data(js.pid, id, src, seq, bytes),
                     FromScript::Unknown => {}
                 }
             }
             super::jsworker::pump(t);
             let Some(js) = t.js.as_mut() else { continue };
+            // The players: a tab in the background pauses them.
+            if t.id != active_id {
+                js.media.pause_all();
+            }
+            if !js.media.players.is_empty() {
+                let mut net = super::media::NetCtx {
+                    page_url: String::from_utf8_lossy(t.browser.nav_url()).into_owned(),
+                    shield: &mut t.shield,
+                    insecure_host: t.browser.insecure_host().unwrap_or_default(),
+                };
+                let m = js
+                    .media
+                    .pump(js.pid, &mut net, t.page.as_ref(), t.doc.as_mut());
+                if t.id == active_id {
+                    media_redraw |= m.redraw;
+                    media_relayout |= m.relayout;
+                }
+            }
             if let Some(a) = js.session.expire(now_ms()) {
                 crate::klog!(Info, "browser: the page did not answer a click in time");
                 actions.push((t.id, a));
@@ -246,10 +274,16 @@ impl Desktop {
                 }
                 if t.id == active_id {
                     relayout_js(t, images, content);
+                    media_relayout = false;
                 } else {
                     t.layout_w = 0;
                     t.page = None;
                 }
+                redraw = true;
+            } else if media_relayout && t.id == active_id {
+                // A video learnt its size.
+                media_relayout = false;
+                relayout_js(t, images, content);
                 redraw = true;
             }
             super::jsinput::frame(t, content, t.id == active_id);
@@ -264,8 +298,26 @@ impl Desktop {
                 }
             }
         }
+        // A new picture only: just the video boxes are painted again (and uploaded).
+        let mut video_rects: Vec<Rect> = Vec::new();
+        if media_redraw && !redraw {
+            let t = b.tabs.active();
+            if let Some(p) = &t.page {
+                video_rects = p
+                    .videos
+                    .iter()
+                    .filter_map(|v| {
+                        Rect::new(content.x + v.x, content.y - t.scroll + v.y, v.w, v.h)
+                            .intersection(&content)
+                    })
+                    .collect();
+            }
+        }
         if redraw {
             b.touch();
+        }
+        for r in video_rects {
+            self.mark_dirty(r);
         }
         if let Some(tt) = title {
             self.browser_set_title(id, tt);
@@ -313,6 +365,16 @@ impl Desktop {
         let Some(b) = self.browser_state_mut(id) else {
             return false;
         };
+        let t = b.tabs.active_mut();
+        let Some(page) = &t.page else {
+            return false;
+        };
+        if let (Some(v), Some(js)) = (page.video_at(qx, qy).copied(), t.js.as_mut())
+            && js.media.click(js.pid, &v, qx, qy, i32::from(t.zoom.max(1)))
+        {
+            b.touch();
+            return false;
+        }
         let t = b.tabs.active_mut();
         let Some(page) = &t.page else {
             return false;
@@ -448,6 +510,7 @@ fn start_js(
         pending_move: None,
         visible: true,
         workers: Vec::new(),
+        media: Default::default(),
     });
     super::jsinput::after_init(t);
     // The element boxes (and the controls outside forms) appear: lay out as for a new page.

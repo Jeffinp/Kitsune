@@ -96,6 +96,10 @@ impl Desktop {
         scroll: i32,
         bs: &BrowserState,
     ) {
+        // Only a video's new picture to paint: the video paints all of its box itself.
+        if super::super::media::video_covers(page, content, scroll, c.clip_rect()) {
+            return;
+        }
         let key = page_key(bs, content);
         let info = c.fb_info();
         let whole = content.x >= 0

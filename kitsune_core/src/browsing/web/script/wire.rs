@@ -191,6 +191,15 @@ pub enum FromScript<'a> {
     WorkerFailed(&'a str),
     /// From a worker: `close()` (`Z`).
     WorkerClose,
+    /// A command for a media element's player (`play()`, `currentTime = t`, ...).
+    Media(crate::browsing::media::wire::Command),
+    /// WebM bytes for source buffer `src` of player `id` (append number `seq`).
+    MediaData {
+        id: u32,
+        src: u8,
+        seq: u32,
+        bytes: &'a [u8],
+    },
     /// Anything else (ignored).
     Unknown,
 }
@@ -269,6 +278,17 @@ pub fn parse_message(m: &[u8]) -> FromScript<'_> {
             _ => FromScript::Unknown,
         },
         b'Z' if rest.is_empty() => FromScript::WorkerClose,
+        b'V' => crate::browsing::media::wire::parse_control(rest)
+            .map_or(FromScript::Unknown, FromScript::Media),
+        b'v' => match crate::browsing::media::wire::parse_data(rest) {
+            Some((id, src, seq, bytes)) => FromScript::MediaData {
+                id,
+                src,
+                seq,
+                bytes,
+            },
+            None => FromScript::Unknown,
+        },
         _ => FromScript::Unknown,
     }
 }

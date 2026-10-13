@@ -1,80 +1,145 @@
-//! The message server (`mediadec --serve`): a player (the browser, later) sends WebM bytes and gets
-//! back RGBA pictures and PCM. Each message is one `page_recv`/`page_send` (calls 56/57, the same
-//! link as `jsrun --page`); the first byte says what it is, numbers are little endian. The protocol
-//! is in `docs/design/midia.md`.
+//! The message server (`mediadec --serve`): the decoder of one `<video>`/`<audio>` element of the
+//! browser. The player sends WebM bytes for up to four source buffers (Media Source Extensions: video
+//! and audio usually come in separate ones) and gets back RGBA pictures and PCM. Each message is one
+//! `page_recv`/`page_send` (calls 56/57, the link of `jsrun --page`); the protocol is
+//! `kitsune_core::media::proto` and the table is in `docs/design/midia.md`.
+//!
+//! What arrives is demuxed at once into **track buffers** of coded frames (the MSE model): the
+//! buffered ranges are known right away (the answer to each append), `remove` and eviction work on
+//! frames, and a seek inside what is buffered needs nothing new. Decoding runs ahead of the player
+//! within the budget it gives (`IN_FLOW`, paid back with `IN_ACK`): the sound first (it is small and
+//! the player's clock), the pictures as far as the budget allows, in time order between the two.
 //!
 //! Shared by `mediadec` and the host checker; [`Loopback`] and [`selftest`] run it in memory.
 
-use super::pipeline::{Fatal, Media, Out};
+use super::ffi::{OPUS_MAX_SAMPLES, Opus, Vp9};
 use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::Write as _;
+use kitsune_core::media::proto::{self, Field};
+use kitsune_core::media::track::{Cursor, TrackBuffer};
+use kitsune_core::webm::{Demuxer, Event};
 
-/// To the server: WebM bytes (init segment, clusters...), in file order.
-pub const IN_DATA: u8 = 0x01;
-/// `u64` time (ns): answered with [`OUT_SEEKPOS`], the file offset of the cluster to send next
-/// (from the cues; `u64::MAX` when there are none); output before that time is dropped.
-pub const IN_SEEK: u8 = 0x02;
-/// `u64` file offset, `i64` time (ns): the next bytes start at that offset (a cluster the player
-/// found itself); output before the time is dropped.
-pub const IN_RESTART: u8 = 0x03;
-/// `u32` width, `u32` height: the size of the pictures sent (0, 0: the video's own size). At most
-/// [`MAX_W`] x [`MAX_H`].
-pub const IN_SIZE: u8 = 0x04;
-/// No more data for now: everything decodable is sent, then [`OUT_END`].
-pub const IN_END: u8 = 0x05;
-/// Stop the server.
-pub const IN_QUIT: u8 = 0x06;
+// Loaded with `#[path]` (by `mediadec` and the host checker): the children are named the same way.
+#[path = "serve/decode.rs"]
+mod decode;
+#[path = "serve/selftest.rs"]
+mod selftest;
+#[path = "serve/sources.rs"]
+mod sources;
+pub use selftest::*;
+use sources::Source;
 
-/// `u64` duration (ns, 0 unknown), `u32` width, `u32` height, `u8` has video, `u8` has audio, `u8`
-/// channels of the stream, `u8` 0, `u32` output sample rate (48000; the PCM is always stereo).
-pub const OUT_HEADER: u8 = 0x81;
-/// `i64` time (ns), `u32` width, `u32` height, then `width * height` pixels, 4 bytes each (R, G, B, 255).
-pub const OUT_FRAME: u8 = 0x82;
-/// `i64` time (ns), `u32` samples per channel, then the samples: s16 little endian, stereo
-/// interleaved, 48 kHz.
-pub const OUT_AUDIO: u8 = 0x83;
-/// `u64` file offset (`u64::MAX`: no index).
-pub const OUT_SEEKPOS: u8 = 0x84;
-/// `u32` pictures, `u32` audio packets sent since the start.
-pub const OUT_END: u8 = 0x85;
-/// `u32` code ([`ERR_DEMUX`]...), then a UTF-8 text.
-pub const OUT_ERROR: u8 = 0x8F;
+/// Coded data kept for all sources before what was played long ago is forgotten.
+const EVICT_BYTES: usize = 24 << 20;
+/// Most coded data kept: an append beyond it (after eviction) is refused (`QuotaExceededError`).
+const MAX_BYTES: usize = 48 << 20;
+/// What eviction keeps behind the playback position.
+const KEEP_BEHIND_NS: i64 = 10_000_000_000;
+/// Opus needs this much sound before a seek target to settle (RFC 7845 §4.6: 80 ms).
+const PRE_ROLL_NS: i64 = 80_000_000;
 
-/// The stream is not WebM or is broken: send [`IN_SEEK`]/[`IN_RESTART`] to go on.
-pub const ERR_DEMUX: u32 = 1;
-/// A video packet did not decode (the next keyframe recovers).
-pub const ERR_VIDEO: u32 = 2;
-/// An audio packet did not decode.
-pub const ERR_AUDIO: u32 = 3;
-/// A message the server does not know, or too short.
-pub const ERR_MESSAGE: u32 = 4;
-/// A decoder could not be made (memory).
-pub const ERR_MEMORY: u32 = 5;
-
-/// The largest picture sent (a message holds at most 4 MiB).
-pub const MAX_W: u32 = 1280;
-pub const MAX_H: u32 = 800;
+/// What a send did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sent {
+    Done,
+    /// The player's queue is full: try again later.
+    Full,
+    /// The player is gone.
+    Gone,
+}
 
 /// The two directions of messages.
 pub trait Link {
-    /// Wait for the next message and put it in `buf`; its length, or `None` when the link is gone.
-    fn recv(&mut self, buf: &mut [u8]) -> Option<usize>;
-    /// Send one message; `false` when the other side is gone.
-    fn send(&mut self, msg: &[u8]) -> bool;
+    /// Wait up to `timeout_ms` (`u64::MAX`: no limit, 0: just look) for the next message and put it
+    /// in `buf`. `Ok(Some(len))`, `Ok(None)` when nothing came, `Err(())` when the link is gone.
+    fn recv(&mut self, buf: &mut [u8], timeout_ms: u64) -> Result<Option<usize>, ()>;
+    /// Send one message.
+    fn send(&mut self, msg: &[u8]) -> Sent;
+    /// Milliseconds since some start (for the player's clock between its `IN_TIME`s).
+    fn now_ms(&self) -> u64 {
+        0
+    }
+}
+
+/// The video decoder, bound to the source that has the video track.
+struct VideoDec {
+    src: usize,
+    dec: Vp9,
+    cursor: Cursor,
+}
+
+/// The sound decoder, bound to the source that has the sound track.
+struct AudioDec {
+    src: usize,
+    dec: Opus,
+    cursor: Cursor,
+    /// Samples still to drop at the start of the stream (`pre-skip`).
+    skip: usize,
+    /// The pre-skip, as the time to take off every timestamp (Matroska `CodecDelay`).
+    delay_ns: i64,
 }
 
 /// The server's state.
 pub struct Server {
-    media: Media,
+    sources: Vec<Source>,
+    video: Option<VideoDec>,
+    audio: Option<AudioDec>,
     size: (u32, u32),
-    rgba: Vec<u32>,
-    msg: Vec<u8>,
+    /// Pictures in B, G, R, A order.
+    bgr: bool,
+    /// The player's clock: its time, whether it runs, and when it was told (`Link::now_ms`).
+    clock: (i64, bool, u64),
+    /// Pictures decoded too late to show (not sent).
+    pub late: u32,
+    /// When the last picture was sent (`Link::now_ms`).
+    last_frame_ms: u64,
+    /// The request of the fetcher whose bytes come now (the `src`), and how many came.
+    fetch: Option<(u32, u64)>,
+    /// Budget (pictures, sound) in bytes and what is out unpaid.
+    flow: Option<(u32, u32)>,
+    out_video: u32,
+    out_audio: u32,
+    epoch: u32,
+    /// Output before this time is not sent (a seek).
+    target: i64,
+    eos: bool,
+    drained_sent: bool,
+    /// The playback position the player last told.
+    now: i64,
+    /// Messages that did not fit in the player's queue yet.
+    pending: VecDeque<(Msg, u8)>,
     pictures: u32,
     audio_packets: u32,
+    pcm: Vec<i16>,
+    quit: bool,
 }
+
+/// A message waiting to go: bytes, or a picture built as words (its pixels written in place).
+enum Msg {
+    Bytes(Vec<u8>),
+    Words(Vec<u32>),
+}
+
+impl Msg {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Msg::Bytes(b) => b,
+            // SAFETY: `u32` has no padding and every bit pattern is a valid `u8`; the slice covers
+            // exactly the vector's initialised words and borrows it, so it lives no longer.
+            Msg::Words(w) => unsafe {
+                core::slice::from_raw_parts(w.as_ptr().cast::<u8>(), w.len() * 4)
+            },
+        }
+    }
+}
+
+/// What a pending message is, for the budget.
+const KIND_OTHER: u8 = 0;
+const KIND_VIDEO: u8 = 1;
+const KIND_AUDIO: u8 = 2;
 
 impl Default for Server {
     fn default() -> Self {
@@ -85,292 +150,300 @@ impl Default for Server {
 impl Server {
     pub fn new() -> Server {
         Server {
-            media: Media::new(),
+            sources: Vec::new(),
+            video: None,
+            audio: None,
             size: (0, 0),
-            rgba: Vec::new(),
-            msg: Vec::new(),
+            bgr: false,
+            clock: (0, false, 0),
+            late: 0,
+            last_frame_ms: 0,
+            fetch: None,
+            flow: None,
+            out_video: 0,
+            out_audio: 0,
+            epoch: 0,
+            target: i64::MIN,
+            eos: false,
+            drained_sent: false,
+            now: 0,
+            pending: VecDeque::new(),
             pictures: 0,
             audio_packets: 0,
+            pcm: vec![0; OPUS_MAX_SAMPLES * 2],
+            quit: false,
         }
     }
 
-    /// Handle one message; `false` to stop.
-    pub fn handle(&mut self, m: &[u8], link: &mut dyn Link) -> bool {
+    /// Queue a message for the player.
+    fn post(&mut self, msg: Vec<u8>, kind: u8) {
+        self.pending.push_back((Msg::Bytes(msg), kind));
+    }
+
+    fn error(&mut self, code: u32, text: &str) {
+        self.post(proto::error(code, text), KIND_OTHER);
+    }
+
+    /// Send what is queued; `false` when the link is gone.
+    fn flush(&mut self, link: &mut dyn Link) -> bool {
+        while let Some((m, kind)) = self.pending.front() {
+            let m = m.bytes();
+            match link.send(m) {
+                Sent::Done => {
+                    let n = m.len() as u32;
+                    match *kind {
+                        KIND_VIDEO => self.out_video = self.out_video.saturating_add(n),
+                        KIND_AUDIO => self.out_audio = self.out_audio.saturating_add(n),
+                        _ => {}
+                    }
+                    self.pending.pop_front();
+                }
+                Sent::Full => return true,
+                Sent::Gone => return false,
+            }
+        }
+        true
+    }
+
+    /// Handle one message from the player; `now_ms` is the link's clock.
+    pub fn handle(&mut self, m: &[u8], now_ms: u64) {
         let Some((&kind, body)) = m.split_first() else {
-            return error(link, ERR_MESSAGE, "empty message");
+            return self.error(proto::ERR_MESSAGE, "empty message");
         };
-        let u64_at = |i: usize| -> Option<u64> {
-            Some(u64::from_le_bytes(body.get(i..i + 8)?.try_into().ok()?))
-        };
+        let u8_at = |i: usize| body.get(i).copied();
         let u32_at = |i: usize| -> Option<u32> {
             Some(u32::from_le_bytes(body.get(i..i + 4)?.try_into().ok()?))
         };
+        let i64_at = |i: usize| -> Option<i64> {
+            Some(i64::from_le_bytes(body.get(i..i + 8)?.try_into().ok()?))
+        };
+        let src_at = |i: usize| u8_at(i).filter(|&s| (s as usize) < proto::MAX_SOURCES);
+        let short = |s: &mut Server| s.error(proto::ERR_MESSAGE, "short message");
         match kind {
-            IN_DATA => match self.media.push(body) {
-                Ok(()) => self.drain(link),
-                Err(e) => error(link, ERR_DEMUX, &fatal_text(e)),
+            b'{' => self.fetch_json(m),
+            proto::FETCH_DATA => match u32_at(0) {
+                Some(id) if self.fetch.is_some_and(|f| f.0 == id) => {
+                    if let Some(f) = self.fetch.as_mut() {
+                        f.1 += (body.len() - 4) as u64;
+                    }
+                    self.append(0, 0, &body[4..]);
+                }
+                // A piece of an answer given up on.
+                Some(_) => {}
+                None => short(self),
             },
-            IN_SEEK => {
-                let Some(t) = u64_at(0) else {
-                    return error(link, ERR_MESSAGE, "short seek");
-                };
-                let off = self.media.seek(t).unwrap_or(u64::MAX);
-                let mut out = vec![OUT_SEEKPOS];
-                out.extend_from_slice(&off.to_le_bytes());
-                link.send(&out)
-            }
-            IN_RESTART => {
-                let (Some(off), Some(t)) = (u64_at(0), u64_at(8)) else {
-                    return error(link, ERR_MESSAGE, "short restart");
-                };
-                self.media.restart_at(off, t as i64);
-                true
-            }
-            IN_SIZE => {
-                let (Some(w), Some(h)) = (u32_at(0), u32_at(4)) else {
-                    return error(link, ERR_MESSAGE, "short size");
-                };
-                self.size = (w.min(MAX_W), h.min(MAX_H));
-                true
-            }
-            IN_END => {
-                if !self.drain(link) {
-                    return false;
+            proto::IN_DATA => match (src_at(0), u32_at(1)) {
+                (Some(src), Some(seq)) => self.append(src as usize, seq, &body[5..]),
+                _ => short(self),
+            },
+            proto::IN_SIZE => match (u32_at(0), u32_at(4)) {
+                (Some(w), Some(h)) => {
+                    self.size = (w, h);
+                    self.bgr = u32_at(8) == Some(1);
                 }
-                let mut out = vec![OUT_END];
-                out.extend_from_slice(&self.pictures.to_le_bytes());
-                out.extend_from_slice(&self.audio_packets.to_le_bytes());
-                link.send(&out)
+                _ => short(self),
+            },
+            proto::IN_EOS => {
+                self.eos = u8_at(0) == Some(1);
+                if !self.eos {
+                    self.drained_sent = false;
+                }
             }
-            IN_QUIT => false,
-            _ => error(link, ERR_MESSAGE, "unknown message"),
+            proto::IN_QUIT => self.quit = true,
+            proto::IN_SEEK => match (u32_at(0), i64_at(4)) {
+                (Some(epoch), Some(t)) => self.seek(epoch, t),
+                _ => short(self),
+            },
+            proto::IN_REMOVE => match (src_at(0), i64_at(1), i64_at(9)) {
+                (Some(src), Some(a), Some(b)) => {
+                    if let Some(s) = self.sources.get_mut(src as usize) {
+                        s.remove(a, b);
+                    }
+                    self.report(src as usize, 0, proto::BUF_OK);
+                }
+                _ => short(self),
+            },
+            proto::IN_RESET => match (src_at(0), i64_at(1)) {
+                (Some(src), Some(off)) => {
+                    let s = self.source(src as usize);
+                    s.reset(off as u64);
+                }
+                _ => short(self),
+            },
+            proto::IN_TSOFF => match (src_at(0), i64_at(1)) {
+                (Some(src), Some(ns)) => self.source(src as usize).ts_off = ns,
+                _ => short(self),
+            },
+            proto::IN_TIME => {
+                if let Some(t) = i64_at(0) {
+                    self.now = t;
+                    self.clock = (t, u8_at(8) == Some(1), now_ms);
+                }
+            }
+            proto::IN_FLOW => match (u32_at(0), u32_at(4)) {
+                (Some(v), Some(a)) => self.flow = (v > 0 || a > 0).then_some((v, a)),
+                _ => short(self),
+            },
+            proto::IN_ACK => {
+                if let (Some(v), Some(a)) = (u32_at(0), u32_at(4)) {
+                    self.out_video = self.out_video.saturating_sub(v);
+                    self.out_audio = self.out_audio.saturating_sub(a);
+                }
+            }
+            proto::IN_CUE => match (src_at(0), i64_at(1)) {
+                (Some(src), Some(t)) => {
+                    let off = self
+                        .sources
+                        .get(src as usize)
+                        .and_then(|s| s.demux.cluster_for(t.max(0) as u64))
+                        .unwrap_or(u64::MAX);
+                    let m = proto::msg(
+                        proto::OUT_CUE,
+                        &[Field::U8(src), Field::I64(t), Field::U64(off)],
+                    );
+                    self.post(m, KIND_OTHER);
+                }
+                _ => short(self),
+            },
+            _ => self.error(proto::ERR_MESSAGE, "unknown message"),
         }
     }
 
-    /// Send everything the bytes so far decode to.
-    fn drain(&mut self, link: &mut dyn Link) -> bool {
-        loop {
-            let out = match self.media.poll() {
-                Ok(Some(o)) => o,
-                Ok(None) => return true,
-                Err(e @ Fatal::NoDecoder) => return error(link, ERR_MEMORY, &fatal_text(e)),
-                Err(e) => return error(link, ERR_DEMUX, &fatal_text(e)),
-            };
-            self.msg.clear();
-            match out {
-                Out::Header => {
-                    let s = self.media.summary();
-                    self.msg.push(OUT_HEADER);
-                    self.msg.extend_from_slice(&s.duration_ns.to_le_bytes());
-                    self.msg.extend_from_slice(&s.width.to_le_bytes());
-                    self.msg.extend_from_slice(&s.height.to_le_bytes());
-                    self.msg.push(u8::from(s.video_track.is_some()));
-                    self.msg.push(u8::from(s.audio_track.is_some()));
-                    self.msg.push(s.channels);
-                    self.msg.push(0);
-                    self.msg.extend_from_slice(&48_000u32.to_le_bytes());
+    /// The head, the end or a failure of the fetcher's request for the `src`.
+    fn fetch_json(&mut self, m: &[u8]) {
+        let Some((id, ev, status, total)) = proto::fetch_event(m) else {
+            return;
+        };
+        let got = if ev == proto::FETCH_HEAD {
+            // A new request: its bytes are the next of source 0 (an error page's are not).
+            self.fetch = matches!(status, 200 | 206).then_some((id, 0));
+            0
+        } else {
+            match self.fetch {
+                Some((fid, n)) if fid == id => {
+                    self.fetch = None;
+                    n
                 }
-                Out::Picture { ts_ns, picture } => {
-                    let (w, h) = fit(self.size, picture.width(), picture.height());
-                    let n = (w * h) as usize;
-                    if self.rgba.len() < n {
-                        self.rgba.resize(n, 0);
-                    }
-                    picture.to_rgba(&mut self.rgba, w, h);
-                    self.msg.reserve(24 + n * 4);
-                    self.msg.push(OUT_FRAME);
-                    self.msg.extend_from_slice(&ts_ns.to_le_bytes());
-                    self.msg.extend_from_slice(&w.to_le_bytes());
-                    self.msg.extend_from_slice(&h.to_le_bytes());
-                    for px in &self.rgba[..n] {
-                        self.msg.extend_from_slice(&px.to_le_bytes());
-                    }
-                    self.pictures += 1;
-                }
-                Out::Audio { ts_ns, pcm } => {
-                    self.msg.push(OUT_AUDIO);
-                    self.msg.extend_from_slice(&ts_ns.to_le_bytes());
-                    self.msg
-                        .extend_from_slice(&((pcm.len() / 2) as u32).to_le_bytes());
-                    for s in pcm {
-                        self.msg.extend_from_slice(&s.to_le_bytes());
-                    }
-                    self.audio_packets += 1;
-                }
-                Out::DecodeError { audio, code } => {
-                    let kind = if audio { ERR_AUDIO } else { ERR_VIDEO };
-                    let mut text = String::new();
-                    let _ = write!(text, "decoder error {code}");
-                    if !error(link, kind, &text) {
-                        return false;
-                    }
-                    continue;
-                }
+                _ => 0,
             }
-            if !link.send(&self.msg) {
-                return false;
-            }
+        };
+        let m = proto::msg(
+            proto::OUT_FETCH,
+            &[
+                Field::U32(id),
+                Field::U8(ev),
+                Field::U32(status),
+                Field::U64(total.unwrap_or(u64::MAX)),
+                Field::U64(got),
+            ],
+        );
+        self.post(m, KIND_OTHER);
+    }
+
+    /// The source buffer `src`, made on first use.
+    fn source(&mut self, src: usize) -> &mut Source {
+        while self.sources.len() <= src {
+            self.sources.push(Source::new());
+        }
+        &mut self.sources[src]
+    }
+
+    /// Play from `t`: the decoders start over there (the coded frames stay), and [`proto::OUT_MARK`]
+    /// tells the player where the new output begins.
+    fn seek(&mut self, epoch: u32, t: i64) {
+        self.epoch = epoch;
+        self.target = t;
+        self.drained_sent = false;
+        // What was waiting for the player belongs to the old place.
+        self.pending.retain(|(_, k)| *k == KIND_OTHER);
+        if let Some(v) = self.video.as_mut() {
+            v.cursor = Cursor::seek(t);
+        }
+        if let Some(a) = self.audio.as_mut() {
+            a.cursor = Cursor::seek(t.saturating_sub(PRE_ROLL_NS));
+            a.dec.reset();
+            a.skip = 0;
+        }
+        self.post(
+            proto::msg(proto::OUT_MARK, &[Field::U32(epoch)]),
+            KIND_OTHER,
+        );
+    }
+
+    /// Tell the player what source `src` holds (after append `seq`).
+    fn report(&mut self, src: usize, seq: u32, status: u8) {
+        let ranges: Vec<(i64, i64)> = self
+            .sources
+            .get(src)
+            .map(|s| s.buffered().iter().collect())
+            .unwrap_or_default();
+        self.post(
+            proto::buffered(src as u8, seq, status, &ranges),
+            KIND_OTHER,
+        );
+    }
+
+    /// Total coded bytes held.
+    fn held(&self) -> usize {
+        self.sources.iter().map(Source::bytes).sum()
+    }
+
+    /// Forget what was played long ago (never what a decoder still needs).
+    fn evict(&mut self) {
+        let mut t = self.now - KEEP_BEHIND_NS;
+        if let Some(v) = &self.video {
+            t = t.min(v.cursor.last.map_or(i64::MIN, |l| l.0));
+        }
+        if let Some(a) = &self.audio {
+            t = t.min(a.cursor.last.map_or(i64::MIN, |l| l.0));
+        }
+        if t == i64::MIN {
+            return;
+        }
+        for s in &mut self.sources {
+            s.evict_before(t);
         }
     }
-}
-
-/// The picture size to send: the asked size, or the video's own scaled down to fit the limits.
-fn fit(asked: (u32, u32), w: u32, h: u32) -> (u32, u32) {
-    if asked.0 > 0 && asked.1 > 0 {
-        return asked;
-    }
-    if w <= MAX_W && h <= MAX_H {
-        return (w, h);
-    }
-    // Keep the aspect ratio: the larger reduction wins.
-    let (sw, sh) = (u64::from(w), u64::from(h));
-    if sw * u64::from(MAX_H) > sh * u64::from(MAX_W) {
-        (MAX_W, ((sh * u64::from(MAX_W) / sw) as u32).max(1))
-    } else {
-        (((sw * u64::from(MAX_H) / sh) as u32).max(1), MAX_H)
-    }
-}
-
-fn fatal_text(e: Fatal) -> String {
-    let mut s = String::new();
-    match e {
-        Fatal::Demux(d) => {
-            let _ = write!(s, "{d}");
-        }
-        Fatal::NoDecoder => s.push_str("cannot create a decoder"),
-    }
-    s
-}
-
-/// Send an [`OUT_ERROR`]; `false` when the link is gone.
-fn error(link: &mut dyn Link, code: u32, text: &str) -> bool {
-    let mut out = vec![OUT_ERROR];
-    out.extend_from_slice(&code.to_le_bytes());
-    out.extend_from_slice(text.as_bytes());
-    link.send(&out)
 }
 
 /// Run the server on `link` until it is told to stop or the link goes.
 pub fn serve(link: &mut dyn Link) {
     let mut server = Server::new();
     let mut buf = vec![0u8; MAX_MSG];
-    while let Some(n) = link.recv(&mut buf) {
-        if !server.handle(&buf[..n.min(buf.len())], link) {
+    loop {
+        if !server.flush(link) {
             return;
         }
+        // Work to do: only look at the mail; the player's queue full: wait a little for it (or an
+        // acknowledgement); nothing to do: wait for the next message.
+        let timeout = if server.can_work() {
+            0
+        } else if !server.pending.is_empty() {
+            4
+        } else {
+            u64::MAX
+        };
+        match link.recv(&mut buf, timeout) {
+            Err(()) => return,
+            Ok(Some(n)) => {
+                let now = link.now_ms();
+                server.handle(&buf[..n.min(buf.len())], now);
+                if server.quit {
+                    return;
+                }
+                continue;
+            }
+            Ok(None) => {}
+        }
+        server.work(link.now_ms());
     }
 }
 
 /// The largest message (calls 56/57 carry at most 4 MiB).
 pub const MAX_MSG: usize = 4 * 1024 * 1024;
 
-/// An in-memory link: what is in `inbox` comes in, what the server sends lands in `outbox`.
-#[derive(Default)]
-pub struct Loopback {
-    pub inbox: VecDeque<Vec<u8>>,
-    pub outbox: Vec<Vec<u8>>,
-}
-
-impl Link for Loopback {
-    fn recv(&mut self, buf: &mut [u8]) -> Option<usize> {
-        let m = self.inbox.pop_front()?;
-        let n = m.len().min(buf.len());
-        buf[..n].copy_from_slice(&m[..n]);
-        Some(n)
-    }
-
-    fn send(&mut self, msg: &[u8]) -> bool {
-        self.outbox.push(msg.to_vec());
-        true
-    }
-}
-
-/// What [`selftest`] saw.
-#[derive(Debug, Default)]
-pub struct Report {
-    pub header: bool,
-    pub pictures: u32,
-    pub picture_size: (u32, u32),
-    pub samples: u64,
-    pub end_pictures: u32,
-    pub seek_offset: u64,
-    pub after_seek_pictures: u32,
-    pub first_after_seek_ns: i64,
-    pub errors: u32,
-}
-
-/// Drive the server in memory over the WebM file `file`: pictures of 160x90, the file in 32 KiB
-/// messages, the end, then a seek to 1 s (when the file has cues) and the rest of the file again.
-pub fn selftest(file: &[u8]) -> Report {
-    let mut r = Report::default();
-    let mut link = Loopback::default();
-    let mut server = Server::new();
-    let mut size = vec![IN_SIZE];
-    size.extend_from_slice(&160u32.to_le_bytes());
-    size.extend_from_slice(&90u32.to_le_bytes());
-    link.inbox.push_back(size);
-    for c in file.chunks(32 * 1024) {
-        let mut m = vec![IN_DATA];
-        m.extend_from_slice(c);
-        link.inbox.push_back(m);
-    }
-    link.inbox.push_back(vec![IN_END]);
-    let mut seek = vec![IN_SEEK];
-    seek.extend_from_slice(&1_000_000_000u64.to_le_bytes());
-    link.inbox.push_back(seek);
-    let mut seen_end = false;
-    let mut buf = vec![0u8; MAX_MSG];
-    while let Some(n) = link.recv(&mut buf) {
-        if !server.handle(&buf[..n], &mut link) {
-            break;
-        }
-        for m in core::mem::take(&mut link.outbox) {
-            match m.first() {
-                Some(&OUT_HEADER) => r.header = true,
-                Some(&OUT_FRAME) if m.len() >= 17 => {
-                    let ts = i64::from_le_bytes(m[1..9].try_into().unwrap_or([0; 8]));
-                    let w = u32::from_le_bytes(m[9..13].try_into().unwrap_or([0; 4]));
-                    let h = u32::from_le_bytes(m[13..17].try_into().unwrap_or([0; 4]));
-                    if (m.len() - 17) as u64 != u64::from(w) * u64::from(h) * 4 {
-                        r.errors += 1;
-                    }
-                    if seen_end {
-                        if r.after_seek_pictures == 0 {
-                            r.first_after_seek_ns = ts;
-                        }
-                        r.after_seek_pictures += 1;
-                    } else {
-                        r.pictures += 1;
-                        r.picture_size = (w, h);
-                    }
-                }
-                Some(&OUT_AUDIO) if m.len() >= 13 && !seen_end => {
-                    r.samples +=
-                        u64::from(u32::from_le_bytes(m[9..13].try_into().unwrap_or([0; 4])));
-                }
-                Some(&OUT_END) if m.len() >= 9 && !seen_end => {
-                    r.end_pictures = u32::from_le_bytes(m[1..5].try_into().unwrap_or([0; 4]));
-                    seen_end = true;
-                }
-                Some(&OUT_SEEKPOS) if m.len() >= 9 => {
-                    r.seek_offset = u64::from_le_bytes(m[1..9].try_into().unwrap_or([0; 8]));
-                    if let Some(rest) = usize::try_from(r.seek_offset)
-                        .ok()
-                        .and_then(|o| file.get(o..))
-                    {
-                        for c in rest.chunks(32 * 1024) {
-                            let mut d = vec![IN_DATA];
-                            d.extend_from_slice(c);
-                            link.inbox.push_back(d);
-                        }
-                        link.inbox.push_back(vec![IN_END]);
-                    }
-                    link.inbox.push_back(vec![IN_QUIT]);
-                }
-                Some(&OUT_ERROR) => r.errors += 1,
-                _ => {}
-            }
-        }
-    }
-    r
+fn text(e: impl core::fmt::Display) -> String {
+    let mut s = String::new();
+    let _ = write!(s, "{e}");
+    s
 }

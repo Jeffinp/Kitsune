@@ -46,6 +46,39 @@ O JavaScript das páginas ganhou o que React/Preact/Vue e, depois, o player do Y
   (o DOM no Node com o navegador simulado: APIs, os dois apps e os workers) e 13 testes novos no `kitsune_core`.
   Preact e Vue (MIT) e htm (Apache 2.0) ficam só no site de teste (`tools/site-assets`, `THIRD-PARTY.md`).
 
+## 2026-10 — Player: `<video>`, `<audio>` e Media Source Extensions (etapa 4 do YouTube)
+
+Vídeo WebM (VP9 + Opus) toca nas páginas do Navegador com som e sincronia. Projeto em `docs/design/tls-browser.md` §14.
+
+- **Elementos `<video>` e `<audio>`** no motor de páginas: caixa de layout (300x150 até os metadados, depois o tamanho
+  do vídeo; `width`/`height`/CSS; `<audio>` sem `controls` não aparece), pôster como imagem, comando `Cmd::Video` na
+  lista de desenho, pintado pelo navegador com o último quadro (já convertido pelo decodificador no tamanho da caixa e
+  na ordem do framebuffer) e os **controles**: play/pausa, barra de tempo clicável, tempo, volume e mudo. Um quadro
+  novo repinta só o retângulo do vídeo.
+- **`HTMLMediaElement`** (`user-apps/jsrun/src/bin/jsrun/media.js`): `src`/`currentSrc`/`<source>`, `play()`/`pause()`
+  com promises, `paused`, `ended`, `currentTime` (seek), `duration`, `volume`, `muted`, `playbackRate`, `readyState`,
+  `networkState`, `buffered`/`seekable`/`played`, `videoWidth`/`videoHeight`, `error` (`MediaError`), `autoplay`,
+  `loop`, `preload`, `canPlayType`, `new Audio()` e os eventos `loadstart` … `ended`/`error`/`emptied`.
+- **`src` por endereço**: o navegador baixa em pedaços `Range` de 1 MiB pela fila do `fetcher`, até 30 s à frente, e
+  entrega os bytes direto ao decodificador (o script não os vê, então não há CORS a pedir).
+- **Media Source Extensions**: `MediaSource` (`addSourceBuffer`, `endOfStream`, `duration`, `isTypeSupported`,
+  `readyState`, eventos), `SourceBuffer` (`appendBuffer` assíncrono com `updatestart`/`update`/`updateend`, `remove`,
+  `abort`, `timestampOffset`, `buffered`, `mode`), `SourceBufferList`, `URL.createObjectURL(mediaSource)`; init de novo
+  troca a trilha; o que já tocou é despejado acima de 24 MiB e um append acima de 48 MiB falha (`error`/`updateend`).
+- **Player** (`kitsune_core::media`: TimeRanges, track buffers no estilo do MSE, relógio, máquina de estados e
+  mensagens; `kernel/src/desktop/apps/browser/media*`): um `mediadec --serve` por elemento (no máximo 2 ao mesmo tempo),
+  **o som é o relógio** (o contador "tocado" do mixer), quadros mostrados quando o tempo deles chega e os atrasados
+  descartados pelo decodificador, seek por época, orçamento de bytes em trânsito, `waiting` quando falta dado; sem
+  placa de som o vídeo toca mudo pelo relógio do sistema; parado ou em aba de fundo não decodifica.
+- **Provado no QEMU** (`tools/perf/scen/w58-video.sh`, páginas `/video` e `/mse` de `tools/w24media.py`, gravando o som):
+  440,00 Hz com **3000,0 / 2001,0 / 3000,0 / 3000,0 / 2008,0 ms** (tocar, seek para 1 s, play dos controles, MSE, seek
+  no MSE), silêncio exato depois de cada um, relógio 1,001–1,008, `ended`, `seeked`, capturas que mudam; sem placa
+  também passa. 11–13 quadros/s mostrados no 360p sob TCG (decodificador 63–67 %, compositor 31–35 % da CPU emulada).
+  Um WebM real (Big Buck Bunny 360p, 1 MB) tocou até o fim pelo servidor de teste (`w58-real.sh`); direto da internet o
+  proxy desta sandbox reassina o HTTPS e o elemento recebe `MEDIA_ERR_NETWORK`.
+- Hospedeiro: 41 testes de `media`, 6 de layout, `node tools/js-media-check.js` (52 verificações),
+  `mediacheck --serve-test`/`--serve-mse`.
+
 ## 2026-10 — Som (etapa 5 do YouTube)
 
 O sistema tem som. Projeto em `docs/design/audio.md`.

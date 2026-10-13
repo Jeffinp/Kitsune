@@ -653,8 +653,11 @@
   mixin(Element.prototype, childMethods);
   class HTMLElement extends Element {}
 
+  // Elements with their own class (`<video>`, `<audio>`: media.js) register it here by tag name.
+  const elementClasses = new Map();
   function createElement(tag, uid) {
-    const el = new HTMLElement(tag, uid);
+    const C = elementClasses.get(String(tag).toLowerCase()) || HTMLElement;
+    const el = new C(tag, uid);
     return hooks.created ? hooks.created(el) : el;
   }
 
@@ -1492,7 +1495,7 @@
   global._ls = null;
   global._on = null;
   addHandlerProps(global);
-  global.__kjs = { onMessage, runOne, nextDelay, flush, interrupted };
+  global.__kjs = { onMessage, runOne, nextDelay, flush, interrupted, elementClasses };
   // What the files evaluated after this one build on (they get it as `kjs.dom`).
   global.__kjs.dom = {
     Node, Element, HTMLElement, CharacterData, Text, Comment, DocumentFragment, Document, document,
@@ -1500,6 +1503,6 @@
     DOMTokenList, dispatch, invoke, handlerOf, byUid, touch, serialize, parseHTML, createElement,
     parseSelector, matchComplex, descendants, tasks, timers, addTimer, reportError, splitURL,
     resolveURL, navigate, location, navigator, screen, Storage, mutators, hooks, getDecl, setDecl,
-    kebab, camel, targetMethods, addHandlerProps, HANDLERS, isDirty: () => dirty,
+    kebab, camel, targetMethods, addHandlerProps, HANDLERS, elementClasses, isDirty: () => dirty,
   };
 })(globalThis, globalThis.__kjs_native);

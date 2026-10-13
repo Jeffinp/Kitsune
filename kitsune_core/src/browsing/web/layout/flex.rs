@@ -183,7 +183,7 @@ fn place<'a>(
     p.last_box = (None, None);
     let end = if matches!(
         it.el.tag.as_str(),
-        "img" | "input" | "button" | "select" | "textarea"
+        "img" | "input" | "button" | "select" | "textarea" | "video" | "audio"
     ) {
         // Replaced content: it is a line of its own, as wide as the box.
         let a = Area { x: it.x, w: it.w };

@@ -449,6 +449,10 @@ pub fn list() -> Vec<Info> {
         })
         .collect()
 }
+/// The scheduler slot of process `pid` (its CPU ticks are `sched::busy_ticks()[slot]`).
+pub fn slot_of(pid: u32) -> Option<usize> {
+    PROCS.lock().iter().find(|p| p.pid == pid).map(|p| p.slot)
+}
 /// Is process `pid` in the table and still running.
 pub fn is_running(pid: u32) -> bool {
     PROCS

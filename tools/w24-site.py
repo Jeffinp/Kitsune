@@ -23,6 +23,8 @@ Every request is printed on stderr, so `tools/w24-site.py 2> requests.log` is th
 /preact and /vue are the acceptance pages of the DOM for frameworks (W59): a TodoMVC with Preact + htm
 and a small Vue 3 app (the in-DOM template compiled by vue.global.prod.js); /worker runs a Web Worker. The libraries and the
 pages are files of tools/site-assets/, served under /assets/ (see THIRD-PARTY.md for their licences).
+/video, /mse and /audio are the pages of the media player (W58: <video>, <audio>, Media Source
+Extensions); their routes and the test files (made with ffmpeg) are in tools/w24media.py.
 
 /net is the page for the network of scripts (W55: fetch, XMLHttpRequest, cookies, CORS, streaming,
 keep-alive); its routes are in tools/w24net.py. The server speaks HTTP/1.1 with keep-alive and also
@@ -45,6 +47,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+import w24media
 import w24net
 
 PORT = 8079
@@ -399,7 +402,8 @@ class H(BaseHTTPRequestHandler):
     def net(self, method):
         w24net.count("requests")
         u = urlparse(self.path)
-        return w24net.handle(self, method, u, parse_qs(u.query))
+        q = parse_qs(u.query)
+        return w24media.handle(self, method, u, q) or w24net.handle(self, method, u, q)
 
     def do_HEAD(self):
         if not self.net("HEAD"):

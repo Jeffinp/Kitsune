@@ -33,11 +33,12 @@ pub(crate) use values::*;
 pub(crate) const UA_CSS: &str = "
 html,body,div,p,h1,h2,h3,h4,h5,h6,ul,ol,dl,dt,dd,header,footer,article,section,nav,main,aside,blockquote,pre,form,figure,figcaption,address,details,summary,fieldset,legend,hgroup,center,hr,menu,dir,caption{display:block}
 li{display:list-item}
+audio:not([controls]){display:none}
 table{display:table}
 tr{display:table-row}
 td,th{display:table-cell}
 thead,tbody,tfoot{display:table-row-group}
-script,style,head,title,meta,link,option,datalist,template,noembed,svg,canvas,video,audio,iframe,object,embed,map,area,param,source,track,base,dialog,col,colgroup{display:none}
+script,style,head,title,meta,link,option,datalist,template,noembed,svg,canvas,iframe,object,embed,map,area,param,source,track,base,dialog,col,colgroup{display:none}
 html{color:#1d1d1f;font-size:16px;line-height:1.5}
 body{margin:8px}
 h1,h2,h3,h4,h5,h6{font-weight:bold;line-height:1.25}

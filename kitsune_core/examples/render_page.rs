@@ -158,6 +158,7 @@ fn main() {
                 text.replace(['\t', '\n'], " ")
             ),
             Cmd::Image { x, y, w, h, .. } => writeln!(out, "image\t{x}\t{y}\t{w}\t{h}"),
+            Cmd::Video { x, y, w, h, .. } => writeln!(out, "video\t{x}\t{y}\t{w}\t{h}"),
         };
     }
 }

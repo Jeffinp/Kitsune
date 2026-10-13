@@ -35,6 +35,18 @@ pub(crate) enum Obj {
         state: ImgState,
         alt: String,
     },
+    /// A `<video>` or an `<audio controls>`.
+    Video {
+        uid: u32,
+        /// Declared width / height (0 = absent), already zoomed.
+        dw: i32,
+        dh: i32,
+        /// The known size of the picture (the video's own, else the poster's), CSS pixels.
+        nat: Option<(u32, u32)>,
+        audio: bool,
+        controls: bool,
+        poster: Option<usize>,
+    },
     Field {
         form: usize,
         field: usize,
@@ -96,6 +108,10 @@ pub(crate) struct Painter<'a> {
     pub(crate) images: Vec<ImgRef>,
     pub(crate) forms: Vec<FormInfo>,
     pub(crate) fields: Vec<FieldBox>,
+    /// `<video>`/`<audio controls>` elements laid out so far.
+    pub(crate) video_count: usize,
+    /// The size of each playing video (`Doc::set_media_size`): uid, width, height.
+    pub(crate) media_sizes: &'a [(u32, u32, u32)],
     /// The `<form>` being laid out, if any.
     pub(crate) cur_form: Option<usize>,
     /// Zoom in percent.
@@ -299,7 +315,8 @@ impl Painter<'_> {
             Cmd::Rect { y, .. }
             | Cmd::Border { y, .. }
             | Cmd::Text { y, .. }
-            | Cmd::Image { y, .. } => *y,
+            | Cmd::Image { y, .. }
+            | Cmd::Video { y, .. } => *y,
         };
         if self.cmds.len() < MAX_CMDS && low < MAX_PAGE_H {
             self.cmds.push(cmd);

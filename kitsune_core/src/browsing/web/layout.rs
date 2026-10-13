@@ -102,6 +102,33 @@ pub enum Cmd {
         h: i32,
         idx: usize,
     },
+    /// The surface of a `<video>` (or the bar of an `<audio controls>`): the browser paints the
+    /// player's current picture there (or the poster, `Page::images[poster]`, before it plays),
+    /// and its controls when the element asks for them.
+    Video {
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        /// [`Element::uid`] of the element: the player is found by it.
+        uid: u32,
+        controls: bool,
+        audio: bool,
+        poster: Option<usize>,
+    },
+}
+/// Where a `<video>`/`<audio controls>` was laid out (page coordinates).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VideoBox {
+    pub uid: u32,
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    pub controls: bool,
+    pub audio: bool,
+    /// Index into [`Page::images`] of the poster.
+    pub poster: Option<usize>,
 }
 /// One `<img>` of the page: the `src` as written and the text to show when
 /// there is no picture.
@@ -151,6 +178,8 @@ pub struct Page {
     /// page's scripts (`getComputedStyle`; see `script::boxes_message`). An element may appear more
     /// than once (the last record counts).
     pub styles: Vec<StyleRec>,
+    /// The `<video>` and `<audio controls>` elements laid out (at most [`MAX_VIDEOS`]).
+    pub videos: Vec<VideoBox>,
 }
 /// What the page's scripts read of an element's computed style ([`Page::styles`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -211,9 +240,12 @@ impl Default for Page {
             forms: Vec::new(),
             fields: Vec::new(),
             styles: Vec::new(),
+            videos: Vec::new(),
         }
     }
 }
+/// Most `<video>`/`<audio>` elements laid out per page.
+pub const MAX_VIDEOS: usize = 16;
 /// Most links recorded per page (the rest still render, they are just not clickable).
 pub const MAX_LINKS: usize = 2000;
 /// Most `<img>` elements recorded per page (the rest are not laid out).
@@ -276,6 +308,14 @@ impl Page {
         self.link_index_at(x, y)
             .and_then(|l| self.links.get(l))
             .map(String::as_str)
+    }
+
+    /// The video or audio element under page coordinates `(x, y)`, if any.
+    pub fn video_at(&self, x: i32, y: i32) -> Option<&VideoBox> {
+        self.videos
+            .iter()
+            .rev()
+            .find(|v| x >= v.x && x < v.x + v.w && y >= v.y && y < v.y + v.h)
     }
 
     /// The control under page coordinates `(x, y)`, if any.

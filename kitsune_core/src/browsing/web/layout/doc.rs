@@ -24,6 +24,8 @@ pub struct Doc {
     pub(crate) ext_css: Vec<String>,
     /// Every box records its element ([`Doc::set_track`]).
     pub(crate) track: bool,
+    /// The size of each video whose player knows it: uid, width, height.
+    pub(crate) media_sizes: Vec<(u32, u32, u32)>,
 }
 
 /// Wrap a tree in `html` and `body` when it lacks them.
@@ -108,7 +110,44 @@ impl Doc {
             script_css: String::new(),
             ext_css: Vec::new(),
             track: false,
+            media_sizes: Vec::new(),
         }
+    }
+
+    /// The player of element `uid` knows its picture size: a `<video>` without a declared size takes
+    /// it at the next layout. Returns whether it changed.
+    pub fn set_media_size(&mut self, uid: u32, w: u32, h: u32) -> bool {
+        if w == 0 || h == 0 {
+            return false;
+        }
+        match self.media_sizes.iter_mut().find(|e| e.0 == uid) {
+            Some(e) if (e.1, e.2) == (w, h) => false,
+            Some(e) => {
+                *e = (uid, w, h);
+                true
+            }
+            None => {
+                if self.media_sizes.len() < MAX_VIDEOS {
+                    self.media_sizes.push((uid, w, h));
+                }
+                true
+            }
+        }
+    }
+
+    /// Does the document hold a `<video>` or `<audio>` element (they need the page's script
+    /// process, which runs the players)?
+    pub fn has_media(&self) -> bool {
+        fn walk(nodes: &[Node], depth: usize) -> bool {
+            depth < 64
+                && nodes.iter().any(|n| match n {
+                    Node::Element(e) => {
+                        e.tag == "video" || e.tag == "audio" || walk(&e.children, depth + 1)
+                    }
+                    Node::Text(_) => false,
+                })
+        }
+        walk(&self.dom, 0)
     }
 
     /// The classic scripts of the document, in document order.
@@ -248,6 +287,8 @@ impl Doc {
             images: Vec::new(),
             forms: Vec::new(),
             fields: Vec::new(),
+            video_count: 0,
+            media_sizes: &self.media_sizes,
             cur_form: None,
             zoom,
             lookup: opts.images,
@@ -284,6 +325,33 @@ impl Doc {
         y = y.max(floats_bottom(&p, 0));
         // Elements can move or go away before the next layout: keep nothing keyed by their address.
         self.sheet.clear_memo();
+        // Taken from the commands at the end: a table cell or a flex item may have moved them.
+        let videos = p
+            .cmds
+            .iter()
+            .filter_map(|c| match *c {
+                Cmd::Video {
+                    x,
+                    y,
+                    w,
+                    h,
+                    uid,
+                    controls,
+                    audio,
+                    poster,
+                } => Some(VideoBox {
+                    uid,
+                    x,
+                    y,
+                    w,
+                    h,
+                    controls,
+                    audio,
+                    poster,
+                }),
+                _ => None,
+            })
+            .collect();
         Page {
             cmds: p.cmds,
             height: y.clamp(0, MAX_PAGE_H),
@@ -294,6 +362,7 @@ impl Doc {
             forms: p.forms,
             fields: p.fields,
             styles: p.styles,
+            videos,
         }
     }
 }

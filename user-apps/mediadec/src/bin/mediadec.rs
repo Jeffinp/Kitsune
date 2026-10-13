@@ -73,25 +73,29 @@ fn main() -> i32 {
 struct PageLink;
 
 impl serve::Link for PageLink {
-    fn recv(&mut self, buf: &mut [u8]) -> Option<usize> {
+    fn recv(&mut self, buf: &mut [u8], timeout_ms: u64) -> Result<Option<usize>, ()> {
         loop {
-            match page_recv(buf, u64::MAX) {
-                n if n > 0 => return Some(n as usize),
-                // Nothing yet, or a message too large (it was dropped): wait again.
-                0 | errno::E2BIG => continue,
-                _ => return None,
+            match page_recv(buf, timeout_ms) {
+                n if n > 0 => return Ok(Some(n as usize)),
+                // Nothing in time.
+                0 => return Ok(None),
+                // A message too large was dropped: look again.
+                errno::E2BIG => continue,
+                _ => return Err(()),
             }
         }
     }
 
-    fn send(&mut self, msg: &[u8]) -> bool {
-        loop {
-            match page_send(msg) {
-                0 => return true,
-                // The player has not taken the earlier messages yet: wait for it.
-                errno::EAGAIN => sleep_ms(4),
-                _ => return false,
-            }
+    fn now_ms(&self) -> u64 {
+        uptime_ms()
+    }
+
+    fn send(&mut self, msg: &[u8]) -> serve::Sent {
+        match page_send(msg) {
+            0 => serve::Sent::Done,
+            // The player has not taken the earlier messages yet.
+            errno::EAGAIN => serve::Sent::Full,
+            _ => serve::Sent::Gone,
         }
     }
 }
@@ -109,29 +113,26 @@ fn serve_test(path: &str) -> i32 {
     let r = serve::selftest(&data);
     let ms = uptime_ms() - t0;
     println!(
-        "serve-test: header {}, {} pictures {}x{}, {} samples per channel, end says {}, errors {}",
+        "serve-test: header {}, {} pictures {}x{}, {} samples per channel, drained says {}, buffered to {} ms in {} range(s), errors {}",
         r.header,
         r.pictures,
         r.picture_size.0,
         r.picture_size.1,
         r.samples,
         r.end_pictures,
+        r.buffered_end_ms,
+        r.buffered_ranges,
         r.errors
     );
     println!(
-        "serve-test: seek to 1 s -> offset {}, {} pictures after it, the first at {} ms ({ms} ms)",
-        r.seek_offset,
+        "serve-test: seek to 1 s -> mark first {}, {} pictures after it, the first at {} ms; budget of 2 pictures held {}, {} after an ack ({ms} ms)",
+        r.mark_first,
         r.after_seek_pictures,
-        r.first_after_seek_ns / 1_000_000
+        r.first_after_seek_ns / 1_000_000,
+        r.budget_held,
+        r.budget_after_ack
     );
-    let ok = r.header
-        && r.pictures > 0
-        && r.picture_size == (160, 90)
-        && r.end_pictures == r.pictures
-        && r.errors == 0
-        && r.samples > 0
-        && r.after_seek_pictures > 0
-        && r.first_after_seek_ns == 1_000_000_000;
+    let ok = r.ok();
     println!("serve-test: {}", if ok { "PASS" } else { "FAIL" });
     if ok { 0 } else { 1 }
 }

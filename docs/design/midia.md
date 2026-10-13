@@ -3,8 +3,8 @@
 Etapa 4 do item 11 do [ROADMAP](../ROADMAP.md) ("YouTube com vídeo e áudio"), parte de **decodificação**. O YouTube
 serve vídeo VP9 (itags 243 = 360p, 244 = 480p, 247 = 720p...) e áudio Opus (itag 251) em contêiner **WebM**, em
 fragmentos DASH (um segmento de inicialização e depois clusters). Com VP9 + Opus + WebM não é preciso H.264 nem AAC.
-Esta etapa entrega o caminho "bytes do arquivo → quadros RGB e PCM" num processo de anel 3; o resto do player
-(Media Source Extensions, `<video>`, sincronia, a rede do JavaScript e o driver de som) são outras peças.
+Esta etapa entrega o caminho "bytes do arquivo → quadros RGB e PCM" num processo de anel 3. O player (`<video>`,
+`<audio>`, Media Source Extensions, sincronia pelo som) que o usa está em [`tls-browser.md`](tls-browser.md) §14.
 
 ## Peças
 
@@ -18,9 +18,10 @@ Esta etapa entrega o caminho "bytes do arquivo → quadros RGB e PCM" num proces
 | Cor | `csrc/yuv.c` | I420 → RGBA em inteiros (SSE2), com escala |
 | Convolução | `csrc/convolve_sse2.c` | a predição inter de 8 taps do VP9 em intrínsecos SSE2 (a do libvpx é assembly) |
 | libc | `csrc/libc` | o mínimo que os dois pedem: `str*`, `qsort`, `snprintf`/`vsnprintf`, `setjmp`/`longjmp`, `abort` |
-| Programa | `user-apps/mediadec/src/bin/mediadec.rs` + `mediadec/` | `ffi.rs` (invólucros seguros), `pipeline.rs` (WebM → quadros/PCM), `decode.rs` (modo arquivo), `serve.rs` (servidor de mensagens), `heap.rs` (`malloc` do C), `sys.rs` |
+| Programa | `user-apps/mediadec/src/bin/mediadec.rs` + `mediadec/` | `ffi.rs` (invólucros seguros), `pipeline.rs` (WebM → quadros/PCM, modo arquivo), `decode.rs` (modo arquivo), `serve.rs` + `serve/` (o decodificador do player: `sources.rs` fontes e track buffers, `decode.rs` o que decodificar agora, `selftest.rs`), `heap.rs` (`malloc` do C), `sys.rs` |
 | Build | `user-apps/mediadec/build.rs`, `csources.rs` | clang freestanding como o `jsrun` (`--target=x86_64-unknown-none-elf -ffreestanding -nostdlibinc -O2 -msse2 -fno-pic ...`); a lista de arquivos C é uma só para o anel 3 e para o verificador do hospedeiro |
-| Kernel | `kernel/build.rs`, `kernel/src/userproc.rs`, `userproc/page.rs` | `mediadec` embutido (`USER_CRATES`), pilha de 1 MiB (`BIG_STACK`), heap de até 128 MiB (`BIG_HEAP`), `userproc::spawn_media` |
+| Kernel | `kernel/build.rs`, `kernel/src/userproc.rs`, `userproc/page.rs` | `mediadec` embutido (`USER_CRATES`), pilha de 1 MiB (`BIG_STACK`), heap de até 128 MiB (`BIG_HEAP`), `userproc::spawn_media` (chamado pelo player do Navegador) |
+| Player | `kitsune_core::media`, `kernel/src/desktop/apps/browser/media*`, `user-apps/jsrun/src/bin/jsrun/media.js` | ver [`tls-browser.md`](tls-browser.md) §14 |
 | Verificador | `tools/media/mediacheck`, `check-host.sh` | o mesmo C e o mesmo pipeline (`#[path]`) compilados no hospedeiro, comparados com o ffmpeg |
 
 ## O demuxer (`kitsune_core::webm`)
@@ -104,31 +105,70 @@ mediadec --serve                 (iniciado pelo kernel: userproc::spawn_media)
 * Pacote que não decodifica é contado e relatado (`video packet did not decode (error 7: ...)`); o processo termina
   sozinho, status 1.
 
-## O servidor de mensagens (`--serve`)
+## O servidor de mensagens (`--serve`): o decodificador do player
 
-Para o player futuro do navegador. `userproc::spawn_media(cred)` inicia `mediadec --serve` com o **mesmo elo** de
-mensagens do `jsrun --page` (chamadas 56 `page_recv` e 57 `page_send`; o navegador usa `page_post`/`page_take`): **não
-há chamada nova**. Cada mensagem é uma chamada; o primeiro byte diz o tipo; números em little endian.
+É o decodificador de um elemento `<video>`/`<audio>` do Navegador (um processo por elemento que toca; o player está
+em [`tls-browser.md`](tls-browser.md) §14). `userproc::spawn_media(cred)` inicia `mediadec --serve` com o **mesmo
+elo** de mensagens do `jsrun --page` (chamadas 56 `page_recv` e 57 `page_send`; o navegador usa `page_post`/
+`page_take`): **não há chamada nova**. Cada mensagem é uma chamada; o primeiro byte diz o tipo; números em little
+endian. Constantes e leitura em `kitsune_core::media::proto` (o mesmo código dos dois lados).
+
+**Track buffers.** O que chega é demultiplexado na hora em *track buffers* de quadros codificados
+(`kitsune_core::media::track::TrackBuffer`, o modelo do Media Source Extensions): até 4 fontes (os `SourceBuffer`s; o
+YouTube manda vídeo e áudio em fontes separadas), cada uma com o seu demuxer e no máximo uma trilha VP9 e uma Opus. Os
+intervalos guardados (`buffered`) saem na resposta de cada pedaço; `remove`, um segmento apendado de novo (troca de
+qualidade: os quadros novos substituem os do mesmo tempo, e os que dependiam deles saem), um novo segmento de
+inicialização (o demuxer recomeça) e a busca dentro do que está guardado (do keyframe anterior; o áudio com 80 ms de
+pré-rolagem) funcionam sobre os quadros, sem pedir nada de novo. O que foi tocado há mais de 10 s é esquecido quando
+passa de 24 MiB; acima de 48 MiB um pedaço é recusado (`BUF_FULL`, o `QuotaExceededError`).
+
+**Orçamento.** O decodificador trabalha à frente do player dentro do que ele permite (`IN_FLOW`: bytes de imagem e de
+som esperando por ele; `IN_ACK` devolve): o som primeiro (barato, e é o relógio), até 1,5 s à frente das imagens; uma
+imagem que já passou do relógio do player (`IN_TIME` a cada 250 ms) é decodificada (o VP9 precisa dela) mas não é
+convertida nem enviada. Um seek (`IN_SEEK` com época) responde `OUT_MARK` antes de qualquer saída da posição nova; o
+player descarta o que vier de épocas velhas.
+
+**`src` por endereço.** O navegador pede o arquivo ao `fetcher` (fila dos pedidos de scripts, `Range` de 1 MiB) com o
+**pid do decodificador** como destino (`ScriptFetch::media`): a resposta chega aqui no formato que o `fetcher` usa para
+um script (cabeça e fim em JSON, pedaços `0x01` + id), os bytes vão para a fonte 0, e o decodificador diz ao player
+como foi (`OUT_FETCH`). O script da página nunca lê esses bytes, por isso um vídeo de outra origem toca sem CORS (como
+em todo navegador) sem abrir a porta para a página ler respostas de outra origem.
 
 | Sentido | Byte | Nome | Conteúdo |
 |---|---|---|---|
-| → | `0x01` | DATA | bytes do WebM (init, depois clusters), em ordem |
-| → | `0x02` | SEEK | `u64` tempo (ns); resposta SEEKPOS; daí em diante o que vem antes do tempo é descartado |
-| → | `0x03` | RESTART | `u64` offset do arquivo, `i64` tempo (ns): os próximos DATA começam nesse offset (um cluster que o player achou) |
-| → | `0x04` | SIZE | `u32` largura, `u32` altura dos quadros enviados (0, 0 = o tamanho do vídeo; no máximo 1280x800) |
-| → | `0x05` | END | sem mais dados por ora: envia tudo o que dá e responde END |
+| → | `0x10` | DATA | `u8` fonte, `u32` sequência, bytes WebM (init, clusters...); responde BUFFERED com a mesma sequência |
+| → | `0x01` | (do fetcher) | `u32` id do pedido, bytes do `src` (para a fonte 0); `{...}`: a cabeça, o fim ou o erro do pedido (JSON) |
+| → | `0x04` | SIZE | `u32` largura, `u32` altura dos quadros (0, 0 = o tamanho do vídeo; no máximo 1280x800), `u32` 1 = B, G, R, A |
+| → | `0x05` | EOS | `u8` 1: não vem mais nada (DRAINED quando tudo saiu); 0: vem mais |
 | → | `0x06` | QUIT | termina |
-| ← | `0x81` | HEADER | `u64` duração (ns), `u32` largura, `u32` altura, `u8` tem vídeo, `u8` tem áudio, `u8` canais, `u8` 0, `u32` 48000 |
-| ← | `0x82` | FRAME | `i64` tempo (ns), `u32` largura, `u32` altura, `largura × altura` pixels RGBA |
-| ← | `0x83` | AUDIO | `i64` tempo (ns), `u32` amostras por canal, amostras s16le estéreo intercaladas |
-| ← | `0x84` | SEEKPOS | `u64` offset do cluster a mandar (`u64::MAX`: sem índice) |
-| ← | `0x85` | END | `u32` quadros, `u32` pacotes de áudio enviados desde o início |
-| ← | `0x8F` | ERROR | `u32` código (1 contêiner, 2 vídeo, 3 áudio, 4 mensagem, 5 memória), texto UTF-8 |
+| → | `0x07` | SEEK | `u32` época, `i64` tempo (ns) |
+| → | `0x08` | REMOVE | `u8` fonte, `i64` início, `i64` fim (`SourceBuffer.remove`) |
+| → | `0x0A` | RESET | `u8` fonte, `u64` offset (`u64::MAX`: um stream novo desde o cabeçalho EBML) |
+| → | `0x0B` | TSOFF | `u8` fonte, `i64` ns (`timestampOffset`) |
+| → | `0x0C` | TIME | `i64` posição do player, `u8` 1 se o relógio anda |
+| → | `0x0D` | FLOW | `u32` bytes de imagem, `u32` bytes de som que o player aceita esperando |
+| → | `0x0E` | ACK | `u32`, `u32`: bytes de imagem e de som que o player liberou |
+| → | `0x0F` | CUE | `u8` fonte, `i64` tempo: onde está o cluster (pelas `Cues`) |
+| ← | `0x81` | HEADER | `u64` duração (ns), `u32` largura, `u32` altura, `u8` vídeo, `u8` áudio, `u8` canais, `u8` fonte, `u32` 48000 |
+| ← | `0x82` | FRAME | `u8` 1 se B, G, R, A, 2 bytes 0, `i64` tempo, `u32` largura, `u32` altura, pixels (a partir do byte 20) |
+| ← | `0x83` | AUDIO | `i64` tempo (ns), `u32` amostras por canal, s16le estéreo 48 kHz |
+| ← | `0x84` | BUFFERED | `u8` fonte, `u32` sequência, `u8` estado (0, 1 cheio, 2 quebrado), `u32` n, n pares `i64` início/fim |
+| ← | `0x85` | DRAINED | `u32` época, `u32` quadros, `u32` pacotes de som |
+| ← | `0x86` | MARK | `u32` época |
+| ← | `0x87` | CUE | `u8` fonte, `i64` tempo, `u64` offset (`u64::MAX`: sem índice) |
+| ← | `0x88` | FETCH | `u32` id, `u8` 1 cabeça / 2 fim / 3 erro, `u32` status, `u64` tamanho do arquivo, `u64` bytes recebidos |
+| ← | `0x8F` | ERROR | `u32` código (1 contêiner, 2 vídeo, 3 áudio, 4 mensagem, 5 memória, 6 sem codec), texto UTF-8 |
 
-Controle de fluxo: com 8 MiB esperando na fila do navegador o `page_send` devolve `EAGAIN` e o servidor espera (4 ms)
-e tenta de novo, sem ler mais entrada. Um quadro de 1280x720 é 3,7 MB, abaixo do limite de 4 MiB por mensagem.
-`--serve-test` dirige o mesmo `Server` por um elo em memória (quadros 160x90, o arquivo em mensagens de 32 KiB, END,
-SEEK para 1 s, o resto do arquivo) e confere o que voltou; o verificador do hospedeiro roda o mesmo teste.
+Os tempos do áudio tiram o atraso do codec (o `pre-skip`, ~6,5 ms): o primeiro sample é o tempo 0, como manda o
+Matroska. Quadros em B, G, R, A (a ordem do framebuffer do QEMU) são copiados linha a linha pelo pintor.
+
+`--serve-test` dirige o mesmo `Server` por um elo em memória e confere: quadros 160x90 do arquivo inteiro em pedaços
+de 32 KiB, `DRAINED` com a contagem certa, `buffered` de um intervalo até o fim, a busca para 1 s (o `MARK` vem antes
+e o primeiro quadro é o de 1000 ms), o orçamento (com espaço para dois quadros saem dois; um `ACK` libera mais) e o
+arquivo chegando como o `fetcher` o entrega (cabeça, pedaços, fim). O verificador do hospedeiro roda o mesmo teste e
+também `--serve-mse VIDEO AUDIO` (dois arquivos WebM DASH, só vídeo e só áudio, apendados em pedaços de tamanhos
+quaisquer e intercalados: 90 quadros, 144 000 amostras, o vídeo apendado de novo desde o init sem duplicar nada, a
+busca para 2 s).
 
 ## Provas
 
@@ -150,7 +190,8 @@ build com SSE2): os três arquivos baixados pelo `wget` do Terminal e decodifica
 **90/90 quadros com MD5 idêntico ao `framemd5` do ffmpeg** e o **MD5 do PCM igual ao do hospedeiro** (144 000 amostras
 por canal): o decodificador de áudio em ponto fixo dá os mesmos bytes no anel 3 e no hospedeiro, onde o SNR contra o
 ffmpeg é 74,5 dB. `--serve-test` PASS (90 quadros 160x90, 144 000 amostras, a busca para 1 s volta o offset do cluster
-certo e o primeiro quadro depois dela é o de 1000 ms). `cut.webm` decodifica os 30 quadros que tem; `bad.webm` dá 75
+certo e o primeiro quadro depois dela é o de 1000 ms; medido com o protocolo de antes do player, que o teste de agora
+substitui). `cut.webm` decodifica os 30 quadros que tem; `bad.webm` dá 75
 pacotes que não decodificam ("Failed to decode tile data", "Keyframe / intra-only frame required...") e termina com
 status 1; todo processo termina sozinho, nenhum é morto, e as execuções seguintes (`--info`, `--rgb`, `--show`)
 funcionam. `--show` toca o vídeo numa janela (captura `d-show.png`).
@@ -182,9 +223,10 @@ teste de 3 s (90 quadros, keyframe por segundo). "Nativo" é o mesmo C no hosped
 
 ## O que falta
 
-* Media Source Extensions, `<video>`/`<audio>`, sincronia áudio/vídeo e o player do navegador (que usará
-  `spawn_media`); o som (driver de áudio) é outra peça.
+* Velocidade sob emulação: o player toca 360p com o som perfeito, mas mostra ~11–13 quadros/s no QEMU TCG (o
+  decodificador usa ~65 % da CPU emulada só para acompanhar os 30 fps); em hardware real ou com KVM sobra.
 * VP9 perfil 2 (10 bits, HDR), Opus multicanal (família 1), AV1, H.264/AAC.
 * Threads no decodificador (o VP9 suporta por tiles; um processo tem um fio hoje).
-* Busca sem `Cues` (o player precisaria do índice `sidx`/Cues do DASH; sem ele, ler do começo).
+* Busca para além do que foi baixado num `src` por endereço: o download segue em ordem até lá (as `Cues` no fim do
+  arquivo não são buscadas antes; `IN_CUE`/`OUT_CUE` existem, o player ainda não os usa).
 * Blocos com *lacing*, trilhas com `ContentEncodings` (criptografia/compressão).

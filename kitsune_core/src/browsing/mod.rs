@@ -9,6 +9,7 @@ pub mod browser;
 pub mod cookies;
 pub mod cors;
 pub mod http1;
+pub mod media;
 pub mod redirect;
 pub mod shields;
 pub mod web;

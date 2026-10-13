@@ -178,6 +178,9 @@ fn build_user_programs(out: &Path) {
     println!("cargo:rerun-if-changed=../user-apps/linker.ld");
     // The host speaks the wire contract defined in the core.
     println!("cargo:rerun-if-changed=../kitsune_core/src/platform/appabi");
+    // So does the media decoder (the player's protocol, the track buffers, the demuxer).
+    println!("cargo:rerun-if-changed=../kitsune_core/src/browsing/media");
+    println!("cargo:rerun-if-changed=../kitsune_core/src/format/webm");
 }
 
 /// Assemble `wat` text and write the resulting binary module to `out/name`.

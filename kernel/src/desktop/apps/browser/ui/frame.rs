@@ -24,20 +24,25 @@ impl Desktop {
         };
         let bar_bg = inactive_bg.lerp(active_bg, (mix * 255 / 256) as u16);
         let band = Rect::new(r.x, ch.toolbar.y - 1, r.w, ch.toolbar.h + 1);
-        c.fill_rect(
-            band.x.max(0) as usize,
-            band.y.max(0) as usize,
-            band.w.max(0) as usize,
-            band.h.max(0) as usize,
-            bar_bg,
-        );
-        self.draw_toolbar(c, &ch, bs, focused);
-        let (sc, sa) = theme::tint(p.separator);
-        if ch.strip.h == 0 {
-            c.blend_rect(Rect::new(r.x, ch.toolbar.bottom() - 1, r.w, 1), sc, sa);
-        } else {
-            self.draw_tab_strip(c, &ch, bs);
-            c.blend_rect(Rect::new(r.x, ch.strip.bottom() - 1, r.w, 1), sc, sa);
+        // A repaint of a part of the page only (a video's new picture) leaves the bars alone.
+        let bars = Rect::new(r.x, r.y, r.w, ch.content.y - r.y);
+        let chrome = c.clip_rect().intersection(&bars).is_some();
+        if chrome {
+            c.fill_rect(
+                band.x.max(0) as usize,
+                band.y.max(0) as usize,
+                band.w.max(0) as usize,
+                band.h.max(0) as usize,
+                bar_bg,
+            );
+            self.draw_toolbar(c, &ch, bs, focused);
+            let (sc, sa) = theme::tint(p.separator);
+            if ch.strip.h == 0 {
+                c.blend_rect(Rect::new(r.x, ch.toolbar.bottom() - 1, r.w, 1), sc, sa);
+            } else {
+                self.draw_tab_strip(c, &ch, bs);
+                c.blend_rect(Rect::new(r.x, ch.strip.bottom() - 1, r.w, 1), sc, sa);
+            }
         }
 
         // ---- the page area ----
@@ -47,6 +52,7 @@ impl Desktop {
             self.draw_start_page(c, content, bs, focused);
         } else if let Some(page) = &t.page {
             self.paint_web_page(c, page, content, t.scroll, bs);
+            self.paint_videos(c, page, content, t.scroll, bs);
             if crate::trace::ON && t.trace_t0.get() != 0 {
                 crate::trace::note(
                     "load to first paint",

@@ -147,7 +147,7 @@ abaixo, e nenhuma existe ainda. Ordem proposta, cada etapa com aceite próprio:
    `Content-Length`/redirecionamentos corretos, **CORS** (pré-voo, credenciais, `no-cors` opaco, `Origin`/`Referer`).
    **Falta:** `WebSocket` (`ws://`/`wss://` sobre a mesma pilha), HTTP/2 (se algum servidor exigir), cache de
    pré-voo, e vários downloads ao mesmo tempo (o `fetcher` atende um pedido por vez).
-4. **Mídia. Decodificação feita (2026-10).** O YouTube serve WebM com VP9 (itags 243/244/247) e Opus (251), então
+4. **Mídia. Decodificação e player feitos (2026-10).** O YouTube serve WebM com VP9 (itags 243/244/247) e Opus (251), então
    H.264 e AAC não são necessários. `run mediadec arquivo.webm` (anel 3) decodifica: demuxer WebM/Matroska
    incremental em Rust (`kitsune_core::webm`, entrada em pedaços como os fragmentos DASH, busca por cluster, fuzzado),
    **libvpx v1.15.2** só com o decodificador VP9 e **libopus 1.5.2** em ponto fixo (C, BSD-3-Clause, compilados como o
@@ -157,7 +157,21 @@ abaixo, e nenhuma existe ainda. Ordem proposta, cada etapa com aceite próprio:
    quadros com MD5 **idêntico** ao libvpx do ffmpeg em 320x180, 640x360 e 1280x720, áudio com a contagem exata de
    amostras e SNR 74,5 dB contra o ffmpeg, no hospedeiro e no QEMU (`w57-mediadec.sh`). Velocidade (SSE2 nas
    transformadas, filtro de laço e convolução): 360p a ~46 fps e 720p a ~13 fps sob emulação TCG, ~1200 e ~330 fps
-   nativo (a meta era 360p a 30 fps nativo). Ver `docs/design/midia.md`. **Falta:** Media Source Extensions, `<video>`/`<audio>`, sincronia (e o som, etapa 5).
+   nativo (a meta era 360p a 30 fps nativo). Ver `docs/design/midia.md`.
+   **Player:** `<video>`/`<audio>` nas páginas (caixa de layout 300x150 ou do tamanho do vídeo, pôster, controles
+   desenhados pelo navegador: play/pausa, barra de tempo clicável, tempo, volume/mudo), `HTMLMediaElement` em
+   JavaScript (`media.js`: `play()`/`pause()` com promises, `currentTime`/seek, `duration`, `volume`, `muted`,
+   `readyState`, `buffered`/`seekable`/`played`, `canPlayType`, `loop`, `autoplay` e todos os eventos), `src` por
+   endereço baixado pelo navegador direto no decodificador (`Range` de 1 MiB, até 30 s à frente) e **Media Source
+   Extensions** (`MediaSource`, `SourceBuffer` com `appendBuffer`/`remove`/`abort`, vídeo e som em buffers separados,
+   `endOfStream`, `URL.createObjectURL`). Um `mediadec --serve` por elemento (no máximo 2); o **som é o relógio** (o
+   contador "tocado" do mixer), quadros mostrados quando o tempo deles chega, os atrasados descartados; aba em segundo
+   plano pausa. Provado no QEMU (`w58-video.sh`, 24 verificações): 440 Hz medidos na gravação com 3000,0/2001,0/
+   3000,0/3000,0/2008,0 ms para tocar, seek, controles e MSE, relógio 1,001–1,008, imagem andando; sem placa toca mudo
+   pelo relógio do sistema. Velocidade sob TCG: 11–13 quadros/s mostrados no 360p de 30 fps (decodificador ~65 % da
+   CPU emulada), som perfeito. Ver `docs/design/tls-browser.md` §14. **Falta:** WebAudio (`decodeAudioData`), EME/DRM
+   (o YouTube não exige para a maioria dos vídeos), VP8/Vorbis/H.264/AAC, tela cheia, legendas, `IN_CUE` (buscar as
+   `Cues` antes de um seek longe num `src` por endereço) e velocidade de reprodução ≠ 1.
 5. **Som. Feito (2026-10).** Driver **AC'97** (`-device AC97`; o `run.ps1` liga com `-audiodev dsound`), por polling,
    ~128 ms à frente; **mixer** no kernel com até 16 fluxos (4 por processo), reamostragem linear de 8–96 kHz para 48 kHz,
    volume por fluxo e do sistema, mudo, soma com saturação e o **relógio "tocado"** de cada fluxo (o que o player de vídeo

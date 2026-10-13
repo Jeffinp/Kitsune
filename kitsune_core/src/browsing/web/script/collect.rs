@@ -30,6 +30,9 @@ pub struct ScriptSet {
     entries: Vec<Entry>,
     bytes: usize,
     started: bool,
+    /// The page has `<video>`/`<audio>`: its players live in the script process, so the process
+    /// starts even without scripts.
+    media: bool,
 }
 
 impl ScriptSet {
@@ -38,6 +41,7 @@ impl ScriptSet {
         self.entries.clear();
         self.bytes = 0;
         self.started = false;
+        self.media = doc.has_media();
         let mut inline = 0;
         for s in doc.scripts().iter().take(MAX_PAGE_SCRIPTS) {
             match &s.src {
@@ -121,9 +125,12 @@ impl ScriptSet {
             .any(|e| matches!(e.state, State::Pending | State::Loading))
     }
 
-    /// Every script is in (or failed), at least one can run, and they were not handed over yet.
+    /// Every script is in (or failed), at least one can run (or the page has media elements, whose
+    /// players need the process), and they were not handed over yet.
     pub fn ready(&self) -> bool {
-        !self.started && !self.busy() && self.entries.iter().any(|e| e.state == State::Ready)
+        !self.started
+            && !self.busy()
+            && (self.media || self.entries.iter().any(|e| e.state == State::Ready))
     }
 
     /// Hand the scripts over: `(name, source)` of each one that arrived, in document order. Later

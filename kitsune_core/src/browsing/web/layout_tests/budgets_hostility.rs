@@ -13,7 +13,9 @@ fn huge_css_lengths_do_not_overflow_layout() {
             match c {
                 Cmd::Rect { x, y, w, h, .. } => assert!(*x >= 0 && *y >= 0 && *w >= 0 && *h >= 0),
                 Cmd::Text { x, y, .. } => assert!(*x >= 0 && *y >= 0),
-                Cmd::Image { x, y, w, h, .. } => assert!(*x >= 0 && *y >= 0 && *w >= 0 && *h >= 0),
+                Cmd::Image { x, y, w, h, .. } | Cmd::Video { x, y, w, h, .. } => {
+                    assert!(*x >= 0 && *y >= 0 && *w >= 0 && *h >= 0)
+                }
                 Cmd::Border { w, h, .. } => assert!(*w >= 0 && *h >= 0),
             }
         }
