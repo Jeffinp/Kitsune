@@ -85,3 +85,25 @@ fn run_hands_over_the_arguments_the_folder_and_the_piped_input() {
     );
     assert_eq!(got.stdin, b"piped\n");
 }
+
+#[test]
+fn sound_commands_run_the_play_program() {
+    let mut t = with_programs();
+    t.sys.programs.push(("play".into(), Vec::new(), Some(0)));
+    // A file called `play` in the folder does not take the place of the program.
+    t.fs = MemFs::new().with_file("/play", b"\x7fELF fake");
+    assert_eq!(t.run("play som.wav -v 40").status, 0);
+    assert_eq!(t.run("tone 440").status, 0);
+    assert_eq!(t.run("tone 440,660 2000 -v 50").status, 0);
+    assert_eq!(t.run("beep").status, 0);
+    assert_eq!(t.run("volume 30").status, 0);
+    assert_eq!(t.sys.started, ["play"; 5]);
+    let args: Vec<Vec<String>> = t.sys.started_with.iter().map(|c| c.args.clone()).collect();
+    assert_eq!(args[0], ["som.wav", "-v", "40"]);
+    assert_eq!(args[1], ["--tone", "440", "1000"]);
+    assert_eq!(args[2], ["--tone", "440,660", "2000", "-v", "50"]);
+    assert_eq!(args[3], ["--tone", "880", "150"]);
+    assert_eq!(args[4], ["--volume", "30"]);
+    assert_eq!(t.run("play").status, 2);
+    assert_eq!(t.run("tone").status, 2);
+}

@@ -197,6 +197,13 @@ fn clock_survives_gaps_and_late_streams() {
     m.set_device_played(1_600);
     assert_eq!(m.status(1, id).unwrap().played, 300);
     assert!(m.drained(1, id).unwrap());
+    assert!(m.ready(1, id, 0));
+    assert!(m.ready(1, id, 4096));
+    assert!(!m.ready(1, id, QUEUE_BYTES as u64 + 1));
+    assert!(
+        m.ready(1, 12345, 0),
+        "a stream that is gone wakes its waiter"
+    );
     // Paused: no frames taken, no underrun.
     m.write(1, id, &le(&[5; 10])).unwrap();
     m.set_paused(1, id, true).unwrap();

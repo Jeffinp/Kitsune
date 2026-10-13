@@ -32,6 +32,8 @@ pub fn error_text(e: Errno) -> &'static str {
         EBADF => "bad file descriptor",
         EFAULT => "bad address",
         EBUSY => "the volume is busy",
+        ENODEV => "no such device",
+        EAGAIN => "try again",
         _ => "i/o error",
     }
 }

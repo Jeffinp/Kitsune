@@ -341,8 +341,8 @@ pub(super) fn rs_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// The sources the key checks read: the kernel and the core, minus this file (its
-/// fixtures are made-up keys).
+/// The sources the key checks read: the kernel, the core and the ring 3 programs that use the
+/// catalogs (`kterm`, `play`), minus this file (its fixtures are made-up keys).
 pub(super) fn source_files() -> Vec<(String, String)> {
     let root = repo_root();
     let skip = ["audit.rs"];
@@ -354,7 +354,7 @@ pub(super) fn source_files() -> Vec<(String, String)> {
             crate::testutil::test_modules(&p, &s, &mut skip_tests);
         }
     }
-    for dir in ["kernel/src", "kitsune_core/src"] {
+    for dir in ["kernel/src", "kitsune_core/src", "user-apps/kterm/src"] {
         for p in rs_files(&root.join(dir)) {
             if p.ancestors().any(|a| skip_tests.contains(a)) {
                 continue;

@@ -120,6 +120,17 @@ impl Mixer {
         Ok(self.stream(owner, id)?.drained(played))
     }
 
+    /// What `audio_wait` waits for: `want` free bytes in the queue of `id`, or (`want == 0`)
+    /// everything written to it played. A stream that is gone is "ready" (the waiter must look).
+    pub fn ready(&mut self, owner: u32, id: u32, want: u64) -> bool {
+        let played = self.played;
+        match self.stream(owner, id) {
+            Err(_) => true,
+            Ok(s) if want == 0 => s.drained(played),
+            Ok(s) => s.free_bytes() as u64 >= want,
+        }
+    }
+
     /// Close a stream: at once (what is queued is dropped), or after it plays what it has
     /// (`drain`; the id stops accepting writes and goes away by itself).
     pub fn close(&mut self, owner: u32, id: u32, drain: bool) -> Result<(), AudioErr> {

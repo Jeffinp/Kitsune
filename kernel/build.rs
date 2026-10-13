@@ -104,8 +104,9 @@ const USER_CRATES: &[(&str, &[&str])] = &[
     ),
     // The WebAssembly host that runs an app inside a process (see `src/wasm/remote.rs`).
     ("wasmhost", &["wasmhost"]),
-    // The Terminal in ring 3 (`run kterm`): the shell engine over the file and process calls.
-    ("kterm", &["kterm"]),
+    // The Terminal in ring 3 (`run kterm`): the shell engine over the file and process calls. Also
+    // `play` (sound: WAV files and tones), which shares its `kitsune_core` build.
+    ("kterm", &["kterm", "play"]),
     // The JavaScript engine (`run jsrun script.js`): QuickJS and its small C library, built by the
     // crate's own build.rs with clang (`user-apps/jsrun`).
     ("jsrun", &["jsrun"]),

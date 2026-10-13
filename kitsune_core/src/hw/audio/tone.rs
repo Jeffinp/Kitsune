@@ -17,12 +17,12 @@ const fn quarter_table() -> [i16; QUARTER + 1] {
     while i <= QUARTER {
         let x = HALF_PI_Q32 * i as i128 / QUARTER as i128; // Q32
         // sin x = x - x^3/3! + x^5/5! - ...: each term is the last times -x^2 / ((2k)(2k+1)).
-        let x2 = x * x >> 32;
+        let x2 = (x * x) >> 32;
         let mut term = x;
         let mut sum = x;
         let mut k = 1;
         while k <= 7 {
-            term = -(term * x2 >> 32) / ((2 * k) * (2 * k + 1));
+            term = -((term * x2) >> 32) / ((2 * k) * (2 * k + 1));
             sum += term;
             k += 1;
         }
@@ -88,8 +88,8 @@ impl Tone {
         for o in &mut out[..n] {
             let edge = self.pos.min(self.total - 1 - self.pos).min(self.fade);
             let env = (edge * 32768 / self.fade) as i64;
-            let s = i64::from(sine(self.phase)) * i64::from(self.amp) >> 15;
-            *o = (s * env >> 15) as i16;
+            let s = (i64::from(sine(self.phase)) * i64::from(self.amp)) >> 15;
+            *o = ((s * env) >> 15) as i16;
             self.phase = self.phase.wrapping_add(self.step);
             self.pos += 1;
         }

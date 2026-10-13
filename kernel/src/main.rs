@@ -5,8 +5,10 @@
 
 extern crate alloc;
 
+mod ac97;
 mod allocator;
 mod ata;
+mod audio;
 mod boot;
 mod bringup;
 mod clock;
@@ -311,6 +313,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     });
 
     trace::mark("threads spawned (fetcher, appd, shelld x2)");
+
+    // Sound: the AC'97 controller if there is one (`audio: no device` otherwise) and its `audiod`.
+    audio::init(phys_offset);
+    trace::mark("audio init done");
 
     // Storage service: detect/mount/migrate OJFS v3 on the filesystem disk (the desktop
     // still runs on the v2 image; see storage.rs). Runs with the scheduler up, so the

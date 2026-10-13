@@ -21,7 +21,8 @@
 //! | 48–51 | `win_open`, `win_present`, `win_event`, `win_title` | one window on the desktop, see `kitsune_userabi` and `crate::wasm::manager::native` | |
 //! | 32–42 | `open`, `close`, `read`, `write`, `seek`, `stat`, `readdir`, `mkdir`, `remove`, `rename`, `getargs` | files and arguments, see `kitsune_userabi` and [`crate::userfs`] | |
 //! | 52–54 | `spawn`, `proc_poll`, `proc_kill` | child processes | |
-//! | 56–57 | `page_recv`, `page_send` | only the script process of a browser page, see `page.rs` | |
+//! | 56–57 | `page_recv`, `page_send` | only the script process of a browser page, see `page.rs` |
+//! | 60–65 | `audio_open`, `audio_write`, `audio_status`, `audio_close`, `audio_ctl`, `audio_wait` | sound streams, see `audio.rs` and `crate::audio` | |
 //!
 //! Every pointer is translated through the process's own page tables before the kernel touches
 //! it (`AddressSpace::copy_in`), so a bad pointer is an error return, never a kernel fault.
@@ -43,11 +44,13 @@ use kitsune_core::paging::PAGE_SIZE;
 use kitsune_core::perm::Cred;
 use kitsune_userabi as abi;
 
+mod audio;
 mod files;
 mod host;
 mod page;
 mod queue;
 mod syscall;
+use audio::*;
 use files::*;
 pub use host::*;
 use page::*;
@@ -441,6 +444,13 @@ pub fn list() -> Vec<Info> {
         })
         .collect()
 }
+/// Is process `pid` in the table and still running.
+pub fn is_running(pid: u32) -> bool {
+    PROCS
+        .lock()
+        .iter()
+        .any(|p| p.pid == pid && end_of(p) == End::Running)
+}
 fn end_of(p: &Proc) -> End {
     match p.exit {
         Some(c) => End::Exited(c),
@@ -511,6 +521,7 @@ pub fn reap() {
         };
         let mut p = procs.remove(i);
         drop(procs);
+        crate::audio::close_owner(p.pid);
         let how = match end_of(&p) {
             End::Exited(c) => alloc::format!("exited with status {c}"),
             _ => String::from("was killed"),

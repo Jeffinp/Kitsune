@@ -57,7 +57,7 @@ impl SampleRing {
         let frames = (bytes.len() / fb).min(self.room());
         let cap = self.buf.len();
         let mut at = (self.head + self.len * self.channels) % cap;
-        for s in bytes[..frames * fb].chunks_exact(2) {
+        for s in bytes[..frames * fb].as_chunks::<2>().0 {
             self.buf[at] = i16::from_le_bytes([s[0], s[1]]);
             at += 1;
             if at == cap {
