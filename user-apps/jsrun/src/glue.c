@@ -4,12 +4,13 @@
  * context, adds `console`, `print` and `performance.now`, evaluates the script (global code with
  * top-level `await` allowed), runs the job queue (promises) until it is empty and reports what was not
  * caught. Most of QuickJS's API is `static inline` in quickjs.h, which is why this layer is C and the
- * boundary with Rust is one call with pointers and integers.
+ * boundary with Rust is one call with pointers and integers. The browser's script process (`--page`)
+ * is in page.c and shares the helpers declared in glue.h.
  */
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
-#include "quickjs.h"
+#include "glue.h"
 
 #define countof(x) (sizeof(x) / sizeof((x)[0]))
 
@@ -23,7 +24,7 @@ extern uint64_t kjs_uptime_ms(void);
 #endif
 #define JS_MEMORY_LIMIT (48u * 1024 * 1024)
 
-static void write_all(int fd, const char *p, size_t n)
+void kjs_write_all(int fd, const char *p, size_t n)
 {
     while (n) {
         long w = kjs_write(fd, p, n);
@@ -97,7 +98,7 @@ static JSValue js_console(JSContext *ctx, JSValueConst this_val, int argc, JSVal
         put_value(ctx, &l, argv[i]);
     }
     line_put(ctx, &l, "\n", 1);
-    write_all(magic, l.buf, l.len);
+    kjs_write_all(magic, l.buf, l.len);
     if (l.buf != l.small)
         js_free(ctx, l.buf);
     return JS_UNDEFINED;
@@ -146,7 +147,7 @@ static void add_globals(JSContext *ctx)
 }
 
 /* "Uncaught <error>" and, for an Error, its stack, on the error output. */
-static void report(JSContext *ctx, const char *what, JSValueConst err)
+void kjs_report(JSContext *ctx, const char *what, JSValueConst err)
 {
     /* Gathered into one write: the kernel logs each write of a process as its own lines. */
     Line l = {0};
@@ -170,15 +171,15 @@ static void report(JSContext *ctx, const char *what, JSValueConst err)
         }
         JS_FreeValue(ctx, stack);
     }
-    write_all(2, l.buf, l.len);
+    kjs_write_all(2, l.buf, l.len);
     if (l.buf != l.small)
         js_free(ctx, l.buf);
 }
 
-static void report_exception(JSContext *ctx, const char *what)
+void kjs_report_exception(JSContext *ctx, const char *what)
 {
     JSValue e = JS_GetException(ctx);
-    report(ctx, what, e);
+    kjs_report(ctx, what, e);
     JS_FreeValue(ctx, e);
 }
 
@@ -213,7 +214,7 @@ static void track_rejection(JSContext *ctx, JSValueConst promise, JSValueConst r
 }
 
 /* Run the jobs until none is left; returns how many threw. */
-static int drain_jobs(JSRuntime *rt)
+int kjs_drain_jobs(JSRuntime *rt)
 {
     int failed = 0;
     for (;;) {
@@ -222,21 +223,37 @@ static int drain_jobs(JSRuntime *rt)
         if (r == 0)
             break;
         if (r < 0) {
-            report_exception(jctx, "Uncaught");
+            kjs_report_exception(jctx, "Uncaught");
             failed++;
         }
     }
     return failed;
 }
 
-/* Evaluate `src` (`len` bytes, with a NUL at src[len]) named `name`. Returns the process status: 0, or
-   1 when something was thrown and not caught, 2 when the engine could not start. */
-int kjs_run(const char *src, size_t len, const char *name)
+/* Report the promises still rejected without a handler (except `except`, the script's own) and
+   forget them; returns how many were reported. */
+int kjs_report_rejections(JSContext *ctx, JSValueConst except)
+{
+    int n = 0;
+    for (int i = 0; i < n_rejected; i++) {
+        if (JS_VALUE_GET_PTR(rejected[i].promise) != JS_VALUE_GET_PTR(except)) {
+            kjs_report(ctx, "Uncaught (in promise)", rejected[i].reason);
+            n++;
+        }
+        JS_FreeValue(ctx, rejected[i].promise);
+        JS_FreeValue(ctx, rejected[i].reason);
+    }
+    n_rejected = 0;
+    return n;
+}
+
+/* A runtime with the limits and a context with the globals; NULL (after saying why) on failure. */
+JSContext *kjs_new_context(void)
 {
     JSRuntime *rt = JS_NewRuntime();
     if (!rt) {
         fputs("jsrun: cannot create the JavaScript runtime\n", stderr);
-        return 2;
+        return NULL;
     }
     JS_SetMaxStackSize(rt, JS_STACK_LIMIT);
     JS_SetMemoryLimit(rt, JS_MEMORY_LIMIT);
@@ -246,35 +263,39 @@ int kjs_run(const char *src, size_t len, const char *name)
     if (!ctx) {
         fputs("jsrun: cannot create the JavaScript context\n", stderr);
         JS_FreeRuntime(rt);
-        return 2;
+        return NULL;
     }
     add_globals(ctx);
+    return ctx;
+}
+
+/* Evaluate `src` (`len` bytes, with a NUL at src[len]) named `name`. Returns the process status: 0, or
+   1 when something was thrown and not caught, 2 when the engine could not start. */
+int kjs_run(const char *src, size_t len, const char *name)
+{
+    JSContext *ctx = kjs_new_context();
+    if (!ctx)
+        return 2;
+    JSRuntime *rt = JS_GetRuntime(ctx);
 
     int status = 0;
     JSValue result = JS_Eval(ctx, src, len, name, JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_ASYNC);
     if (JS_IsException(result)) {
-        report_exception(ctx, "Uncaught");
+        kjs_report_exception(ctx, "Uncaught");
         status = 1;
     } else {
-        if (drain_jobs(rt))
+        if (kjs_drain_jobs(rt))
             status = 1;
         /* The script's own promise: a rejection is the script's uncaught error. */
         if (JS_PromiseState(ctx, result) == JS_PROMISE_REJECTED) {
             JSValue reason = JS_PromiseResult(ctx, result);
-            report(ctx, "Uncaught", reason);
+            kjs_report(ctx, "Uncaught", reason);
             JS_FreeValue(ctx, reason);
             status = 1;
         }
     }
-    for (int i = 0; i < n_rejected; i++) {
-        if (JS_VALUE_GET_PTR(rejected[i].promise) != JS_VALUE_GET_PTR(result)) {
-            report(ctx, "Uncaught (in promise)", rejected[i].reason);
-            status = 1;
-        }
-        JS_FreeValue(ctx, rejected[i].promise);
-        JS_FreeValue(ctx, rejected[i].reason);
-    }
-    n_rejected = 0;
+    if (kjs_report_rejections(ctx, result))
+        status = 1;
     JS_FreeValue(ctx, result);
     /* No JS_FreeContext/JS_FreeRuntime: the process ends next and the kernel takes back all of its
        memory at once, which is faster than freeing every object one by one. */

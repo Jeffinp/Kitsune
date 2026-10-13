@@ -53,6 +53,35 @@ pub extern "C" fn kjs_tz_offset_secs() -> i64 {
     off
 }
 
+/// The next message from the browser (page mode): its length in `buf`, `0` when none came within
+/// `timeout_ms` (`u64::MAX`: no limit), or `-errno`.
+///
+/// # Safety
+/// `buf` must be valid for writes of `cap` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kjs_page_recv(buf: *mut u8, cap: usize, timeout_ms: u64) -> i64 {
+    // SAFETY: the caller promises `buf` holds `cap` writable bytes.
+    let out = unsafe { core::slice::from_raw_parts_mut(buf, cap) };
+    sdk::page_recv(out, timeout_ms)
+}
+
+/// Send `len` bytes at `buf` to the browser (page mode): `0` or `-errno`.
+///
+/// # Safety
+/// `buf` must be valid for `len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kjs_page_send(buf: *const u8, len: usize) -> i64 {
+    // SAFETY: the caller promises `buf` holds `len` bytes.
+    let data = unsafe { core::slice::from_raw_parts(buf, len) };
+    sdk::page_send(data)
+}
+
+/// Sleep about `ms` milliseconds.
+#[unsafe(no_mangle)]
+pub extern "C" fn kjs_sleep_ms(ms: u64) {
+    sdk::sleep_ms(ms)
+}
+
 /// End the process.
 #[unsafe(no_mangle)]
 pub extern "C" fn kjs_exit(code: i32) -> ! {

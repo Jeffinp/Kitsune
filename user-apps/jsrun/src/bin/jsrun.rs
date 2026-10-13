@@ -5,6 +5,7 @@
 //! run jsrun -e 'CODE'        the code given
 //! run jsrun --selftest       the built-in test of the engine, with a small benchmark
 //! echo 'CODE' | run jsrun    standard input
+//! jsrun --page               the script process of a browser page (started by the browser)
 //! ```
 //!
 //! `console.log` (and `print`) write to the output; an uncaught exception prints its message and stack
@@ -31,11 +32,16 @@ const MAX_SCRIPT: usize = 16 * 1024 * 1024;
 
 /// The engine's own test, with a NUL after it (QuickJS wants one).
 const SELFTEST: &str = concat!(include_str!("jsrun/selftest.js"), "\0");
+/// The DOM, events and timers of page mode (JavaScript run before the page's scripts), NUL-ended.
+const DOM_JS: &str = concat!(include_str!("jsrun/dom.js"), "\0");
 
 unsafe extern "C" {
     /// `glue.c`: evaluate `len` bytes at `src` (NUL at `src[len]`) named `name` (NUL-terminated);
     /// returns the process status.
     fn kjs_run(src: *const u8, len: usize, name: *const u8) -> i32;
+    /// `page.c`: the browser page loop with the DOM code at `src` (`len` bytes, NUL at `src[len]`);
+    /// returns only when it cannot start.
+    fn kjs_page(src: *const u8, len: usize) -> i32;
 }
 
 const USAGE: &str = "usage: jsrun FILE.js | jsrun -e CODE | jsrun --selftest | ... | jsrun\n";
@@ -44,6 +50,10 @@ fn main() -> i32 {
     let env = Env::load();
     let mut args = env.args();
     let (mut source, name): (Vec<u8>, &str) = match args.next() {
+        Some("--page") => {
+            // SAFETY: `DOM_JS` is static, `len` bytes followed by a NUL.
+            return unsafe { kjs_page(DOM_JS.as_ptr(), DOM_JS.len() - 1) };
+        }
         Some("--selftest") => {
             return run(SELFTEST.as_bytes(), SELFTEST.len() - 1, "selftest.js");
         }
