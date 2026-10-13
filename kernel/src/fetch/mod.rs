@@ -109,6 +109,10 @@ const KIND_PAGE: u8 = 0;
 const KIND_IMAGE: u8 = 1;
 /// One style sheet of a page (the body comes back as bytes).
 const KIND_SHEET: u8 = 2;
+/// One script of a page (the body comes back as bytes, in the same slot as a sheet's).
+const KIND_SCRIPT: u8 = 3;
+/// Largest script taken (bytes, headers included).
+const SCRIPT_CAP: usize = MAX_RESPONSE_BYTES;
 /// Column width the downloaded picture is scaled to (image requests).
 static REQ_FIT_W: AtomicUsize = AtomicUsize::new(0);
 /// Outcome of the last image request (decoded on the fetcher thread, so the UI never waits).

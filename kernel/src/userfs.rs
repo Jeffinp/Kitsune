@@ -288,6 +288,8 @@ fn spawn_child(parent: u32, wire: &[u8], cred: &Option<Cred>) -> Result<i64, i64
         args: req.args.to_vec(),
         stdin: req.stdin.to_vec(),
         cred: cred.clone(),
+        // Only the browser gives a process the page link (`userproc::spawn_page`).
+        page: false,
     };
     userproc::spawn_elf(req.name, image, launch)
         .map(i64::from)

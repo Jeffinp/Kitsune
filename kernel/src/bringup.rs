@@ -138,6 +138,13 @@ pub fn pump_browser(desk: &mut Desktop, redraw: &mut bool) {
                 desk.browser_sheet_done(None);
                 *redraw = true;
             }
+        } else if let Some(len) = desk.browser_next_script(&mut url) {
+            // Then its scripts: they run once all are in.
+            let mut host = [0u8; 96];
+            let hlen = desk.browser_insecure_host_active(&mut host);
+            if !fetch::try_post_script(&url[..len], &host[..hlen]) {
+                desk.browser_script_done(None);
+            }
         } else if let Some((len, fit_w)) = desk.browser_next_image(&mut url) {
             // Nothing else is waiting: fetch the next picture of the page.
             let mut host = [0u8; 96];
@@ -161,6 +168,12 @@ pub fn pump_browser(desk: &mut Desktop, redraw: &mut bool) {
     }
     if let Some(css) = fetch::take_sheet_result() {
         desk.browser_sheet_done(css);
+        *redraw = true;
+    }
+    if let Some(js) = fetch::take_script_result() {
+        desk.browser_script_done(js);
+    }
+    if desk.browser_pump_js() {
         *redraw = true;
     }
     if let Some(res) = fetch::take_image_result() {

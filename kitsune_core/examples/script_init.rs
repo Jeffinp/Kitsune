@@ -13,9 +13,11 @@ fn main() {
     let mut set = ScriptSet::default();
     set.begin(&doc, url.as_bytes());
     while let Some(key) = set.next_pending() {
-        let file = args[3..]
-            .iter()
-            .find_map(|a| a.split_once('=').filter(|(n, _)| key.ends_with(n)).map(|x| x.1));
+        let file = args[3..].iter().find_map(|a| {
+            a.split_once('=')
+                .filter(|(n, _)| key.ends_with(n))
+                .map(|x| x.1)
+        });
         let body = file.and_then(|f| std::fs::read(f).ok());
         set.finish(&key, body.as_deref());
     }

@@ -13,6 +13,7 @@
 //!
 //! - `state`, `model` the window state and its methods
 //! - `fetch`, `page`, `tabs`, `layout` loading, scrolling, tabs and page layout
+//! - `script` the page's JavaScript (a ring 3 process per tab with scripts)
 //! - `keys`, `mouse`, `hover` input
 //! - `ui` the chrome (toolbar, tab strip, start and error pages, popups); `paint` the page
 
@@ -24,6 +25,7 @@ mod model;
 mod mouse;
 mod page;
 pub(super) mod paint;
+mod script;
 mod state;
 mod tabs;
 mod ui;
