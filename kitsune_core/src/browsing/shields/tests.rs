@@ -370,6 +370,24 @@ fn the_site_list_works_by_site_and_round_trips() {
 }
 
 #[test]
+fn a_site_is_a_name_not_punctuation() {
+    // Found by the fuzzer: "." was accepted by set_off but dropped when the file was read back.
+    for bad in [&b"."[..], b"-", b"..", b"a.com-", b"..."] {
+        let mut l = SiteList::new();
+        assert!(!l.set_off(bad, true), "{}", String::from_utf8_lossy(bad));
+        assert!(l.is_empty());
+        assert!(SiteList::parse(bad).is_empty());
+    }
+    let mut l = SiteList::new();
+    assert!(
+        l.set_off(b"a.", true),
+        "a trailing dot is cut, like in a URL"
+    );
+    assert_eq!(l.sites(), ["a"]);
+    assert_eq!(SiteList::parse(&l.to_text()), l);
+}
+
+#[test]
 fn the_site_list_parses_a_damaged_file_and_is_bounded() {
     let text = b"# c\n\nexample.com\r\nEXAMPLE.com\n  spaced.org  \nnot a host\n\xff\xfe\nhttp://x.com/\nbad_underscore.com\n";
     let l = SiteList::parse(text);

@@ -241,7 +241,8 @@ fn exercise(data: &[u8]) {
             }
         }
         if let Ok(t) = st.target(&page.forms, fi, None) {
-            assert!(t.contains('?'));
+            // A GET puts the query in the address; a POST keeps it in the body.
+            assert!(t.contains('?') || page.forms.get(fi).is_some_and(|f| f.post));
         }
         let _ = st.tab(&page.forms, mode & 1 == 0);
     }

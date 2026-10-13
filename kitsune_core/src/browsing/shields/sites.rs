@@ -21,7 +21,10 @@ pub struct SiteList {
 }
 
 fn valid_site(s: &[u8]) -> bool {
-    !s.is_empty()
+    // A name starts and ends with a letter or digit: "." or "-" alone is not a site (and the text form
+    // would drop it again, since a trailing dot is cut when a line is read).
+    s.first().is_some_and(u8::is_ascii_alphanumeric)
+        && s.last().is_some_and(u8::is_ascii_alphanumeric)
         && s.len() <= SITE_CAP
         && s.iter()
             .all(|&c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'.' | b'-'))
