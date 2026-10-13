@@ -28,11 +28,22 @@ const PIECE_MS: u64 = 40;
 /// Hand `msg` to process `pid`, waiting while its queue is full. `false` when it is gone or the
 /// request `id` was aborted meanwhile.
 fn deliver(pid: u32, id: u32, mut msg: Vec<u8>) -> bool {
+    let t0 = crate::netd::now_ms();
+    let r = deliver_wait(pid, id, &mut msg);
+    WAITED_MS.fetch_add(crate::netd::now_ms().saturating_sub(t0), Ordering::Relaxed);
+    r
+}
+
+/// Time spent waiting for script processes to take their messages (ms; reported per request).
+static WAITED_MS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+fn deliver_wait(pid: u32, id: u32, msg: &mut Vec<u8>) -> bool {
     loop {
-        match page_try_post(pid, msg) {
+        let m = core::mem::take(msg);
+        match page_try_post(pid, m) {
             Ok(()) => return true,
             Err(PostError::Gone) => return false,
-            Err(PostError::Full(m)) => msg = m,
+            Err(PostError::Full(m)) => *msg = m,
         }
         if aborted(pid, id) {
             return false;
@@ -236,6 +247,7 @@ struct Answer {
 fn exchange(net: &mut netstack::Net, job: &ScriptFetch, x: Exchange) -> Result<Hop, String> {
     let (pid, id) = (job.pid, job.req.id);
     let url = x.url;
+    let waited0 = WAITED_MS.load(Ordering::Relaxed);
     let safe = matches!(x.method, "GET" | "HEAD");
     let ctx = if x.send_cookies {
         cookies::context(
@@ -346,12 +358,14 @@ fn exchange(net: &mut netstack::Net, job: &ScriptFetch, x: Exchange) -> Result<H
     let body_ms = now.saturating_sub(a.first_byte.max(x.t0)).max(1);
     let (conns, handshakes, reuses) = netstack::pool_stats();
     serial_println!(
-        "jsfetch: {} done: status {}, {} bytes in {} ms ({} KB/s body){} [net: {} connections, {} TLS handshakes, {} reuses]",
+        "jsfetch: {} done: status {}, {} bytes in {} ms (first byte after {} ms, {} KB/s body, {} ms waiting for the page){} [net: {} connections, {} TLS handshakes, {} reuses]",
         id,
         a.status,
         a.total,
         now.saturating_sub(x.t0),
+        a.first_byte.saturating_sub(x.t0),
         a.total as u64 * 1000 / 1024 / body_ms,
+        WAITED_MS.load(Ordering::Relaxed).saturating_sub(waited0),
         if x.redirected { ", redirected" } else { "" },
         conns,
         handshakes,
