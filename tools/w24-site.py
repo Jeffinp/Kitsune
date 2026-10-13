@@ -19,13 +19,29 @@ the reserved .invalid names the rule lists carry for tests (they never resolve, 
 in the guest's log), and two ad boxes that the cosmetic rules hide (one holds a picture that must then
 not be asked for). With the blocker on the server sees only /ads and /g.png; with it off, all of them.
 Every request is printed on stderr, so `tools/w24-site.py 2> requests.log` is the record to check.
+
+/net is the page for the network of scripts (W55: fetch, XMLHttpRequest, cookies, CORS, streaming,
+keep-alive); its routes are in tools/w24net.py. The server speaks HTTP/1.1 with keep-alive and also
+listens on the port just below (PORT - 1: another origin for CORS). Arguments:
+
+    tools/w24-site.py [PORT] [--tls TLS_PORT]
+
+--tls also serves everything over HTTPS (TLS 1.3, a self-signed P-256 certificate made with openssl
+at start; the guest needs "continuar mesmo assim") for the throughput test /net/speed.
 """
+import os
+import ssl
 import struct
+import subprocess
 import sys
+import tempfile
+import threading
 import time
 import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+
+import w24net
 
 PORT = 8079
 
@@ -352,20 +368,47 @@ a:hover{color:red}
 
 
 class H(BaseHTTPRequestHandler):
+    # HTTP/1.1: connections stay open between requests (keep-alive), as real servers do.
+    protocol_version = "HTTP/1.1"
+
+    def setup(self):
+        super().setup()
+        w24net.count("connections")
+        print(self.client_address[0], "connection", w24net.STATS["connections"], file=sys.stderr, flush=True)
+
     def log_message(self, fmt, *args):
         print(self.address_string(), fmt % args, file=sys.stderr, flush=True)
 
-    def reply(self, code, ctype, body, extra=()):
+    def reply(self, code, ctype, body, extra=(), length=None):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Connection", "close")
+        self.send_header("Content-Length", str(len(body) if length is None else length))
         for k, v in extra:
             self.send_header(k, v)
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def net(self, method):
+        w24net.count("requests")
+        u = urlparse(self.path)
+        return w24net.handle(self, method, u, parse_qs(u.query))
+
+    def do_HEAD(self):
+        if not self.net("HEAD"):
+            self.reply(404, "text/plain", b"")
+
+    def do_PUT(self):
+        if not self.net("PUT"):
+            self.reply(404, "text/plain", b"")
+
+    def do_OPTIONS(self):
+        if not self.net("OPTIONS"):
+            self.reply(204, "text/plain", b"")
 
     def do_GET(self):
+        if self.net("GET"):
+            return
         u = urlparse(self.path)
         q = parse_qs(u.query)
         if u.path == "/g.png":
@@ -424,10 +467,49 @@ main{max-width:min(100%, 760px);margin:0 auto;padding:20px}
         self.reply(200, "text/html; charset=utf-8", body)
 
     def do_POST(self):
+        if self.net("POST"):
+            return
+        n = int(self.headers.get("Content-Length") or 0)
+        if n:
+            self.rfile.read(n)
         self.reply(200, "text/html; charset=utf-8", page("POST", "<p>POST recebido</p>"))
 
 
-if __name__ == "__main__":
-    srv = ThreadingHTTPServer(("0.0.0.0", PORT), H)
-    print(f"w24-site on :{PORT}", file=sys.stderr, flush=True)
+def tls_context():
+    """A TLS 1.3 context with a fresh self-signed P-256 certificate."""
+    d = tempfile.mkdtemp(prefix="w24tls")
+    key, crt = os.path.join(d, "k.pem"), os.path.join(d, "c.pem")
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
+                    "-nodes", "-keyout", key, "-out", crt, "-days", "2", "-subj", "/CN=203.0.113.5"],
+                   check=True, capture_output=True)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+    ctx.load_cert_chain(crt, key)
+    return ctx
+
+
+def serve(port, ctx=None):
+    srv = ThreadingHTTPServer(("0.0.0.0", port), H)
+    srv.daemon_threads = True
+    if ctx:
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+    print(f"w24-site on :{port}{' (https)' if ctx else ''}", file=sys.stderr, flush=True)
     srv.serve_forever()
+
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    port = PORT
+    tls_port = None
+    if "--tls" in args:
+        i = args.index("--tls")
+        tls_port = int(args[i + 1])
+        del args[i:i + 2]
+    if args:
+        port = int(args[0])
+    threads = [threading.Thread(target=serve, args=(port - 1,), daemon=True)]
+    if tls_port:
+        threads.append(threading.Thread(target=serve, args=(tls_port, tls_context()), daemon=True))
+    for t in threads:
+        t.start()
+    serve(port)

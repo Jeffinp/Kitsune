@@ -17,9 +17,11 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 mod collect;
+mod net;
 mod session;
 mod wire;
 pub use collect::*;
+pub use net::*;
 pub use session::*;
 pub use wire::*;
 

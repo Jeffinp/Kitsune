@@ -56,7 +56,7 @@ pub use host::*;
 #[allow(unused_imports)] // spawn_media: the caller (the browser's player) is the next step
 pub use page::spawn_media;
 use page::*;
-pub use page::{page_post, page_take, spawn_page};
+pub use page::{PostError, page_post, page_take, page_try_post, spawn_page};
 pub(crate) use queue::*;
 pub use syscall::syscall_entry;
 use syscall::*;

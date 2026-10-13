@@ -634,6 +634,22 @@ Projeto em [`design/midia.md`](design/midia.md). Três camadas:
    bytes são os mesmos), depois `--serve-test`, um arquivo cortado e um corrompido (terminam sozinhos, o sistema segue),
    `--info`, `--rgb 1280x720` e `--show` (captura `d-show.png`). Veredito em `OUT/verdict.txt`, com os fps de cada
    tamanho.
+### Rede dos scripts (W55): fetch, XHR, cookies, CORS, keep-alive
+
+Host: `cargo test -p kitsune_core http1 cookies cors script` (leitor HTTP/1.1 e chunked, Range, cookies, CORS, as
+mensagens `F`/`X`/`C`) e `node tools/js-net-check.js user-apps/jsrun/src/bin/jsrun` (o `dom.js` + `net.js` num `vm` do
+Node com um navegador falso: `fetch`, streams, abort, XHR, `FormData`, `TextDecoder`). QEMU:
+
+```bash
+python3 tools/w24-site.py 8079 --tls 8443 &      # HTTP/1.1 keep-alive em 8079, outra origem em 8078, HTTPS em 8443
+QEMU_MEM=256M QEMU_NETDEV="user,id=n0,net=203.0.113.0/24,host=203.0.113.5,dhcpstart=203.0.113.15,dns=203.0.113.3" \
+  PORT=8079 TLS_PORT=8443 tools/perf/run.sh <img> bios /tmp/w55 900 tools/perf/scen/w55-net-js.sh
+```
+
+O veredito fica em `$OUT/verdict.txt` (as 23 verificações que o script da página `/net` imprime como `net: PASS ...`
+e 8 do log do sistema) e as vazões em `$OUT/speed.txt`. `NET_CHECKS=0 SPEED_HTTP=1` mede só a vazão (http e https);
+`QEMU_NIC=virtio-net-pci` troca a NE2000 pela virtio. A parte https clica em "continuar mesmo assim" (certificado
+autoassinado). Projeto: [`design/tls-browser.md`](design/tls-browser.md) §13.
 
 ### Compositor (W27): teste diferencial, oráculo no QEMU e custo de quadro
 

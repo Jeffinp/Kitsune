@@ -82,10 +82,17 @@ pub extern "C" fn worker() -> ! {
                                 MAX_RESPONSE_BYTES,
                                 None,
                                 body.as_deref(),
+                                cookies::Use::Navigation,
                             ),
-                            (true, Some(p)) => {
-                                fetch_url(net, &url, &[], MAX_RESPONSE_BYTES, Some(p), None)
-                            }
+                            (true, Some(p)) => fetch_url(
+                                net,
+                                &url,
+                                &[],
+                                MAX_RESPONSE_BYTES,
+                                Some(p),
+                                None,
+                                cookies::Use::None,
+                            ),
                             // An app request without a policy cannot happen; refuse rather than guess.
                             (true, None) => Err(FailReason::Network),
                         };
@@ -119,6 +126,13 @@ pub extern "C" fn worker() -> ! {
             if let Some(netd) = unsafe { (*NET.get()).as_mut() } {
                 serve_job(netd.net_mut());
             }
+        } else if script_pending() {
+            // A page script's request (`fetch`, XHR): after the browser's own and the shell's.
+            // SAFETY: NET is used only by this worker thread.
+            match unsafe { (*NET.get()).as_mut() } {
+                Some(netd) => serve_script(netd.net_mut()),
+                None => drop_scripts(),
+            }
         } else {
             // Idle: service the network (DHCP timers, ARP/ping responder, ping client),
             // then leave the run queue until a request is posted (`try_post` and
@@ -129,13 +143,18 @@ pub extern "C" fn worker() -> ! {
             crate::rng::service();
             // SAFETY: as above: NET is used only by this worker thread.
             let sleep = match unsafe { (*NET.get()).as_mut() } {
-                Some(netd) => netd.service(),
+                Some(netd) => {
+                    // Kept-alive connections idle for too long are closed here too.
+                    netd.net_mut().expire_idle();
+                    netd.service()
+                }
                 None => crate::netd::IDLE_POLL_TICKS,
             };
             crate::sched::block(crate::interrupts::ticks() + sleep, || {
                 STATE.load(Ordering::Acquire) != REQUESTED
                     && !crate::netd::ping_pending()
                     && !job_pending()
+                    && !script_pending()
             });
         }
     }

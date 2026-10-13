@@ -12,6 +12,7 @@
 # FS_IMG (a filesystem disk image to boot with instead of a blank one, to test persistence).
 # QEMU_RNG (virtio|none, default virtio): add `-device virtio-rng-pci` (RNG: strong) or leave it out
 # to force the timing-jitter path.
+# QEMU_NIC (default ne2k_isa; virtio-net-pci for the faster virtio driver).
 # QEMU_NETDEV (default "user,id=n0"; the id must stay n0), e.g. to give the guest a fake
 # public-looking network (see tools/nettest-server.py):
 #   QEMU_NETDEV="user,id=n0,net=203.0.113.0/24,host=203.0.113.5,dhcpstart=203.0.113.15,dns=203.0.113.3"
@@ -40,7 +41,7 @@ args=(-m "$mem" -display none -no-reboot -no-shutdown
   -monitor "unix:$MON_SOCK,server,nowait"
   -drive "format=raw,file=$img,file.locking=off"
   -drive "format=raw,file=$out/fs.img,if=ide,index=2"
-  -netdev "${QEMU_NETDEV:-user,id=n0}" -device ne2k_isa,netdev=n0,mac=52:54:00:12:34:56 "${rng_dev[@]}")
+  -netdev "${QEMU_NETDEV:-user,id=n0}" -device "${QEMU_NIC:-ne2k_isa}",netdev=n0,mac=52:54:00:12:34:56 "${rng_dev[@]}")
 if [ "$mode" = uefi ]; then
   cp /usr/share/OVMF/OVMF_VARS_4M.fd "$out/ovmf_vars.fd"
   args=(-drive "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd"

@@ -1,7 +1,9 @@
 /* Kitsune jsrun --page: the script process of a browser page.
  *
  * The browser starts this process for a page with scripts and talks to it with messages (system calls
- * 56 and 57, `kjs_page_recv` / `kjs_page_send` on the Rust side). The DOM, the events and the timers
+ * 56 and 57, `kjs_page_recv` / `kjs_page_send` on the Rust side). A message from the browser is JSON
+ * text, or binary body bytes of a network answer (first byte DATA_TAG, then the request id as 4 bytes
+ * little endian: kitsune_core::web::script::data_message), handed to the DOM code as an ArrayBuffer. The DOM, the events and the timers
  * are JavaScript (src/bin/jsrun/dom.js, evaluated first); this file is the loop around it:
  *
  *   wait for a message (or until the next timer) -> hand it to the DOM code -> run the tasks that are
@@ -22,12 +24,16 @@ extern long kjs_page_recv(void *buf, size_t cap, uint64_t timeout_ms);
 extern long kjs_page_send(const void *buf, size_t len);
 extern void kjs_sleep_ms(uint64_t ms);
 extern uint64_t kjs_uptime_ms(void);
+extern long kjs_getrandom(void *buf, size_t len);
 
 #define MAX_MSG (4u * 1024 * 1024) /* kitsune_userabi::MAX_PAGE_MSG */
 #define TASK_MS 3000               /* the longest one task may run */
 #define BATCH_MS 40                /* tasks run back to back before the document is sent */
 #define ENOSYS_ (-38)
 #define EAGAIN_ (-11)
+#define DATA_TAG 1     /* a binary message: body bytes of a network answer */
+#define DRAIN_MAX 64   /* messages taken back to back before the tasks run */
+#define DRAIN_MS 20
 
 static uint64_t deadline;
 static int stopped;
@@ -71,6 +77,63 @@ static JSValue js_send(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
     return JS_NewInt32(ctx, (int32_t)r);
 }
 
+/* __kjs_native.sendBytes(head, buffer): one message to the browser made of the string `head` (UTF-8)
+   followed by the bytes of the ArrayBuffer `buffer` (a request body). */
+static JSValue js_send_bytes(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1)
+        return JS_NewInt32(ctx, -22);
+    size_t hn, bn = 0;
+    uint8_t *bytes = NULL;
+    if (argc > 1 && !JS_IsUndefined(argv[1]) && !JS_IsNull(argv[1])) {
+        bytes = JS_GetArrayBuffer(ctx, &bn, argv[1]);
+        if (!bytes)
+            return JS_EXCEPTION;
+    }
+    const char *h = JS_ToCStringLen(ctx, &hn, argv[0]);
+    if (!h)
+        return JS_EXCEPTION;
+    long r = -7; /* E2BIG */
+    if (hn + bn <= MAX_MSG) {
+        char *m = malloc(hn + bn + 1);
+        if (!m) {
+            JS_FreeCString(ctx, h);
+            return JS_ThrowOutOfMemory(ctx);
+        }
+        memcpy(m, h, hn);
+        if (bn)
+            memcpy(m + hn, bytes, bn);
+        for (int tries = 0; tries < 400; tries++) {
+            r = kjs_page_send(m, hn + bn);
+            if (r != EAGAIN_)
+                break;
+            kjs_sleep_ms(5);
+        }
+        free(m);
+    }
+    JS_FreeCString(ctx, h);
+    return JS_NewInt32(ctx, (int32_t)r);
+}
+
+/* __kjs_native.random(n): an ArrayBuffer of n random bytes from the kernel (crypto.getRandomValues). */
+static JSValue js_random(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    int32_t n = 0;
+    if (argc < 1 || JS_ToInt32(ctx, &n, argv[0]))
+        return JS_EXCEPTION;
+    if (n < 0 || n > 65536)
+        return JS_ThrowRangeError(ctx, "random: 0 to 65536 bytes");
+    uint8_t *b = malloc((size_t)n + 1);
+    if (!b)
+        return JS_ThrowOutOfMemory(ctx);
+    long r = n ? kjs_getrandom(b, (size_t)n) : 0;
+    JSValue v = r == n ? JS_NewArrayBufferCopy(ctx, b, (size_t)n) : JS_ThrowInternalError(ctx, "no random bytes");
+    free(b);
+    return v;
+}
+
 /* __kjs_native.evalScript(code, name): run a page script as global code. An error it throws is
    reported here (the page goes on, as in a browser) and the result is false; a task stopped for
    running too long is passed on to the loop. */
@@ -101,6 +164,8 @@ static JSValue js_eval_script(JSContext *ctx, JSValueConst this_val, int argc, J
 static const JSCFunctionListEntry native_funcs[] = {
     JS_CFUNC_DEF("send", 1, js_send),
     JS_CFUNC_DEF("evalScript", 2, js_eval_script),
+    JS_CFUNC_DEF("sendBytes", 2, js_send_bytes),
+    JS_CFUNC_DEF("random", 1, js_random),
 };
 
 /* Call `fn` with a fresh budget; an exception is reported and, when the task was stopped for running
@@ -172,8 +237,9 @@ int kjs_page(const char *prelude, size_t len)
     JSValue next_delay = get(ctx, api, "nextDelay");
     JSValue flush = get(ctx, api, "flush");
     JSValue interrupted = get(ctx, api, "interrupted");
+    JSValue on_data = get(ctx, api, "onData");
     if (JS_IsUndefined(on_message) || JS_IsUndefined(run_one) || JS_IsUndefined(next_delay) ||
-        JS_IsUndefined(flush))
+        JS_IsUndefined(flush) || JS_IsUndefined(on_data))
         return 2;
 
     char *buf = malloc(MAX_MSG + 1);
@@ -189,10 +255,24 @@ int kjs_page(const char *prelude, size_t len)
             fputs("jsrun: --page is for the browser's script process\n", stderr);
             return 2;
         }
-        if (n > 0) {
-            JSValue msg = JS_NewStringLen(ctx, buf, (size_t)n);
-            call(ctx, on_message, interrupted, 1, (JSValueConst *)&msg, NULL);
-            JS_FreeValue(ctx, msg);
+        /* Take what is waiting back to back (a download arrives as many pieces), then run tasks. */
+        uint64_t t0 = kjs_uptime_ms();
+        for (int got = 0; n > 0;) {
+            if ((unsigned char)buf[0] == DATA_TAG && n >= 5) {
+                uint32_t id = (uint32_t)(unsigned char)buf[1] | (uint32_t)(unsigned char)buf[2] << 8 |
+                              (uint32_t)(unsigned char)buf[3] << 16 | (uint32_t)(unsigned char)buf[4] << 24;
+                JSValue args[2] = {JS_NewUint32(ctx, id),
+                                   JS_NewArrayBufferCopy(ctx, (const uint8_t *)buf + 5, (size_t)n - 5)};
+                call(ctx, on_data, interrupted, 2, (JSValueConst *)args, NULL);
+                JS_FreeValue(ctx, args[1]);
+            } else {
+                JSValue msg = JS_NewStringLen(ctx, buf, (size_t)n);
+                call(ctx, on_message, interrupted, 1, (JSValueConst *)&msg, NULL);
+                JS_FreeValue(ctx, msg);
+            }
+            if (++got >= DRAIN_MAX || kjs_uptime_ms() - t0 > DRAIN_MS)
+                break;
+            n = kjs_page_recv(buf, MAX_MSG, 0);
         }
         uint64_t start = kjs_uptime_ms();
         for (int k = 0; k < 10000; k++) {

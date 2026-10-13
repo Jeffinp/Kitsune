@@ -27,6 +27,7 @@ fn main() {
         &InitInfo {
             url,
             lang: "pt-BR",
+            cookie: "",
             width: 800,
             height: 600,
         },

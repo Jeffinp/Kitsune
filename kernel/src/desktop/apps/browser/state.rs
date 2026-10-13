@@ -259,6 +259,7 @@ impl TabData {
 impl BrowserState {
     pub(crate) fn new() -> BrowserState {
         let first = TabData::new(1, kitsune_core::Browser::with_store(new_bookmark_store()));
+        super::jsnet::load_cookies();
         BrowserState {
             tabs: kitsune_core::browser::tabs::TabList::new(first),
             images: kitsune_core::web::imgcache::ImageCache::new(),

@@ -318,3 +318,12 @@ fn sibling_combinators() {
     let ss = parse_css("h1 + p{color:red}");
     assert_eq!(ss.rules.len(), 1);
 }
+
+#[test]
+fn attribute_prefix_on_non_ascii_values_does_not_panic() {
+    // Wikipedia: a prefix selector against a value whose cut falls inside "ō" took the kernel down.
+    let nodes = el_of("<a title='Kitsunō monogatari'>x</a>");
+    let el = first(&nodes);
+    assert!(!m("[title^='Kitsune']", el, &[]));
+    assert!(m("[title^='Kitsun']", el, &[]));
+}

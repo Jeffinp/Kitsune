@@ -48,6 +48,34 @@ O sistema tem som. Projeto em `docs/design/audio.md`.
   (`tools/media/check-host.sh`, o mesmo C e o mesmo pipeline) e no QEMU (`w57-mediadec.sh`); áudio com a contagem exata
   de amostras, SNR 74,5 dB contra o ffmpeg e os mesmos bytes no guest e no hospedeiro; arquivos cortado e corrompido sem
   queda. Velocidade sob TCG: 360p 45,7 fps, 720p 13,0 fps; nativo ~1100–1300 e ~300–360 fps.
+## 2026-10 — Rede para o JavaScript das páginas: fetch, XHR, cookies, CORS e keep-alive
+
+Etapas 2 (rede) e 3 do item 11 do ROADMAP; detalhes em `docs/design/tls-browser.md` §13.
+
+- **`fetch` e `XMLHttpRequest` de verdade** no `jsrun --page` (`user-apps/jsrun/src/bin/jsrun/net.js`): métodos e
+  cabeçalhos, corpos texto/JSON/`ArrayBuffer`/`Blob`/`FormData`/`URLSearchParams`, `Response.text/json/arrayBuffer/blob`,
+  `headers`, `status`, `ok`, `redirected`, `AbortController`, e o **corpo em stream** (`response.body.getReader()`,
+  pedaços de até 256 KiB), `Range` e respostas de vários MiB. Também `sendBeacon`, `TextEncoder`/`TextDecoder`, `Blob`,
+  `File`, `crypto.getRandomValues`/`randomUUID` (chamada nova **66 `getrandom`**), `structuredClone`,
+  `URL.createObjectURL`, `blob:`/`data:` e `performance.mark/measure`.
+- **Fila de pedidos dos scripts no `fetcher`** (`kernel/src/fetch/script.rs`): em ordem, cada um pelo bloqueador
+  (bloqueado = erro de rede no script, contado no escudo), com o corpo indo direto para o processo (mensagens binárias).
+- **Conexões persistentes**: 4 sockets TCP de 64 KiB de janela (antes 1 de 8 KiB) com a sessão TLS guardada por
+  host:porta, 15 s ociosas, refeitas uma vez se o servidor fechou; `Transfer-Encoding: chunked`/`Content-Length`
+  respeitados (`kitsune_core::http1`). Medido no QEMU: 3 conexões para 25 pedidos na página `/net`; 1 handshake para
+  3 pedidos https; 8 MiB a ~29 MB/s em http e ~8 MB/s em https (AES-GCM em software) com virtio-net, ~7 e 3-5 MB/s
+  com a NE2000 (janela TCP de 10 KiB nela: com 64 KiB o anel da placa transbordava e o primeiro download grande de
+  uma conexão caía para 0,9 MB/s).
+- **Cookies** (`kitsune_core::cookies`): `Set-Cookie` completo, `Cookie` em toda navegação e subrecurso,
+  `document.cookie` sem `HttpOnly`, limites, cookies de terceiros bloqueados com o escudo ligado e persistência em
+  `~/.cookies`.
+- **CORS** (`kitsune_core::cors`): `Origin`, pré-voo `OPTIONS`, `Access-Control-Allow-Origin/Credentials`, cabeçalhos
+  expostos, `no-cors` opaco, `Referer` `strict-origin-when-cross-origin`, conteúdo misto recusado.
+- `tools/w24-site.py` fala HTTP/1.1 com keep-alive, ouve também na porta abaixo (segunda origem) e, com `--tls`, em
+  HTTPS; rotas `/net` e `/cors` em `tools/w24net.py`; cenário `tools/perf/scen/w55-net-js.sh` (23/23 e 8 verificações
+  do log, PASS); `QEMU_NIC` no `run.sh`; `tools/js-net-check.js` testa o `net.js` no Node.
+- Corrigido: um seletor `[atributo^=valor]` com valor não ASCII derrubava o kernel (página da Wikipédia, achado pelo W50).
+- Não feito: `WebSocket` (pendente), XHR síncrono (roda assíncrono), cache de pré-voo, downloads em paralelo.
 
 ## 2026-10 — Navegador: CPU e congelamentos em páginas reais
 

@@ -28,6 +28,7 @@ pub(crate) struct JsProc {
 
 impl Drop for JsProc {
     fn drop(&mut self) {
+        crate::fetch::forget_script_fetches(self.pid);
         crate::userproc::kill(self.pid);
     }
 }
@@ -110,6 +111,7 @@ impl Desktop {
         };
         let content = b.chrome(rect).content;
         let active_id = b.tabs.active().id;
+        super::jsnet::save_cookies();
         let mut redraw = false;
         let mut actions: Vec<(u32, JsAction)> = Vec::new();
         let mut title: Option<String> = None;
@@ -135,6 +137,13 @@ impl Desktop {
                     }
                     FromScript::Navigate(url) => {
                         actions.push((t.id, JsAction::Link(url.as_bytes().to_vec())));
+                    }
+                    FromScript::Fetch(req) => {
+                        super::jsnet::on_fetch(&mut t.shield, &t.browser, js.pid, req);
+                    }
+                    FromScript::Abort(rid) => crate::fetch::abort_script_fetch(js.pid, rid),
+                    FromScript::SetCookie(text) => {
+                        super::jsnet::on_set_cookie(&t.browser, js.pid, text);
                     }
                     FromScript::Unknown => {}
                 }
@@ -263,6 +272,7 @@ impl Desktop {
 /// now on, and the process gets the document and the scripts.
 fn start_js(t: &mut TabData, images: &mut kitsune_core::web::imgcache::ImageCache, content: Rect) {
     let sources = t.scripts.take();
+    let cookie = super::jsnet::init_cookie(t);
     let Some(doc) = t.doc.as_mut() else {
         return;
     };
@@ -280,6 +290,7 @@ fn start_js(t: &mut TabData, images: &mut kitsune_core::web::imgcache::ImageCach
             lang,
             width: content.w * 100 / zoom,
             height: content.h * 100 / zoom,
+            cookie: &cookie,
         },
         &sources,
     );

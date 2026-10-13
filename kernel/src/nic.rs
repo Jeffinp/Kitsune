@@ -79,6 +79,11 @@ impl Port {
         self.mac
     }
 
+    /// Which driver is behind the port.
+    pub fn kind(&self) -> kitsune_core::netstats::NicKind {
+        self.nic.kind()
+    }
+
     /// Link state, also published to [`STATS`].
     pub fn link_up(&self) -> bool {
         let up = self.nic.link_up();

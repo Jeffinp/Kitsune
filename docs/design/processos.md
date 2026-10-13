@@ -62,6 +62,7 @@ interface pequena de chamadas de sistema. É o primeiro passo da fase 3 de
 | 63 | `audio_close(id, drenar)` | fecha na hora (`0`) ou depois de tocar o que falta (`1`) |
 | 64 | `audio_ctl(id, op, valor)` | volume do fluxo, pausa, descartar a fila, volume e mudo do sistema, taxa do dispositivo |
 | 65 | `audio_wait(id, quer, timeout_ms)` | espera `quer` bytes livres na fila, ou (`0`) até tudo ter tocado; 1 quando vale, 0 no prazo |
+| 66 | `getrandom(ptr, len)` | `len` bytes (até 64 KiB) do gerador do kernel (o mesmo do TLS); é o `crypto.getRandomValues` das páginas. |
 
 Todo ponteiro é traduzido pelas tabelas do próprio processo, página por página
 (`AddressSpace::copy_in`), antes de o kernel tocar nele: um ponteiro ruim é um erro de retorno
@@ -219,7 +220,11 @@ tarefas vencidas com **3 s cada** (o interrupt handler do QuickJS interrompe a q
 seguem), os jobs de promise, e devolve o documento pela chamada 57 quando mudou. O desenho, as mensagens e as APIs
 estão no [`tls-browser.md`](tls-browser.md) §12; prova no cenário `w52-browser-js.sh`.
 
-**Ainda não.** `Intl` (datas e números localizados), módulos (`import`), `fetch`/`XMLHttpRequest`. Sem `test262`.
+**Rede.** No modo página, `fetch` e `XMLHttpRequest` vão ao navegador por mensagens e o corpo volta em mensagens
+binárias (até 256 KiB cada) que o `page.c` entrega ao JavaScript como `ArrayBuffer`; ver
+[`tls-browser.md`](tls-browser.md) §13.
+
+**Ainda não.** `Intl` (datas e números localizados), módulos (`import`), `WebSocket`. Sem `test262`.
 Fora do modo página não há `setTimeout` nem DOM.
 
 ## Mídia em anel 3 (`mediadec`)

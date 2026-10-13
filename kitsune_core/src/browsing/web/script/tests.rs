@@ -264,6 +264,7 @@ fn init_message_carries_tree_ids_and_scripts() {
     let m = init_message(
         &doc,
         &InitInfo {
+            cookie: "",
             url: "http://h/",
             lang: "pt-BR",
             width: 800,

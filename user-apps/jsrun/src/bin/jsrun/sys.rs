@@ -76,6 +76,18 @@ pub unsafe extern "C" fn kjs_page_send(buf: *const u8, len: usize) -> i64 {
     sdk::page_send(data)
 }
 
+/// Fill `len` bytes at `buf` from the kernel's random generator (`crypto.getRandomValues`). Returns
+/// `len` or `-errno`.
+///
+/// # Safety
+/// `buf` must be valid for writes of `len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kjs_getrandom(buf: *mut u8, len: usize) -> i64 {
+    // SAFETY: the caller promises `buf` holds `len` writable bytes.
+    let out = unsafe { core::slice::from_raw_parts_mut(buf, len) };
+    sdk::getrandom(out)
+}
+
 /// Sleep about `ms` milliseconds.
 #[unsafe(no_mangle)]
 pub extern "C" fn kjs_sleep_ms(ms: u64) {

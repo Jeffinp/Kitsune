@@ -58,6 +58,13 @@ pub const SYS_PAGE_SEND: u64 = 57;
 /// Largest page message either way, in bytes.
 pub const MAX_PAGE_MSG: usize = 4 * 1024 * 1024;
 
+/// `getrandom(ptr, len)`: fill `len` bytes (at most [`MAX_RANDOM`]) from the kernel's generator (the
+/// same one TLS uses); returns `len`. It is what `crypto.getRandomValues` of a page's script draws on.
+/// (Calls 60-65 are taken by the audio and media work.)
+pub const SYS_GETRANDOM: u64 = 66;
+/// Most bytes one `getrandom` fills (as in the Web Crypto API).
+pub const MAX_RANDOM: usize = 65536;
+
 /// Largest window content, in pixels (the biggest the desktop shows).
 pub const WIN_MAX_W: u32 = 1280;
 pub const WIN_MAX_H: u32 = 800;

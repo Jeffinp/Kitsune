@@ -182,6 +182,20 @@ pub fn page_send(data: &[u8]) -> i64 {
     }
 }
 
+/// Fill `buf` from the kernel's random generator ([`abi::SYS_GETRANDOM`], at most
+/// [`abi::MAX_RANDOM`] bytes). Returns the bytes filled, or `-errno`.
+pub fn getrandom(buf: &mut [u8]) -> i64 {
+    // SAFETY: the pointer and length describe `buf`, which the kernel may write.
+    unsafe {
+        syscall3(
+            abi::SYS_GETRANDOM,
+            buf.as_mut_ptr() as u64,
+            buf.len() as u64,
+            0,
+        )
+    }
+}
+
 /// `fmt::Write` over `write(1, ...)`.
 pub struct Stdout;
 
