@@ -246,6 +246,7 @@ impl Net {
         if let Err(e) = opened {
             drop(tls);
             if let Some(ce) = verifier.failure() {
+                crate::serial_println!("tls: certificate refused for {}: {}", host, ce.reason());
                 return Err(FailReason::Cert(ce));
             }
             crate::serial_println!("https: TLS handshake failed for {}: {:?}", host, e);
