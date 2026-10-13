@@ -1,20 +1,60 @@
-//! TLS plumbing: an embedded-io stream over the smoltcp socket, and the RNG the handshake uses.
+//! TLS plumbing: an embedded-io stream over one pooled smoltcp socket, and the record buffers.
 
 use super::*;
-
-// ---- TLS plumbing: an embedded-io stream over the smoltcp socket + an RNG ----
+use core::sync::atomic::AtomicPtr;
 
 /// A TLS record buffer: the largest record (16 KiB of data) plus its header, type and tag. A buffer of
 /// exactly 16 KiB makes every full-size record of a server fail and the page stops short.
 pub(super) const TLS_REC: usize = 16 * 1024 + 256;
-pub(super) static TLS_RX: RacyCell<[u8; TLS_REC]> = RacyCell::new([0; TLS_REC]);
-pub(super) static TLS_TX: RacyCell<[u8; TLS_REC]> = RacyCell::new([0; TLS_REC]);
+/// Two record buffers (read, write) for each pooled connection. Static so they never land on a
+/// kernel stack; slot `i` owns buffers `2 * i` and `2 * i + 1` (see `pool::Slot`).
+static TLS_BUFS: RacyCell<[[u8; TLS_REC]; 2 * POOL_MAX]> =
+    RacyCell::new([[0; TLS_REC]; 2 * POOL_MAX]);
 
-/// `embedded_io::Read + Write` over the active smoltcp TCP socket. Every call
-/// drives the smoltcp poll loop until bytes move, so embedded-tls can run its
-/// blocking handshake on our single-threaded stack.
-pub(super) struct Stream<'a> {
-    pub(super) net: &'a mut Net,
+/// The record buffers of pool slot `i`.
+///
+/// # Safety
+/// The caller must make sure no other reference to these buffers is alive: the only user is the TLS
+/// connection of slot `i`, and the old one is dropped before a new one is made (`pool::Slot::reset`).
+pub(super) unsafe fn tls_buffers(i: usize) -> (&'static mut [u8], &'static mut [u8]) {
+    // SAFETY: TLS_BUFS is touched only from the fetcher thread (the only owner of `Net`), slot `i`'s
+    // two rows are disjoint from every other slot's, and the caller promises no earlier borrow of
+    // them is still alive.
+    unsafe {
+        let base = TLS_BUFS.get() as *mut [u8; TLS_REC];
+        (&mut *base.add(2 * i), &mut *base.add(2 * i + 1))
+    }
+}
+
+/// The `Net` a stream works on during one TLS operation (null otherwise). Set by [`with_active`]
+/// from the `&mut Net` of the caller, which does not touch it until the operation returns.
+static ACTIVE: AtomicPtr<Net> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Run one TLS operation `f` with the streams pointed at `net`.
+pub(super) fn with_active<R>(net: &mut Net, f: impl FnOnce() -> R) -> R {
+    ACTIVE.store(net as *mut Net, Ordering::Release);
+    let r = f();
+    ACTIVE.store(core::ptr::null_mut(), Ordering::Release);
+    r
+}
+
+/// The `Net` of the operation in progress.
+fn active() -> Result<&'static mut Net, StreamError> {
+    let p = ACTIVE.load(Ordering::Acquire);
+    if p.is_null() {
+        return Err(StreamError);
+    }
+    // SAFETY: `with_active` stored a pointer made from a live `&mut Net` whose owner does not use it
+    // until `f` returns (and clears the pointer); `Net` lives in the fetcher's static and never moves,
+    // and only the fetcher thread runs TLS, so this is the only reference in use.
+    Ok(unsafe { &mut *p })
+}
+
+/// `embedded_io::Read + Write` over pooled TCP socket `sock`. Every call drives the smoltcp poll
+/// loop until bytes move, so embedded-tls can run its blocking handshake on our single-threaded
+/// stack.
+pub(super) struct Stream {
+    pub(super) sock: SocketHandle,
 }
 
 #[derive(Debug)]
@@ -34,20 +74,26 @@ impl embedded_io::Error for StreamError {
     }
 }
 
-impl embedded_io::ErrorType for Stream<'_> {
+impl embedded_io::ErrorType for Stream {
     type Error = StreamError;
 }
 
-impl embedded_io::Read for Stream<'_> {
+fn stream_deadline() -> u64 {
+    let end = Net::deadline(12000);
+    match HS_DEADLINE.load(Ordering::Relaxed) {
+        0 => end,
+        hs => end.min(hs),
+    }
+}
+
+impl embedded_io::Read for Stream {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, StreamError> {
-        let mut end = Net::deadline(12000);
-        let hs = HS_DEADLINE.load(Ordering::Relaxed);
-        if hs != 0 {
-            end = end.min(hs);
-        }
+        let net = active()?;
+        let end = stream_deadline();
         loop {
-            self.net.poll();
-            let s = self.net.sockets.get_mut::<tcp::Socket>(self.net.tcp);
+            // What is already in the socket is taken without polling the interface first (a record
+            // arrives in several reads); the interface is driven only when the socket is dry.
+            let s = net.sockets.get_mut::<tcp::Socket>(self.sock);
             if s.can_recv() {
                 let n = s.recv_slice(buf).map_err(|_| StreamError)?;
                 if n > 0 {
@@ -61,25 +107,26 @@ impl embedded_io::Read for Stream<'_> {
             if interrupts::ticks() >= end {
                 return Err(StreamError);
             }
-            self.net.pause();
+            net.poll();
+            let s = net.sockets.get_mut::<tcp::Socket>(self.sock);
+            if !s.can_recv() {
+                net.pause();
+            }
         }
     }
 }
 
-impl embedded_io::Write for Stream<'_> {
+impl embedded_io::Write for Stream {
     fn write(&mut self, buf: &[u8]) -> Result<usize, StreamError> {
-        let mut end = Net::deadline(12000);
-        let hs = HS_DEADLINE.load(Ordering::Relaxed);
-        if hs != 0 {
-            end = end.min(hs);
-        }
+        let net = active()?;
+        let end = stream_deadline();
         loop {
-            self.net.poll();
-            let s = self.net.sockets.get_mut::<tcp::Socket>(self.net.tcp);
+            net.poll();
+            let s = net.sockets.get_mut::<tcp::Socket>(self.sock);
             if s.can_send() {
                 let n = s.send_slice(buf).map_err(|_| StreamError)?;
                 if n > 0 {
-                    self.net.poll(); // flush the segment out promptly
+                    net.poll(); // flush the segment out promptly
                     return Ok(n);
                 }
             }
@@ -89,12 +136,12 @@ impl embedded_io::Write for Stream<'_> {
             if interrupts::ticks() >= end {
                 return Err(StreamError);
             }
-            self.net.pause();
+            net.pause();
         }
     }
 
     fn flush(&mut self) -> Result<(), StreamError> {
-        self.net.poll();
+        active()?.poll();
         Ok(())
     }
 }

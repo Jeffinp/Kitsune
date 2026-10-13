@@ -40,32 +40,46 @@ pub fn spawn_page(cred: Option<Cred>) -> Result<u32, SpawnError> {
     )
 }
 
+/// Why [`page_try_post`] did not queue a message.
+pub enum PostError {
+    /// The process is gone, or is not a page process.
+    Gone,
+    /// Its queue is full for now; the message is given back.
+    Full(Vec<u8>),
+}
+
 /// Queue `msg` for the script process `pid` and wake it. `false` when it is gone, is not a page
 /// process, or has too much waiting already.
 pub fn page_post(pid: u32, msg: Vec<u8>) -> bool {
+    page_try_post(pid, msg).is_ok()
+}
+
+/// Like [`page_post`], but says whether to try again later (the fetcher waits on a full queue: a
+/// stream the page reads slowly).
+pub fn page_try_post(pid: u32, msg: Vec<u8>) -> Result<(), PostError> {
     if msg.len() > abi::MAX_PAGE_MSG {
-        return false;
+        return Err(PostError::Gone);
     }
     let slot = {
         let mut procs = PROCS.lock();
         let Some(p) = procs.iter_mut().find(|p| p.pid == pid) else {
-            return false;
+            return Err(PostError::Gone);
         };
         if end_of(p) != End::Running {
-            return false;
+            return Err(PostError::Gone);
         }
         let Some(link) = p.page.as_mut() else {
-            return false;
+            return Err(PostError::Gone);
         };
         if link.inbox.len() >= MAX_INBOX || link.inbox_bytes + msg.len() > MAX_QUEUED {
-            return false;
+            return Err(PostError::Full(msg));
         }
         link.inbox_bytes += msg.len();
         link.inbox.push_back(msg);
         p.slot
     };
     crate::sched::wake(slot);
-    true
+    Ok(())
 }
 
 /// The next message the script process `pid` sent, if any.

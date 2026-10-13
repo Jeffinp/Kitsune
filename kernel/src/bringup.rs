@@ -132,6 +132,7 @@ pub fn pump_browser(desk: &mut Desktop, redraw: &mut bool) {
             fetch::try_post(&url[..len], &host[..hlen], body.as_deref());
         } else if let Some(len) = desk.browser_next_sheet(&mut url) {
             // The page's style sheets before its pictures: they decide what the page looks like.
+            desk.browser_cookie_context();
             let mut host = [0u8; 96];
             let hlen = desk.browser_insecure_host_active(&mut host);
             if !fetch::try_post_sheet(&url[..len], &host[..hlen]) {
@@ -140,6 +141,7 @@ pub fn pump_browser(desk: &mut Desktop, redraw: &mut bool) {
             }
         } else if let Some(len) = desk.browser_next_script(&mut url) {
             // Then its scripts: they run once all are in.
+            desk.browser_cookie_context();
             let mut host = [0u8; 96];
             let hlen = desk.browser_insecure_host_active(&mut host);
             if !fetch::try_post_script(&url[..len], &host[..hlen]) {
@@ -147,6 +149,7 @@ pub fn pump_browser(desk: &mut Desktop, redraw: &mut bool) {
             }
         } else if let Some((len, fit_w)) = desk.browser_next_image(&mut url) {
             // Nothing else is waiting: fetch the next picture of the page.
+            desk.browser_cookie_context();
             let mut host = [0u8; 96];
             let hlen = desk.browser_insecure_host_active(&mut host);
             if !fetch::try_post_image(&url[..len], &host[..hlen], fit_w) {

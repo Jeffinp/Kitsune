@@ -17,7 +17,12 @@
 //! plain smoltcp UDP socket.
 
 mod http;
+mod pool;
 mod tls;
+
+pub use http::{Event, Req};
+use pool::POOL_MAX;
+pub use pool::stats as pool_stats;
 
 use crate::interrupts;
 use crate::netd::now_ms;
@@ -27,7 +32,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 use embedded_tls::blocking::*;
-use kitsune_core::browser::{Conn, FailReason, append_capped};
+use kitsune_core::browser::{Conn, FailReason};
+use kitsune_core::http1::Target;
 use smoltcp::iface::{Config, Interface, PollResult, SocketHandle, SocketSet};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::socket::{tcp, udp};
@@ -41,15 +47,6 @@ use kitsune_core::net::{DnsServers, Ipv4, NetConfig, parse_ipv4};
 fn now() -> Instant {
     let ms = interrupts::ticks() * 1000 / interrupts::TIMER_HZ as u64;
     Instant::from_millis(ms as i64)
-}
-
-/// A raw HTTP response (headers + body) as read from the network.
-pub struct Fetched {
-    pub data: Vec<u8>,
-    /// The response was cut at [`MAX_RESPONSE_BYTES`]; the rest was discarded.
-    pub truncated: bool,
-    /// The server certificate of an https response (what the browser's popover shows).
-    pub cert: Option<kitsune_core::browser::CertInfo>,
 }
 
 // ---- a Port as a smoltcp phy::Device ----
@@ -109,7 +106,8 @@ pub struct Net {
     device: Phy,
     /// Configuration in force; `None` once the lease is lost.
     cfg: Option<NetConfig>,
-    tcp: SocketHandle,
+    /// One TCP socket per pooled connection (`pool.rs`).
+    tcp: [SocketHandle; POOL_MAX],
     udp: SocketHandle,
     resolver: Resolver,
     /// An app is fetching: a name (or literal) that resolves to a local, private or
@@ -143,10 +141,6 @@ impl Net {
             let _ = iface.routes_mut().add_default_ipv4_route(gw.0.into());
         }
 
-        let tcp_sock = tcp::Socket::new(
-            tcp::SocketBuffer::new(vec![0u8; 8192]),
-            tcp::SocketBuffer::new(vec![0u8; 8192]),
-        );
         // UDP socket for DNS: a few datagrams in flight at most.
         let udp_sock = udp::Socket::new(
             udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 4], vec![0u8; 2048]),
@@ -154,7 +148,14 @@ impl Net {
         );
 
         let mut sockets = SocketSet::new(vec![]);
-        let tcp = sockets.add(tcp_sock);
+        // A 64 KiB receive window per connection: a whole TLS record plus room, so a fast server is
+        // not held back by acknowledgements (8 KiB made a download wait a round trip every 8 KiB).
+        let tcp = core::array::from_fn(|_| {
+            sockets.add(tcp::Socket::new(
+                tcp::SocketBuffer::new(vec![0u8; 64 * 1024]),
+                tcp::SocketBuffer::new(vec![0u8; 16 * 1024]),
+            ))
+        });
         let udp = sockets.add(udp_sock);
 
         Net {
@@ -186,7 +187,7 @@ impl Net {
     /// (`None`: no address, the lease is gone). Open connections are dropped and
     /// the DNS cache is flushed when the servers change.
     pub fn reconfigure(&mut self, cfg: Option<&NetConfig>) {
-        self.sockets.get_mut::<tcp::Socket>(self.tcp).abort();
+        self.close_all();
         self.iface.update_ip_addrs(|addrs| {
             addrs.clear();
             if let Some(c) = cfg {
@@ -341,8 +342,36 @@ impl Net {
     /// Tear the TCP connection down and let smoltcp put the RST on the wire (it
     /// is only queued by `abort`; without a poll the peer keeps a half-open
     /// connection and a single-threaded server never accepts the next one).
-    fn abort_conn(&mut self) {
-        self.sockets.get_mut::<tcp::Socket>(self.tcp).abort();
+    /// Open TCP socket `h` to `ip:port` (bounded). An RST during the handshake is
+    /// [`FailReason::Refused`], no answer within 8 s is [`FailReason::Timeout`].
+    fn connect(&mut self, h: SocketHandle, ip: IpAddress, port: u16) -> Result<(), FailReason> {
+        let local_port = 49152 + (crate::rng::u32() as u16 & 0x3FFF);
+        {
+            let s = self.sockets.get_mut::<tcp::Socket>(h);
+            s.abort();
+            if s.connect(self.iface.context(), (ip, port), local_port)
+                .is_err()
+            {
+                return Err(FailReason::Network);
+            }
+        }
+        let end = Self::deadline(8000);
+        while interrupts::ticks() < end {
+            self.pump();
+            let s = self.sockets.get_mut::<tcp::Socket>(h);
+            if s.may_send() {
+                return Ok(());
+            }
+            if s.state() == tcp::State::Closed {
+                return Err(FailReason::Refused);
+            }
+        }
+        self.abort_conn(h);
+        Err(FailReason::Timeout)
+    }
+
+    fn abort_conn(&mut self, h: SocketHandle) {
+        self.sockets.get_mut::<tcp::Socket>(h).abort();
         for _ in 0..4 {
             self.poll();
         }

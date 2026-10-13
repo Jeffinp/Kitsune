@@ -51,7 +51,7 @@ mod syscall;
 use files::*;
 pub use host::*;
 use page::*;
-pub use page::{page_post, page_take, spawn_page};
+pub use page::{PostError, page_post, page_take, page_try_post, spawn_page};
 pub(crate) use queue::*;
 pub use syscall::syscall_entry;
 use syscall::*;

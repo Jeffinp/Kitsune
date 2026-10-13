@@ -13,8 +13,9 @@ pub(super) fn fetch_url(
     cap: usize,
     app: Option<&AppPolicy>,
     body: Option<&[u8]>,
+    jar: cookies::Use,
 ) -> FetchResult {
-    use kitsune_core::browser::{header_value, parse_url, status_code};
+    use kitsune_core::browser::{append_capped, header_value, parse_url, status_code};
     use kitsune_core::redirect::Redirects;
     let mut cur: Vec<u8> = url.to_vec();
     let mut chain: Option<Redirects> = None;
@@ -38,31 +39,81 @@ pub(super) fn fetch_url(
         ) else {
             return Err(FailReason::Network);
         };
+        let scheme = if u.https { "https" } else { "http" };
+        let target = Target::parse(&alloc::format!("{scheme}://{host}:{}{path}", u.port))
+            .ok_or(FailReason::Network)?;
         serial_println!(
             "fetch: {} {}://{}{} :{}",
             if body.is_some() { "POST" } else { "GET" },
-            if u.https { "https" } else { "http" },
+            scheme,
             host,
             path,
             u.port
         );
-        let (r, conn) = if u.https {
+        if u.https {
             // Certificate dates need a confirmed clock: if the boot-time SNTP did not
             // succeed, try again (at most once a minute) before the handshake.
             resync_clock_if_needed(net);
-            // Validation is skipped only for the one host the user allowed.
-            // (Never for an app: `insecure_host` is empty for them.)
-            let allow = app.is_none()
-                && !insecure_host.is_empty()
-                && u.host().eq_ignore_ascii_case(insecure_host);
-            net.https_get(host, path, u.port, allow, cap, body)?
-        } else {
-            (net.http_get(host, path, u.port, cap, body)?, Conn::Plain)
-        };
+        }
+        // Validation is skipped only for the one host the user allowed.
+        // (Never for an app: `insecure_host` is empty for them.)
+        let allow = u.https
+            && app.is_none()
+            && !insecure_host.is_empty()
+            && u.host().eq_ignore_ascii_case(insecure_host);
+        let ctx = cookies::context(&target, jar, body.is_none(), None);
+        let cookie = ctx
+            .map(|c| cookies::header_for(&target, c))
+            .unwrap_or_default();
+        let lang = kitsune_core::browser::accept_language(kitsune_core::i18n::lang());
+        let mut headers: Vec<(&str, &str)> = alloc::vec![
+            ("User-Agent", kitsune_core::http1::HTTP_USER_AGENT),
+            ("Accept", "text/html, image/png, image/bmp, */*;q=0.1"),
+            ("Accept-Language", lang),
+            ("Accept-Encoding", "gzip, deflate"),
+        ];
+        if body.is_some() {
+            headers.push(("Content-Type", "application/x-www-form-urlencoded"));
+        }
+        if !cookie.is_empty() {
+            headers.push(("Cookie", &cookie));
+        }
+        let mut data = Vec::new();
+        let mut truncated = false;
+        let x = net.exchange(
+            &netstack::Req {
+                method: if body.is_some() { "POST" } else { "GET" },
+                target: &target,
+                headers: &headers,
+                body,
+                allow_insecure: allow,
+            },
+            &mut |ev| match ev {
+                netstack::Event::Raw(b) => {
+                    // Keep the raw answer (the page view decodes chunks and gzip itself), cut at
+                    // the cap: a runaway page stops the download.
+                    truncated |= append_capped(&mut data, b, cap);
+                    !truncated
+                }
+                netstack::Event::Head(h) => {
+                    if let Some(c) = ctx {
+                        cookies::store(&target, h, c);
+                    }
+                    true
+                }
+                netstack::Event::Body(_) => true,
+            },
+        )?;
+        if data.is_empty() {
+            return Err(FailReason::Network);
+        }
+        if truncated {
+            serial_println!("http: response truncated at {} bytes", cap);
+        }
 
-        let code = status_code(&r.data).unwrap_or(0);
+        let code = status_code(&data).unwrap_or(0);
         if matches!(code, 301 | 302 | 303 | 307 | 308)
-            && let Some(loc) = header_value(&r.data, b"location")
+            && let Some(loc) = header_value(&data, b"location")
         {
             match chain.follow(&u, loc) {
                 Ok(next) => {
@@ -80,17 +131,26 @@ pub(super) fn fetch_url(
             }
         }
 
+        let (conns, handshakes, reuses) = netstack::pool_stats();
         serial_println!(
-            "fetch: {} bytes (status {}){}",
-            r.data.len(),
+            "fetch: {} bytes (status {}){}{} [net: {} connections, {} TLS handshakes, {} reuses]",
+            data.len(),
             code,
-            if r.truncated { " truncated" } else { "" }
+            if truncated { " truncated" } else { "" },
+            if x.complete || truncated {
+                ""
+            } else {
+                " incomplete"
+            },
+            conns,
+            handshakes,
+            reuses
         );
         return Ok(Loaded {
-            data: r.data,
-            conn,
-            truncated: r.truncated,
-            cert: r.cert,
+            data,
+            conn: x.conn,
+            truncated,
+            cert: x.cert,
         });
     }
 }
@@ -109,7 +169,16 @@ pub(super) fn fetch_sheet(
     } else {
         (SHEET_CAP, "css")
     };
-    let r = fetch_url(net, url, insecure_host, cap, None, None).ok()?;
+    let r = fetch_url(
+        net,
+        url,
+        insecure_host,
+        cap,
+        None,
+        None,
+        cookies::Use::Subresource,
+    )
+    .ok()?;
     let name = core::str::from_utf8(url).unwrap_or("?");
     let code = kitsune_core::browser::status_code(&r.data).unwrap_or(0);
     if code != 200 {
@@ -139,6 +208,7 @@ pub(super) fn fetch_image(
         imgcache::MAX_IMAGE_BYTES + 8 * 1024,
         None,
         None,
+        cookies::Use::Subresource,
     ) {
         Ok(r) => r,
         Err(_) => return Err(ImgFail::Failed),

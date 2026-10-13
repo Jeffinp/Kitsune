@@ -5,7 +5,7 @@
 //!
 //! | `t` | fields | meaning |
 //! |---|---|---|
-//! | `init` | `url`, `ua`, `lang`, `w`, `h`, `quirks`, `dom`, `scripts` | the document and its scripts, once |
+//! | `init` | `url`, `ua`, `lang`, `cookie`, `w`, `h`, `quirks`, `dom`, `scripts` | the document and its scripts, once |
 //! | `click` | `uid`, `x`, `y`, `seq` | a click on element `uid`; `seq` > 0 asks for a verdict on the default action |
 //!
 //! `dom` is the tree as nested arrays: an element is `[tag, uid, {attributes}, [children]]`, text is a
@@ -19,6 +19,7 @@
 //! | `D` | HTML | the whole document after a change (ids in `data-kjs`) |
 //! | `A` | `SEQ 0` or `SEQ 1` | the verdict on click `SEQ`: `1` lets the default action happen |
 //! | `N` | URL | go to this address (`location.href = ...`, `location.reload()`) |
+//! | `F`, `X`, `C` | see [`super::net`] | network requests and `document.cookie` |
 
 use super::*;
 
@@ -29,6 +30,8 @@ pub struct InitInfo<'a> {
     /// Viewport in CSS pixels.
     pub width: i32,
     pub height: i32,
+    /// `document.cookie` when the page starts.
+    pub cookie: &'a str,
 }
 
 /// Append `s` as a JSON string.
@@ -104,6 +107,8 @@ pub fn init_message(doc: &Doc, info: &InitInfo, scripts: &[(String, String)]) ->
     json_str(&mut out, USER_AGENT);
     out.push_str(",\"lang\":");
     json_str(&mut out, info.lang);
+    out.push_str(",\"cookie\":");
+    json_str(&mut out, info.cookie);
     out.push_str(&format!(
         ",\"w\":{},\"h\":{},\"quirks\":{},\"dom\":",
         info.width,
@@ -140,6 +145,12 @@ pub enum FromScript<'a> {
     Answer { seq: u32, allow: bool },
     /// Go to this address.
     Navigate(&'a str),
+    /// A network request (`fetch`, `XMLHttpRequest`, `sendBeacon`).
+    Fetch(FetchRequest),
+    /// Abort request `id`.
+    Abort(u32),
+    /// `document.cookie = text`.
+    SetCookie(&'a str),
     /// Anything else (ignored).
     Unknown,
 }
@@ -172,6 +183,15 @@ pub fn parse_message(m: &[u8]) -> FromScript<'_> {
             Ok(url) if !url.trim().is_empty() && url.len() <= 2048 => {
                 FromScript::Navigate(url.trim())
             }
+            _ => FromScript::Unknown,
+        },
+        b'F' => parse_fetch(rest).map_or(FromScript::Unknown, FromScript::Fetch),
+        b'X' => core::str::from_utf8(rest)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .map_or(FromScript::Unknown, FromScript::Abort),
+        b'C' => match core::str::from_utf8(rest) {
+            Ok(text) if text.len() <= 8192 => FromScript::SetCookie(text),
             _ => FromScript::Unknown,
         },
         _ => FromScript::Unknown,

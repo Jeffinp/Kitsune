@@ -52,13 +52,17 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use kitsune_core::appmanifest::NetPerm;
 use kitsune_core::browser::{Conn, FailReason, MAX_RESPONSE_BYTES};
+use kitsune_core::http1::Target;
 use kitsune_core::web::imgcache::{self, ImgFail, Loaded as ImgLoaded};
 
 mod client;
+pub mod cookies;
 mod load;
+mod script;
 mod thread;
 pub use client::*;
 use load::*;
+pub use script::*;
 pub use thread::*;
 
 const IDLE: u8 = 0;

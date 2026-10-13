@@ -23,6 +23,9 @@ mod request;
 pub use reader::*;
 pub use request::*;
 
+/// The `User-Agent` the fetcher sends (the same as `browser::build_request`).
+pub const HTTP_USER_AGENT: &str = concat!("Kitsune/", env!("CARGO_PKG_VERSION"));
+
 /// The largest header block accepted (status line and headers), in bytes.
 pub const MAX_HEAD: usize = 64 * 1024;
 
