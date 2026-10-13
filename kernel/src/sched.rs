@@ -150,6 +150,29 @@ static KILLING: AtomicBool = AtomicBool::new(false);
 /// Set by a thread while it sits in `hlt` waiting for an interrupt, so the tick
 /// sampler does not charge that time as CPU use.
 static IDLE: [AtomicBool; MAX_THREADS] = [const { AtomicBool::new(false) }; MAX_THREADS];
+/// Demoted slots ([`set_demoted`]) and the tick from which each may run again.
+static DEMOTED: [AtomicBool; MAX_THREADS] = [const { AtomicBool::new(false) }; MAX_THREADS];
+static NEXT_TURN: [AtomicU64; MAX_THREADS] = [const { AtomicU64::new(0) }; MAX_THREADS];
+/// Ticks a demoted thread waits after it ran while others want the CPU (it gets at most one tick
+/// in `DEMOTED_GAP + 1` when it competes; all the CPU nobody else wants).
+const DEMOTED_GAP: u64 = 3;
+
+/// Demote slot `slot` (or stop): while other threads can run, it gets at most one timer tick in
+/// [`DEMOTED_GAP`] + 1. The browser demotes a page's script process while its video plays with
+/// plenty buffered, so the decoder and the compositor come first.
+pub fn set_demoted(slot: usize, on: bool) {
+    if slot < MAX_THREADS {
+        DEMOTED[slot].store(on, Ordering::Relaxed);
+    }
+}
+
+/// Is slot `i` demoted and waiting for its turn at tick `now`?
+#[inline]
+fn held(i: usize, now: u64) -> bool {
+    i < MAX_THREADS
+        && DEMOTED[i].load(Ordering::Relaxed)
+        && NEXT_TURN[i].load(Ordering::Relaxed) > now
+}
 struct Thread {
     name: &'static str,
     /// Physical address of the page-table root of a user process; `0` = the kernel's own tables.
@@ -287,13 +310,16 @@ fn reschedule(rsp: u64, timer_tick: bool) -> u64 {
     let now = crate::interrupts::ticks();
     let hint = HANDOFF.swap(usize::MAX, Ordering::Relaxed);
     let hinted = (!timer_tick && hint < n && hint != cur && runnable(hint, now)).then_some(hint);
-    let next = match hinted
-        .or_else(|| kitsune_core::schedule::next_runnable(cur, n, |i| runnable(i, now)))
-    {
+    let next = match hinted.or_else(|| {
+        kitsune_core::schedule::next_runnable_held(cur, n, |i| runnable(i, now), |i| held(i, now))
+    }) {
         Some(next) => next,
         // Only possible if the compositor were dead or missing, which `kill_current` forbids.
         None => crate::crash::halt(),
     };
+    if next < MAX_THREADS && DEMOTED[next].load(Ordering::Relaxed) {
+        NEXT_TURN[next].store(now + DEMOTED_GAP, Ordering::Relaxed);
+    }
     if next == cur {
         return rsp; // nothing else to run: state unchanged, `cur` resumes
     }

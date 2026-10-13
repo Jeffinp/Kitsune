@@ -21,5 +21,20 @@ pub fn next_runnable(cur: usize, n: usize, runnable: impl Fn(usize) -> bool) -> 
     (1..=n).map(|step| (cur + step) % n).find(|&c| runnable(c))
 }
 
+/// Like [`next_runnable`], but a slot for which `held(i)` is true (a demoted thread whose turn has
+/// not come) is passed over while another thread than `cur` can run. It never leaves the CPU to
+/// `cur` or idle because of that: when nobody else can run, the held slot runs.
+pub fn next_runnable_held(
+    cur: usize,
+    n: usize,
+    runnable: impl Fn(usize) -> bool,
+    held: impl Fn(usize) -> bool,
+) -> Option<usize> {
+    match next_runnable(cur, n, |i| runnable(i) && !held(i)) {
+        Some(i) if i != cur => Some(i),
+        _ => next_runnable(cur, n, runnable),
+    }
+}
+
 #[cfg(test)]
 mod tests;

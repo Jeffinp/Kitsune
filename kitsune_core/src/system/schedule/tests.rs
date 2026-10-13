@@ -40,3 +40,21 @@ fn wraps_with_a_cur_outside_the_range() {
     // `cur` is a slot index; a stale value larger than n still terminates.
     assert_eq!(next_runnable(5, 3, |_| true), Some(0));
 }
+
+#[test]
+fn a_held_slot_waits_while_others_can_run() {
+    // Slot 2 is held: from 1 the next is 0, not 2.
+    assert_eq!(next_runnable_held(1, 4, |_| true, |i| i == 2), Some(3));
+    assert_eq!(next_runnable_held(3, 4, |_| true, |i| i == 2), Some(0));
+    // Only the current thread and the held one can run: the held one runs (the current one is
+    // giving the CPU away, or its slice ended).
+    assert_eq!(
+        next_runnable_held(1, 4, |i| i == 1 || i == 2, |i| i == 2),
+        Some(2)
+    );
+    // Only the held one can run.
+    assert_eq!(next_runnable_held(0, 4, |i| i == 2, |i| i == 2), Some(2));
+    // Nothing held: plain round robin.
+    assert_eq!(next_runnable_held(1, 4, |_| true, |_| false), Some(2));
+    assert_eq!(next_runnable_held(1, 4, |_| false, |_| false), None);
+}

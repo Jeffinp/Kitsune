@@ -61,6 +61,7 @@ pub fn spawn_user(name: &'static str, cr3: u64, rip: u64, user_rsp: u64) -> Opti
         }
         DEAD[slot].store(false, Ordering::Release);
         IDLE[slot].store(false, Ordering::Relaxed);
+        DEMOTED[slot].store(false, Ordering::Relaxed);
         TICKS[slot].store(0, Ordering::Relaxed);
         WAKE[slot].store(0, Ordering::Release);
         STACK_KIB[slot].store((stack_size / 1024) as u32, Ordering::Relaxed);

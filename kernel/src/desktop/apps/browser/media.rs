@@ -23,6 +23,7 @@ use kitsune_core::media::wire::{self, Command, Control};
 mod controls;
 mod direct;
 mod paint;
+mod priority;
 mod speed;
 mod stats;
 pub(crate) use direct::NetCtx;
@@ -53,6 +54,8 @@ pub(super) fn now_ms() -> u64 {
 #[derive(Default)]
 pub(crate) struct MediaSet {
     pub players: Vec<MediaPlayer>,
+    /// The page's script process is demoted (`priority.rs`).
+    demoted: bool,
 }
 
 /// One element's player.
@@ -80,6 +83,8 @@ pub(crate) struct MediaPlayer {
     mark: Option<stats::Mark>,
     /// The download of a `src` address.
     direct: Option<direct::Direct>,
+    /// What each source holds (the decoder's last answer), for `priority.rs`.
+    ranges: Vec<Vec<(i64, i64)>>,
 }
 
 impl Drop for MediaPlayer {
@@ -305,6 +310,7 @@ impl MediaSet {
             backlog: VecDeque::new(),
             mark: None,
             direct: None,
+            ranges: Vec::new(),
         };
         p.post(proto::msg(
             proto::IN_FLOW,
@@ -502,6 +508,7 @@ fn take(
             {
                 d.ranges.clone_from(&ranges);
             }
+            p.note_buffered(src, &ranges);
             let msg = wire::buffered_message(p.uid, src, seq, status, &ranges);
             crate::userproc::page_post(js, msg);
         }

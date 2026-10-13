@@ -288,6 +288,7 @@ impl Desktop {
                     media_relayout |= m.relayout;
                 }
             }
+            js.media.update_priority(js.pid);
             if let Some(a) = js.session.expire(now_ms()) {
                 crate::klog!(Info, "browser: the page did not answer a click in time");
                 actions.push((t.id, a));
