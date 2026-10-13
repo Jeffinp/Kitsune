@@ -66,10 +66,13 @@
       const v = cfg.video, a = cfg.audio;
       if (!v && !a) return Promise.reject(new TypeError('decodingInfo: no audio or video configuration'));
       let ok = (!v || media(v.contentType)) && (!a || media(a.contentType));
-      // The decoder is software: what it keeps up with even under emulation is smooth (the limits of
-      // MediaSource.isTypeSupported's `width`/`height`/`framerate`: 854x480 at 30 fps).
+      // The decoder is software: smooth is what it keeps up with on this machine. The browser
+      // measured that once (pixels a second it can decode while a video plays, `decodeBudget`);
+      // a size beyond MediaSource.isTypeSupported's limits (854x480 at 30 fps) is never smooth.
       const sized = v && MediaSource.isTypeSupported(String(v.contentType) + '; width=' + (v.width | 0) + '; height=' + (v.height | 0) + '; framerate=' + (Math.ceil(v.framerate || 0)));
-      const smooth = ok && (!v || sized);
+      const budget = D.decodeBudget || 0;
+      const fast = !v || !budget || (v.width | 0) * (v.height | 0) * (Number(v.framerate) || 30) <= budget;
+      const smooth = ok && (!v || (sized && fast));
       if (cfg.keySystemConfiguration) ok = false; // no EME
       return Promise.resolve({ supported: ok, smooth, powerEfficient: false, keySystemAccess: null, configuration: cfg });
     },

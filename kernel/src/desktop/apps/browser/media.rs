@@ -23,9 +23,11 @@ use kitsune_core::media::wire::{self, Command, Control};
 mod controls;
 mod direct;
 mod paint;
+mod speed;
 mod stats;
 pub(crate) use direct::NetCtx;
 pub(crate) use paint::video_covers;
+pub(crate) use speed::{decode_budget, pump_speed_test, start_speed_test};
 
 /// Players playing at once in a page (each is a decoder process with up to 128 MiB).
 pub(crate) const MAX_PLAYERS: usize = 2;
@@ -403,6 +405,7 @@ impl MediaSet {
                         p.backlog.len()
                     );
                 }
+                p.window();
             }
             // The picture size: the element's box, the video's shape kept.
             if let Some(b) = page.and_then(|pg| pg.videos.iter().find(|v| v.uid == p.uid)) {
@@ -444,6 +447,12 @@ fn picture_size(p: &MediaPlayer, w: i32, h: i32) -> (u32, u32) {
         .meta
         .map_or((0, 0), |m| (m.width, m.height));
     let a = kitsune_core::media::controls::contain(w, h, vw, vh);
+    // Never bigger than the video itself: the compositor scales up as it copies the picture
+    // (`paint.rs`), so the decoder does not convert, and the kernel does not carry, pixels that only
+    // repeat others (a 240p video in a 480-pixel box was four times the bytes).
+    if vw > 0 && vh > 0 && (a.w as u32 > vw || a.h as u32 > vh) {
+        return (vw.min(proto::MAX_W), vh.min(proto::MAX_H));
+    }
     (
         (a.w.max(1) as u32).min(proto::MAX_W),
         (a.h.max(1) as u32).min(proto::MAX_H),
@@ -509,6 +518,8 @@ fn take(
             total,
             bytes,
         } => p.fetched(id, ev, status, total, bytes),
+        // Only the speed test asks for this (`speed.rs`).
+        Out::Bench { .. } => {}
         Out::Error { code, text } => {
             crate::klog!(Info, "browser: media decoder of element {}: {text}", p.uid);
             // No codec or no memory ends the player; a bad frame does not, and broken bytes are

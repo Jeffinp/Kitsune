@@ -1,9 +1,14 @@
 //! A line in the log for each stretch of playback (from `playing` to `pause`/`ended`/`waiting`):
 //! how long it played, the pictures shown and dropped (the frame rate), the CPU the decoder and
-//! the whole system used meanwhile, and how the sound clock compared with the system clock.
+//! the whole system used meanwhile, and how the sound clock compared with the system clock. A long
+//! stretch is cut every [`WINDOW_MS`] (a line marked `playing`), so a video that plays on is measured
+//! as it goes.
 
 use super::*;
 use kitsune_core::media::player::Event;
+
+/// The longest stretch in one line.
+const WINDOW_MS: u64 = 10_000;
 
 /// Where a stretch of playback began.
 pub(super) struct Mark {
@@ -15,18 +20,33 @@ pub(super) struct Mark {
 }
 
 impl MediaPlayer {
+    fn start_mark(&mut self) {
+        self.mark = Some(Mark {
+            ticks: crate::interrupts::ticks(),
+            busy: crate::sched::busy_ticks(),
+            presented: self.player.presented,
+            dropped: self.player.dropped,
+            position: self.player.position(),
+        });
+    }
+
+    /// A stretch that has played for [`WINDOW_MS`]: its line, and the next one starts now.
+    pub(super) fn window(&mut self) {
+        let Some(m) = &self.mark else { return };
+        let ms = crate::interrupts::ticks().saturating_sub(m.ticks) * 1000
+            / u64::from(crate::interrupts::TIMER_HZ);
+        if ms >= WINDOW_MS {
+            self.report("playing");
+            self.start_mark();
+        }
+    }
+
     /// Note the events of a step in the log.
     pub(super) fn note(&mut self, events: &[Event]) {
         for e in events {
             match e {
                 Event::Playing => {
-                    self.mark = Some(Mark {
-                        ticks: crate::interrupts::ticks(),
-                        busy: crate::sched::busy_ticks(),
-                        presented: self.player.presented,
-                        dropped: self.player.dropped,
-                        position: self.player.position(),
-                    });
+                    self.start_mark();
                     crate::klog!(
                         Info,
                         "media: element {} playing at {} ms",

@@ -269,7 +269,9 @@
     addTextTrack() { return { mode: 'disabled', cues: [], addCue() {}, removeCue() {} }; }
     getVideoPlaybackQuality() {
       const s = state(this);
-      return { creationTime: now(), totalVideoFrames: s.frames || 0, droppedVideoFrames: 0, corruptedVideoFrames: 0 };
+      // What the browser measured: pictures due (shown + dropped) and the ones dropped because they
+      // came (or would have come) too late. A player adapts its quality to this.
+      return { creationTime: now(), totalVideoFrames: (s.shownFrames || 0) + (s.droppedFrames || 0), droppedVideoFrames: s.droppedFrames || 0, corruptedVideoFrames: 0 };
     }
     canPlayType(type) { return support(type); }
 
@@ -285,7 +287,8 @@
       if (wasLoading) later(() => fire(this, 'abort'));
       if (s.networkState !== 0) later(() => fire(this, 'emptied'));
       Object.assign(s, { paused: true, ended: false, seeking: false, ct: 0, lastCt: 0, readyState: 0,
-        duration: NaN, vw: 0, vh: 0, error: null, played: [], currentSrc: '', autoplayed: false, ready: 0 });
+        duration: NaN, vw: 0, vh: 0, error: null, played: [], currentSrc: '', autoplayed: false, ready: 0,
+        shownFrames: 0, droppedFrames: 0 });
       // Pick the resource: `src`, else the first `<source>` of a type that plays.
       let url = this.getAttribute('src');
       if (url === null) {
@@ -398,6 +401,7 @@
       if (has('seeked')) s.seeking = false;
       s.readyState = m.rs | 0;
       if (m.w) { s.vw = m.w; s.vh = m.h; }
+      if (m.fs >= 0) { s.shownFrames = m.fs; s.droppedFrames = m.fd | 0; }
       if (m.d === -1) s.duration = Infinity; else if (m.d >= 0) s.duration = m.d / NS;
       if (has('volumechange')) { s.volume = (m.vol | 0) / 100; s.muted = !!m.mu; }
       if (m.err && !s.error) {
@@ -811,6 +815,8 @@
   // ---- what the browser says ----
 
   function onMedia(m) {
+    // What the decoder keeps up with on this machine (pixels a second), for decodingInfo.
+    if (m.cap !== undefined) { kjs.dom.decodeBudget = Number(m.cap) || 0; return; }
     const el = players.get(m.id);
     if (!el) return;
     const s = state(el);
@@ -824,6 +830,19 @@
     if (m.cue) return;
     el._update(m);
   }
+
+  // While a video plays and the person has not used the page for a while, the document goes to the
+  // browser at most once a second (dom.js `flush`): a player updates its progress bar and its time
+  // several times a second, and each document is laid out again by the browser.
+  const QUIET_MS = 3000, DOC_GAP_MS = 1000;
+  kjs.dom.hooks.flushGap = function () {
+    if (now() - (kjs.dom.inputAt || -Infinity) < QUIET_MS) return 0;
+    for (const el of players.values()) {
+      const s = state(el);
+      if (!s.paused && !s.ended && s.vw > 0) return DOC_GAP_MS;
+    }
+    return 0;
+  };
 
   const baseOnMessage = kjs.onMessage;
   kjs.onMessage = function (text) {

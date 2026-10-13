@@ -105,6 +105,10 @@ fn state_and_buffered_messages() {
         "{\"t\":\"media\",\"id\":5,\"buf\":[1,3,0,[[0,10],[20,30]]]}"
     );
     assert_eq!(
+        String::from_utf8(budget_message(4_000_000)).unwrap(),
+        "{\"t\":\"media\",\"id\":0,\"cap\":4000000}"
+    );
+    assert_eq!(
         String::from_utf8(cue_message(5, 0, 7, None)).unwrap(),
         "{\"t\":\"media\",\"id\":5,\"cue\":[0,7,-1]}"
     );
@@ -147,6 +151,19 @@ fn decoder_messages_round_trip_and_hostile_ones_are_refused() {
     let mut big = vec![];
     proto::frame_head(&mut big, 0, 5000, 1, false, 0);
     assert_eq!(parse_out(&big), None);
+    let bench = proto::msg(
+        proto::OUT_BENCH,
+        &[Field::U32(30), Field::U64(1_728_000), Field::U32(330)],
+    );
+    assert_eq!(
+        parse_out(&bench),
+        Some(Out::Bench {
+            pictures: 30,
+            pixels: 1_728_000,
+            ms: 330
+        })
+    );
+    assert_eq!(parse_out(&bench[..bench.len() - 1]), None);
     let mut a = vec![];
     proto::audio_head(&mut a, 9, 1);
     a.extend_from_slice(&[0, 1, 2, 3]);

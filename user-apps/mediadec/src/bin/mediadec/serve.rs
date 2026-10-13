@@ -117,6 +117,8 @@ pub struct Server {
     audio_packets: u32,
     pcm: Vec<i16>,
     quit: bool,
+    /// The player asked for [`Server::bench`].
+    bench_due: bool,
 }
 
 /// A message waiting to go: bytes, or a picture built as words (its pixels written in place).
@@ -175,6 +177,7 @@ impl Server {
             audio_packets: 0,
             pcm: vec![0; OPUS_MAX_SAMPLES * 2],
             quit: false,
+            bench_due: false,
         }
     }
 
@@ -293,6 +296,7 @@ impl Server {
                     self.out_audio = self.out_audio.saturating_sub(a);
                 }
             }
+            proto::IN_BENCH => self.bench_due = true,
             proto::IN_CUE => match (src_at(0), i64_at(1)) {
                 (Some(src), Some(t)) => {
                     let off = self
@@ -310,6 +314,22 @@ impl Server {
             },
             _ => self.error(proto::ERR_MESSAGE, "unknown message"),
         }
+    }
+
+    /// Decode the clip built into the program ([`BENCH_CLIP`]: 320x180 VP9 and Opus, one second);
+    /// returns the pictures and the pixels decoded.
+    fn bench(&mut self) -> (u32, u64) {
+        let (mut pictures, mut pixels) = (0u32, 0u64);
+        let mut m = super::pipeline::Media::new();
+        if m.push(BENCH_CLIP).is_ok() {
+            while let Ok(Some(o)) = m.poll() {
+                if let super::pipeline::Out::Picture { picture, .. } = o {
+                    pictures += 1;
+                    pixels += u64::from(picture.width()) * u64::from(picture.height());
+                }
+            }
+        }
+        (pictures, pixels)
     }
 
     /// The head, the end or a failure of the fetcher's request for the `src`.
@@ -434,6 +454,18 @@ pub fn serve(link: &mut dyn Link) {
                 if server.quit {
                     return;
                 }
+                if core::mem::take(&mut server.bench_due) {
+                    // How fast this machine decodes: the clip, timed (the player also counts the
+                    // CPU this process got meanwhile).
+                    let t0 = link.now_ms();
+                    let (pictures, pixels) = server.bench();
+                    let ms = link.now_ms().saturating_sub(t0).min(u64::from(u32::MAX)) as u32;
+                    let m = proto::msg(
+                        proto::OUT_BENCH,
+                        &[Field::U32(pictures), Field::U64(pixels), Field::U32(ms)],
+                    );
+                    server.post(m, KIND_OTHER);
+                }
                 continue;
             }
             Ok(None) => {}
@@ -441,6 +473,9 @@ pub fn serve(link: &mut dyn Link) {
         server.work(link.now_ms());
     }
 }
+
+/// The clip [`Server::bench`] decodes: the demuxer's test file (320x180 VP9 + Opus, 1 s, 17 KiB).
+const BENCH_CLIP: &[u8] = include_bytes!("../../../../../kitsune_core/src/format/webm/testdata/small.webm");
 
 /// The largest message (calls 56/57 carry at most 4 MiB).
 pub const MAX_MSG: usize = 4 * 1024 * 1024;

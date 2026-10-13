@@ -598,6 +598,7 @@
       return;
     }
     const m = JSON.parse(text);
+    if (m.n) D.inputAt = performance.now();
     D.tasks.push({ name: m.t, run() { try { h(m); } finally { if (m.n > ack) ack = m.n; } } });
   };
   function initDone() {
@@ -611,9 +612,7 @@
     }, { once: true });
   }
   // The document sent after an input reflects it: say up to which one first.
-  const baseFlush = kjs.flush;
-  kjs.flush = function () {
-    if (ack !== ackSent && D.isDirty()) { send('Q' + ack); ackSent = ack; }
-    baseFlush();
+  D.hooks.beforeSend = function () {
+    if (ack !== ackSent) { send('Q' + ack); ackSent = ack; }
   };
 })(globalThis, globalThis.__kjs_native, globalThis.__kjs);

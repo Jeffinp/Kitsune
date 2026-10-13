@@ -23,7 +23,9 @@
   // the browser's copy of an element holds (live form values, shadow trees).
   const mutators = [];
   const notify = (type, target, a, b, c, d) => { for (const f of mutators) f(type, target, a, b, c, d); };
-  const hooks = { wireAttrs: null, wireKids: null, created: null };
+  // `flushGap` (media.js) is the least time between two documents right now (0: none), `beforeSend`
+  // (events.js) runs when a document is about to go.
+  const hooks = { wireAttrs: null, wireKids: null, created: null, flushGap: null, beforeSend: null };
 
   const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta',
     'source', 'track', 'wbr']);
@@ -978,9 +980,12 @@
     return root.childNodes.slice();
   }
 
-  const escText = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/ /g, '&nbsp;');
-  const escAttr = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/ /g, '&nbsp;');
+  // Every text and attribute of the document is escaped at each send, and QuickJS runs a regular
+  // expression a character at a time: the native indexOf looks first, and most strings need nothing.
+  const escText = (s) => (s.indexOf('&') < 0 && s.indexOf('<') < 0 && s.indexOf('>') < 0 && s.indexOf('\u00a0') < 0 ? s
+    : s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\u00a0/g, '&nbsp;'));
+  const escAttr = (s) => (s.indexOf('&') < 0 && s.indexOf('"') < 0 && s.indexOf('\u00a0') < 0 ? s
+    : s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/\u00a0/g, '&nbsp;'));
 
   // `wire`: the copy for the browser (ids in data-kjs, no scripts, no comments, only names its
   // parser reads).
@@ -1004,7 +1009,9 @@
         if (VOID.has(tag)) break;
         if (RAW.has(tag)) {
           const t = node.textContent;
-          out.push(wire ? t.replace(/<\//g, '<\\/') : t);
+          // (A style sheet can be hundreds of KB: a regular expression over it was most of the
+          // page process's time while a video played.)
+          out.push(wire && t.indexOf('</') >= 0 ? t.replace(/<\//g, '<\\/') : t);
         } else {
           for (const k of (wire && hooks.wireKids ? hooks.wireKids(node) : node.childNodes)) serialize(k, wire, out);
         }
@@ -1289,6 +1296,10 @@
       const w = Math.max(0, Math.ceil(lastFrame + 16 - at));
       if (d < 0 || w < d) d = w;
     }
+    if (dirty && flushDue) {
+      const w = Math.max(0, Math.ceil(flushDue - at));
+      if (d < 0 || w < d) d = w;
+    }
     return d;
   }
 
@@ -1299,10 +1310,30 @@
     current = null;
   }
 
+  // The document goes to the browser after a batch of tasks that changed it, where it is parsed and
+  // laid out again (the whole of it: hundreds of KB for a video player, a second of work under
+  // emulation). So a document equal to the last one sent is not sent, and while `hooks.flushGap`
+  // asks for it (a video plays and the person is not using the page) at most one goes per gap: a
+  // player that moves its progress bar four times a second does not cost four layouts.
+  let lastDoc = '';
+  let lastSentAt = -Infinity;
+  let flushDue = 0;
   function flush() {
     if (!dirty || !document.documentElement) return;
+    const at = now();
+    const gap = hooks.flushGap ? hooks.flushGap() : 0;
+    if (gap > 0 && at - lastSentAt < gap) {
+      flushDue = lastSentAt + gap;
+      return;
+    }
+    flushDue = 0;
     dirty = false;
-    send('D' + (document._quirks ? '' : '<!doctype html>') + serialize(document.documentElement, true));
+    if (hooks.beforeSend) hooks.beforeSend();
+    const doc = (document._quirks ? '' : '<!doctype html>') + serialize(document.documentElement, true);
+    if (doc === lastDoc) return;
+    lastDoc = doc;
+    lastSentAt = at;
+    send('D' + doc);
   }
 
   // ---- what the browser sends ----

@@ -264,6 +264,32 @@ const S = 1e9;
   await settle();
   check(run('au.error && au.error.code === 4'), 'no free player: MEDIA_ERR_SRC_NOT_SUPPORTED');
 
+  // ---- what the browser measured, and the document while a video plays ----
+  take();
+  state(4, ['play', 'playing'], { rs: 4, p: 0, ct: 1 * S, w: 640, h: 360, d: 3 * S, fs: 50, fd: 10 });
+  await settle();
+  check(run(`const q = document.querySelector('video').getVideoPlaybackQuality(); q.totalVideoFrames === 60 && q.droppedVideoFrames === 10`),
+    'getVideoPlaybackQuality: the pictures due (shown + dropped) and the dropped ones');
+  media({ id: 0, cap: 2500000 });
+  check(kjs.dom.decodeBudget === 2500000, 'the decoding budget (pixels a second) reaches the page');
+  const docs = () => take().filter((o) => o.other && o.other[0] === 'D').length;
+  take();
+  run(`document.body.setAttribute('data-a', '1')`);
+  kjs.flush();
+  const first = docs();
+  run(`document.body.setAttribute('data-a', '2')`);
+  kjs.flush();
+  const second = docs();
+  const wait = kjs.nextDelay();
+  check(first === 1 && second === 0 && wait > 0 && wait <= 1000, 'while a video plays the document goes at most once a second');
+  await new Promise((r) => setTimeout(r, 1050));
+  kjs.flush();
+  check(docs() === 1, 'the held document goes once the second is over');
+  run(`document.body.setAttribute('data-a', '2')`);
+  await new Promise((r) => setTimeout(r, 1050));
+  kjs.flush();
+  check(docs() === 0, 'a document equal to the last one sent is not sent again');
+
   console.log(failures ? failures + ' FAILED' : 'all passed');
   process.exit(failures ? 1 : 0);
 })();

@@ -206,6 +206,12 @@ pub fn buffered_message(id: u32, src: u8, seq: u32, status: u8, ranges: &[(i64, 
     s.into_bytes()
 }
 
+/// How many pixels a second this machine's decoder keeps up with while a video plays (sent once,
+/// when the page starts: `mediaCapabilities.decodingInfo` answers `smooth` from it).
+pub fn budget_message(pixels_per_s: u64) -> Vec<u8> {
+    format!("{{\"t\":\"media\",\"id\":0,\"cap\":{pixels_per_s}}}").into_bytes()
+}
+
 /// Where the cluster for time `t` of source `src` is (`None`: the file has no index).
 pub fn cue_message(id: u32, src: u8, t: i64, offset: Option<u64>) -> Vec<u8> {
     let o = offset.map_or(-1, |o| o.min(i64::MAX as u64) as i64);

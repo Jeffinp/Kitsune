@@ -50,6 +50,9 @@ pub const IN_FLOW: u8 = 0x0D;
 pub const IN_ACK: u8 = 0x0E;
 /// `u8` source, `i64` time: where in the file is the cluster for that time ([`OUT_CUE`]).
 pub const IN_CUE: u8 = 0x0F;
+/// Decode the small clip built into the decoder and say how fast it went ([`OUT_BENCH`]): how many
+/// pixels a second this machine decodes.
+pub const IN_BENCH: u8 = 0x11;
 
 /// `u64` duration (ns, 0 unknown), `u32` width, `u32` height, `u8` has video, `u8` has audio, `u8`
 /// channels of the stream, `u8` source, `u32` output rate (48000; the sound is always stereo).
@@ -78,6 +81,8 @@ pub const OUT_CUE: u8 = 0x87;
 pub const OUT_FETCH: u8 = 0x88;
 /// `u32` code ([`ERR_DEMUX`]...), then a UTF-8 text.
 pub const OUT_ERROR: u8 = 0x8F;
+/// `u32` pictures and `u64` pixels decoded from the built-in clip, `u32` milliseconds it took.
+pub const OUT_BENCH: u8 = 0x89;
 
 /// [`OUT_FETCH`]: the head arrived.
 pub const FETCH_HEAD: u8 = 1;
@@ -152,6 +157,11 @@ pub enum Out<'a> {
     Error {
         code: u32,
         text: &'a str,
+    },
+    Bench {
+        pictures: u32,
+        pixels: u64,
+        ms: u32,
     },
     Fetch {
         id: u32,
@@ -265,6 +275,11 @@ pub fn parse_out(m: &[u8]) -> Option<Out<'_>> {
         OUT_ERROR => Out::Error {
             code: u32_at(b, 0)?,
             text: core::str::from_utf8(b.get(4..)?).unwrap_or("?"),
+        },
+        OUT_BENCH => Out::Bench {
+            pictures: u32_at(b, 0)?,
+            pixels: u64_at(b, 4)?,
+            ms: u32_at(b, 12)?,
         },
         _ => return None,
     })
