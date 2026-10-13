@@ -39,6 +39,10 @@ cmd "tone 330 1500 --clock";                  wait_n "$DONE" 8 60; sleep 1
 cmd "beep";                                   wait_n "$DONE" 9 60
 sleep 3
 shot a-terminal
+# Ajustes, section Som (the last one: Up from the first wraps to it).
+dock_icon settings; click; sleep 2.5
+key up; sleep 1.5
+shot b-ajustes-som
 # QEMU completes the WAV (its header) only when it quits: quit now, wait for the monitor to go away.
 mon quit
 for ((i = 0; i < 40; i++)); do
