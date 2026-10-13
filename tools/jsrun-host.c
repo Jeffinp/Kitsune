@@ -30,6 +30,14 @@ uint64_t kjs_uptime_ms(void)
     return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000 - start_ms;
 }
 
+/* The CPU time of this process (page.c times its tasks with it). */
+uint64_t kjs_cpu_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+
 long kjs_write(int fd, const void *buf, size_t len)
 {
     (void)fd;

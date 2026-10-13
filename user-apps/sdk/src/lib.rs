@@ -123,6 +123,12 @@ pub fn uptime_ms() -> u64 {
     unsafe { syscall3(nr::UPTIME_MS, 0, 0, 0) as u64 }
 }
 
+/// Milliseconds of CPU this process has had ([`abi::SYS_CPU_MS`], in steps of 4 ms).
+pub fn cpu_ms() -> u64 {
+    // SAFETY: no arguments.
+    unsafe { syscall3(abi::SYS_CPU_MS, 0, 0, 0) as u64 }
+}
+
 /// Seconds since 1970-01-01 on the wall clock, already in the time zone the user chose (`0` when the
 /// system has no clock).
 pub fn local_time_secs() -> i64 {

@@ -2,8 +2,8 @@
 //!
 //! Numbers 0–6 (exit, write, yield, getpid, sleep, uptime, brk) and 16–21 (the WebAssembly host,
 //! `kitsune_core::appabi::remote`) are documented where they are served; this crate owns 32–42 (files
-//! and arguments), 48–51 (a window), 52–54 (child processes), 56–57 (the browser's script process) and
-//! 60–65 (sound, see [`audio`]).
+//! and arguments), 48–51 (a window), 52–54 (child processes), 56–57 (the browser's script process),
+//! 60–65 (sound, see [`audio`]), 66 (random bytes) and 67 (CPU time).
 //! A call is `rax` = number, `rdi`, `rsi`, `rdx`, `r10`, `r8` = arguments, result in `rax`
 //! (negative = `-errno`, see [`errno`]). Pointers are user addresses; the kernel copies through the
 //! process's page tables and never trusts them.
@@ -62,6 +62,10 @@ pub const MAX_PAGE_MSG: usize = 4 * 1024 * 1024;
 /// same one TLS uses); returns `len`. It is what `crypto.getRandomValues` of a page's script draws on.
 /// (Calls 60-65 are taken by the audio and media work.)
 pub const SYS_GETRANDOM: u64 = 66;
+/// `cpu_ms()`: milliseconds of CPU the calling process has had (its scheduler slot's busy ticks, so
+/// in steps of a tick, 4 ms). The page's script process times its tasks with it: a task waiting for
+/// the CPU (the process demoted while a video plays) is not running long.
+pub const SYS_CPU_MS: u64 = 67;
 /// Most bytes one `getrandom` fills (as in the Web Crypto API).
 pub const MAX_RANDOM: usize = 65536;
 

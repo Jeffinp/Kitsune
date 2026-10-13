@@ -30,6 +30,12 @@ pub extern "C" fn kjs_uptime_ms() -> u64 {
     sdk::uptime_ms()
 }
 
+/// Milliseconds of CPU this process has had (the budget of a task: see `page.c`).
+#[unsafe(no_mangle)]
+pub extern "C" fn kjs_cpu_ms() -> u64 {
+    sdk::cpu_ms()
+}
+
 /// Not measured yet.
 const UNKNOWN: i64 = i64::MIN;
 static TZ_OFFSET: AtomicI64 = AtomicI64::new(UNKNOWN);

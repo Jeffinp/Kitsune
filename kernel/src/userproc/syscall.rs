@@ -110,6 +110,11 @@ pub extern "C" fn syscall_entry(rsp: u64) -> u64 {
             r.rax = sys_getrandom(slot, a, b) as u64;
             rsp
         }
+        abi::SYS_CPU_MS => {
+            r.rax =
+                crate::sched::busy_ticks_of(slot) * 1000 / u64::from(crate::interrupts::TIMER_HZ);
+            rsp
+        }
         _ => {
             r.rax = ENOSYS as u64;
             rsp

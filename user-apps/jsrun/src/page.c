@@ -27,11 +27,12 @@ extern long kjs_page_recv(void *buf, size_t cap, uint64_t timeout_ms);
 extern long kjs_page_send(const void *buf, size_t len);
 extern void kjs_sleep_ms(uint64_t ms);
 extern uint64_t kjs_uptime_ms(void);
+extern uint64_t kjs_cpu_ms(void);
 extern long kjs_getrandom(void *buf, size_t len);
 
 #define MAX_MSG (4u * 1024 * 1024) /* kitsune_userabi::MAX_PAGE_MSG */
-#define TASK_MS 3000               /* the longest one task may run */
-#define LOAD_MS 60000              /* the longest one script may take to load (compile + top level) */
+#define TASK_MS 3000               /* the most CPU one task may take */
+#define LOAD_MS 60000              /* the most CPU one script may take to load (compile + top level) */
 #define BATCH_MS 40                /* tasks run back to back before the document is sent */
 #define ENOSYS_ (-38)
 #define EAGAIN_ (-11)
@@ -45,11 +46,14 @@ extern long kjs_getrandom(void *buf, size_t len);
 static uint64_t deadline;
 static int stopped;
 
+/* The budgets are CPU time (kjs_cpu_ms: what this process ran, in steps of 4 ms), not wall time: a
+   task that waits for the CPU (other processes busy, or this one demoted while the page's video
+   plays) is not one that runs too long. */
 static int interrupt(JSRuntime *rt, void *opaque)
 {
     (void)rt;
     (void)opaque;
-    if (kjs_uptime_ms() > deadline) {
+    if (kjs_cpu_ms() > deadline) {
         stopped = 1;
         return 1;
     }
@@ -59,7 +63,7 @@ static int interrupt(JSRuntime *rt, void *opaque)
 /* A new task: a fresh budget. */
 static void begin(void)
 {
-    deadline = kjs_uptime_ms() + TASK_MS;
+    deadline = kjs_cpu_ms() + TASK_MS;
     stopped = 0;
 }
 
@@ -156,14 +160,15 @@ static JSValue js_eval_script(JSContext *ctx, JSValueConst this_val, int argc, J
         return JS_EXCEPTION;
     const char *name = JS_ToCString(ctx, argv[1]);
     uint64_t t0 = kjs_uptime_ms();
+    uint64_t c0 = kjs_cpu_ms();
     uint64_t saved = deadline;
     int load = argc > 2 && JS_ToBool(ctx, argv[2]) > 0;
-    if (load && t0 + LOAD_MS > deadline)
-        deadline = t0 + LOAD_MS;
+    if (load && c0 + LOAD_MS > deadline)
+        deadline = c0 + LOAD_MS;
     JSValue r = JS_Eval(ctx, code, n, name ? name : "<script>", JS_EVAL_TYPE_GLOBAL);
     uint64_t took = kjs_uptime_ms() - t0;
     if (load && !stopped)
-        deadline = saved > kjs_uptime_ms() ? saved : kjs_uptime_ms() + TASK_MS / 10;
+        deadline = saved > kjs_cpu_ms() ? saved : kjs_cpu_ms() + TASK_MS / 10;
     /* A slow script is worth a line in the log (a page's big bundles: parse and first run). */
     if (took >= SLOW_SCRIPT_MS)
         fprintf(stderr, "jsrun: %.120s (%zu bytes) ran in %llu ms\n", name ? name : "<script>", n,

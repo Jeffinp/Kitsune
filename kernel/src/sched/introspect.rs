@@ -32,6 +32,11 @@ pub fn busy_ticks() -> [u64; kitsune_core::sysmon::MAX_THREADS] {
     core::array::from_fn(|i| TICKS[i].load(Ordering::Relaxed))
 }
 
+/// Busy timer ticks of slot `i` (one entry of [`busy_ticks`]).
+pub fn busy_ticks_of(i: usize) -> u64 {
+    TICKS.get(i).map_or(0, |t| t.load(Ordering::Relaxed))
+}
+
 /// Stack size of slot `i` in KiB: the compositor runs on the bootloader's stack
 /// (`BOOT_CONFIG.kernel_stack_size`), the others on a `STACK_SIZE` block.
 pub fn thread_stack_kib(i: usize) -> u32 {
