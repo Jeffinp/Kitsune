@@ -94,6 +94,11 @@ pub(crate) fn intrinsic<'a>(
                             acc.min = acc.min.max(w);
                             acc.cur = sat(acc.cur, w);
                         }
+                        "video" | "audio" => {
+                            let w = video_extent(p, el, &c).0.saturating_mul(Q);
+                            acc.min = acc.min.max(w);
+                            acc.cur = sat(acc.cur, w);
+                        }
                         _ => {
                             p.anc.push(el);
                             intrinsic(p, &el.children, &c, acc, depth + 1);
@@ -132,6 +137,10 @@ pub(crate) fn content_intr<'a>(
         }
         "input" | "button" => {
             let q = control_width(p, el).saturating_mul(Q);
+            return (q, q);
+        }
+        "video" | "audio" => {
+            let q = video_extent(p, el, c).0.saturating_mul(Q);
             return (q, q);
         }
         _ => {}
@@ -235,6 +244,15 @@ pub(crate) fn img_extent(p: &Painter, el: &Element, c: &Computed) -> (i32, i32) 
         _ => dw,
     };
     img_box(dw, dh, state, 1 << 16, p.zoom)
+}
+
+/// The box of a `<video>`/`<audio>` for measuring.
+pub(crate) fn video_extent(p: &Painter, el: &Element, c: &Computed) -> (i32, i32) {
+    let d = video_dims(p, el, c);
+    if d.audio && !d.controls {
+        return (0, 0);
+    }
+    video_box(d.dw, d.dh, d.nat, d.audio, 1 << 16, p.zoom)
 }
 
 /// Width of a form control for measuring (kind from its attributes).

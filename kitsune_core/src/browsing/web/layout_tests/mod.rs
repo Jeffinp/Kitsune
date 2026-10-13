@@ -91,6 +91,7 @@ fn rect_of(p: &Page, color: Rgb) -> Option<(i32, i32, i32, i32)> {
 mod boxes;
 mod budgets_hostility;
 mod links;
+mod media;
 mod modern;
 mod styles;
 mod tables;

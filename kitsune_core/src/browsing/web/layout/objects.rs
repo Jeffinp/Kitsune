@@ -52,10 +52,55 @@ pub(super) fn control_font(p: &Painter) -> Font {
     Font::new(p.z(CONTROL_PX).clamp(6, 200) as u16)
 }
 
+/// The box of a `<video>`: the declared size, the other side from the picture's aspect ratio
+/// (`nat`, CSS pixels), the picture's own size, or 300x150 (the size the HTML standard gives a
+/// video it knows nothing about); never wider than `avail`. An `<audio controls>` is a bar.
+pub(crate) fn video_box(
+    dw: i32,
+    dh: i32,
+    nat: Option<(u32, u32)>,
+    audio: bool,
+    avail: i32,
+    zoom: i32,
+) -> (i32, i32) {
+    let z = |v: i64| (v * i64::from(zoom) / 100).max(1);
+    let (dw, dh) = (i64::from(dw), i64::from(dh));
+    if audio {
+        let w = if dw > 0 {
+            dw
+        } else {
+            z(i64::from(crate::browsing::media::controls::AUDIO_W))
+        };
+        let h = z(i64::from(crate::browsing::media::controls::AUDIO_H));
+        return (
+            w.min(i64::from(avail.max(8))).clamp(1, 20_000) as i32,
+            h as i32,
+        );
+    }
+    let (nw, nh) = nat
+        .filter(|&(w, h)| w > 0 && h > 0)
+        .map_or((300, 150), |(w, h)| (i64::from(w), i64::from(h)));
+    let (mut w, mut h) = match (dw > 0, dh > 0) {
+        (true, true) => (dw, dh),
+        (true, false) => (dw, (dw * nh / nw).max(1)),
+        (false, true) => ((dh * nw / nh).max(1), dh),
+        (false, false) => (z(nw), z(nh)),
+    };
+    let avail = i64::from(avail.max(8));
+    if w > avail {
+        h = (h * avail / w).max(1);
+        w = avail;
+    }
+    (w.clamp(1, 20_000) as i32, h.clamp(1, 20_000) as i32)
+}
+
 /// The (width, height) of an object on a line with `avail` pixels.
 pub(super) fn obj_size(p: &Painter, obj: &Obj, avail: i32) -> (i32, i32) {
     match obj {
         Obj::Img { dw, dh, state, .. } => img_box(*dw, *dh, *state, avail, p.zoom),
+        Obj::Video {
+            dw, dh, nat, audio, ..
+        } => video_box(*dw, *dh, *nat, *audio, avail, p.zoom),
         Obj::Field {
             kind,
             chars,
@@ -99,7 +144,7 @@ pub(super) fn obj_size(p: &Painter, obj: &Obj, avail: i32) -> (i32, i32) {
 /// x-height.
 pub(super) fn obj_below(p: &Painter, obj: &Obj, h: i32) -> i32 {
     match obj {
-        Obj::Img { .. } => 0,
+        Obj::Img { .. } | Obj::Video { .. } => 0,
         Obj::Field { kind, .. } => match kind {
             FieldKind::Checkbox | FieldKind::Radio => h / 4,
             FieldKind::TextArea => {
@@ -229,6 +274,25 @@ pub(super) fn emit_obj(p: &mut Painter, obj: &Obj, x: i32, y: i32, w: i32, h: i3
                 other => paint_missing(p, x, y, w, h, alt, *other),
             }
             p.push_hit(x, y, w, h, st.link, st.node);
+        }
+        Obj::Video {
+            uid,
+            audio,
+            controls,
+            poster,
+            ..
+        } => {
+            p.push_cmd(Cmd::Video {
+                x,
+                y,
+                w,
+                h,
+                uid: *uid,
+                controls: *controls,
+                audio: *audio,
+                poster: *poster,
+            });
+            p.push_hit(x, y, w, h, st.link, *uid);
         }
         Obj::Field {
             form, field, kind, ..

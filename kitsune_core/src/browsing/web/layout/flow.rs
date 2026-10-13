@@ -56,12 +56,16 @@ pub(super) fn flow<'a>(
                         ci.display = Disp::Inline;
                         y = inline_element(p, el, &ci, area, y);
                     }
-                    _ if el.tag == "img" => {
+                    _ if el.tag == "img" || el.tag == "video" || el.tag == "audio" => {
                         // A block-level picture sits on a line of its own; auto side margins
                         // centre it.
                         y = flush_inline(p, container, area, y, None);
                         p.pending = p.pending.max(side(c.margin[0], area.w, p.zoom));
-                        image_element(p, el, &c);
+                        if el.tag == "img" {
+                            image_element(p, el, &c);
+                        } else {
+                            video_element(p, el, &c);
+                        }
                         let centred = c.margin[1] == Len::Auto && c.margin[3] == Len::Auto;
                         y = flush_inline(p, container, area, y, centred.then_some(Align::Center));
                         p.pending = p.pending.max(side(c.margin[2], area.w, p.zoom));
@@ -192,6 +196,11 @@ fn inline_element_in<'a>(
             image_element(p, el, c);
             return y;
         }
+        // A replaced element: its children (`<source>`, `<track>`, fallback text) are not shown.
+        "video" | "audio" => {
+            video_element(p, el, c);
+            return y;
+        }
         "input" | "button" | "select" | "textarea" => {
             if collect_control(p, el, c) {
                 return y;
@@ -263,6 +272,95 @@ pub(super) fn image_element(p: &mut Painter, el: &Element, c: &Computed) {
             dh,
             state,
             alt,
+        },
+        st,
+        sp,
+    });
+}
+
+/// What sizes a `<video>`/`<audio>`: its declared size, the picture's own (the player's, else the
+/// poster's) and its kind.
+pub(crate) struct VideoDims {
+    pub dw: i32,
+    pub dh: i32,
+    pub nat: Option<(u32, u32)>,
+    pub audio: bool,
+    pub controls: bool,
+    /// The poster's address (decoded), if any.
+    pub poster: Option<String>,
+}
+
+pub(crate) fn video_dims(p: &Painter, el: &Element, c: &Computed) -> VideoDims {
+    let audio = el.tag == "audio";
+    let controls = el.attrs.contains_key("controls");
+    let poster = if audio {
+        None
+    } else {
+        el.attrs
+            .get("poster")
+            .map(|s| decode_attr(s))
+            .filter(|s| !s.trim().is_empty())
+    };
+    let poster_size = poster
+        .as_deref()
+        .and_then(|src| match p.lookup.lookup(src) {
+            ImgState::Ready { w, h } if w > 0 && h > 0 => Some((w as u32, h as u32)),
+            _ => None,
+        });
+    let nat = p
+        .media_sizes
+        .iter()
+        .find(|e| e.0 == el.uid)
+        .map(|e| (e.1, e.2))
+        .or(poster_size);
+    let dw = match c.width {
+        Len::Px(w) => p.z(w),
+        _ => p.z(attr_px(el, "width")),
+    };
+    let dh = if c.min_height > 0 {
+        p.z(c.min_height)
+    } else {
+        p.z(attr_px(el, "height"))
+    };
+    VideoDims {
+        dw,
+        dh,
+        nat,
+        audio,
+        controls,
+        poster,
+    }
+}
+
+/// A `<video>` or an `<audio controls>`: a box the browser paints with the player's picture and
+/// controls. Its poster is a picture of the page like an `<img>`'s (fetched the same way).
+pub(super) fn video_element(p: &mut Painter, el: &Element, c: &Computed) {
+    let d = video_dims(p, el, c);
+    if p.video_count >= MAX_VIDEOS || (d.audio && !d.controls) {
+        return;
+    }
+    let mut poster = None;
+    if let Some(src) = d.poster
+        && p.images.len() < MAX_IMAGES
+    {
+        poster = Some(p.images.len());
+        p.images.push(ImgRef {
+            src,
+            alt: String::new(),
+        });
+    }
+    p.video_count += 1;
+    let st = p.style(c);
+    let sp = p.space.take();
+    p.items.push(Item::Obj {
+        obj: Obj::Video {
+            uid: el.uid,
+            dw: d.dw,
+            dh: d.dh,
+            nat: d.nat,
+            audio: d.audio,
+            controls: d.controls,
+            poster,
         },
         st,
         sp,

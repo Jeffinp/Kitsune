@@ -88,11 +88,7 @@ fn main() {
         // The message server over an in-memory link, as `mediadec --serve-test` runs it.
         let r = serve::selftest(&data);
         println!("{r:?}");
-        let ok = r.header
-            && r.picture_size == (160, 90)
-            && r.end_pictures == r.pictures
-            && r.errors == 0
-            && r.first_after_seek_ns == 1_000_000_000;
+        let ok = r.ok();
         println!("serve-test: {}", if ok { "PASS" } else { "FAIL" });
         std::process::exit(i32::from(!ok));
     }

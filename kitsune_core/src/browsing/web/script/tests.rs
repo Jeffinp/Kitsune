@@ -243,6 +243,16 @@ fn script_set_without_scripts_is_never_ready() {
 }
 
 #[test]
+fn a_page_with_media_gets_its_process_without_scripts() {
+    let doc = Doc::parse(b"<video src=v.webm controls></video>");
+    let mut s = ScriptSet::default();
+    s.begin(&doc, BASE);
+    assert!(s.is_empty() && s.ready());
+    assert!(s.take().is_empty());
+    assert!(!s.ready(), "handed over once");
+}
+
+#[test]
 fn script_set_bounds_the_bytes() {
     let doc = Doc::parse(b"<script src=a.js></script><script src=b.js></script>");
     let mut s = ScriptSet::default();

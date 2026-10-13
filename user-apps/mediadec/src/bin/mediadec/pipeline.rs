@@ -16,7 +16,11 @@ pub enum Out<'a> {
     /// A picture to show at `ts_ns`.
     Picture { ts_ns: i64, picture: Picture<'a> },
     /// Stereo 48 kHz s16 samples, interleaved, starting at `ts_ns` (may be empty after trimming).
-    Audio { ts_ns: i64, pcm: &'a [i16] },
+    Audio {
+        #[allow(dead_code)] // the file mode times only the pictures
+        ts_ns: i64,
+        pcm: &'a [i16],
+    },
     /// A packet that did not decode (the stream goes on).
     DecodeError { audio: bool, code: i32 },
 }
@@ -57,8 +61,6 @@ pub struct Media {
     vp9: Option<Vp9>,
     audio: Option<Audio>,
     pcm: Vec<i16>,
-    /// After a seek: drop output before this time.
-    drop_before_ns: i64,
 }
 
 impl Default for Media {
@@ -75,7 +77,6 @@ impl Media {
             vp9: None,
             audio: None,
             pcm: vec![0; OPUS_MAX_SAMPLES * 2],
-            drop_before_ns: i64::MIN,
         }
     }
 
@@ -97,25 +98,6 @@ impl Media {
         self.vp9.as_ref().map_or("", |v| v.error())
     }
 
-    /// Prepare to continue from `time_ns`: returns the file offset of the cluster to feed from
-    /// (from the cues), and from then on output before `time_ns` is dropped. `None` without cues.
-    pub fn seek(&mut self, time_ns: u64) -> Option<u64> {
-        let offset = self.demux.cluster_for(time_ns)?;
-        self.restart_at(offset, time_ns.min(i64::MAX as u64) as i64);
-        Some(offset)
-    }
-
-    /// The bytes pushed next start at file offset `offset` (a cluster); output before
-    /// `drop_before_ns` is dropped. The decoders start over.
-    pub fn restart_at(&mut self, offset: u64, drop_before_ns: i64) {
-        self.demux.seek(offset);
-        self.drop_before_ns = drop_before_ns;
-        if let Some(a) = self.audio.as_mut() {
-            a.dec.reset();
-            a.skip = 0;
-        }
-    }
-
     /// The next output; `Ok(None)` when more bytes are needed.
     pub fn poll(&mut self) -> Result<Option<Out<'_>>, Fatal> {
         loop {
@@ -135,9 +117,6 @@ impl Media {
                 let Some(v) = self.vp9.as_mut() else { continue };
                 if let Err(code) = v.decode(&p.data) {
                     return Ok(Some(Out::DecodeError { audio: false, code }));
-                }
-                if p.timestamp_ns < self.drop_before_ns {
-                    continue;
                 }
                 if let Some(picture) = self.vp9.as_ref().and_then(|v| v.picture()) {
                     return Ok(Some(Out::Picture {
@@ -163,9 +142,6 @@ impl Media {
                     0
                 };
                 let end = n.saturating_sub(tail.min(n as u64) as usize).max(head);
-                if p.timestamp_ns < self.drop_before_ns {
-                    continue;
-                }
                 let ts = p
                     .timestamp_ns
                     .saturating_add((head as i64) * 1_000_000_000 / 48_000);

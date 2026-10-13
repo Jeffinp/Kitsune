@@ -127,6 +127,12 @@ fn check_page(p: &Page) {
             Cmd::Rect { x, y, w, h, .. } => assert!(*x >= 0 && *y >= 0 && *w >= 0 && *h >= 0, "rect {x} {y} {w} {h}"),
             Cmd::Border { w, h, .. } => assert!(*w >= 0 && *h >= 0),
             Cmd::Text { x, y, .. } => assert!(*x >= 0 && *y >= 0),
+            Cmd::Video {
+                x, y, w, h, poster, ..
+            } => {
+                assert!(*w >= 1 && *h >= 1 && *x >= 0 && *y >= 0);
+                assert!(poster.is_none_or(|i| i < p.images.len()));
+            }
         }
     }
     for h in &p.hits {

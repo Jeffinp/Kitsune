@@ -477,7 +477,8 @@ pub(super) fn shift_cmd(cmd: &mut Cmd, dy: i32) {
         Cmd::Rect { y, .. }
         | Cmd::Border { y, .. }
         | Cmd::Text { y, .. }
-        | Cmd::Image { y, .. } => {
+        | Cmd::Image { y, .. }
+        | Cmd::Video { y, .. } => {
             *y = y.saturating_add(dy);
         }
     }
