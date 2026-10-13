@@ -615,20 +615,17 @@ eventos (`addEventListener` com `capture`/`once`, `removeEventListener`, `dispat
 `MouseEvent`, `KeyboardEvent`, `preventDefault`, `stopPropagation`, propriedades `onclick` etc. e atributos `on*`),
 `setTimeout`/`setInterval`/`clear*`, `requestAnimationFrame` (~60 por segundo), `queueMicrotask`,
 `requestIdleCallback`, `location` (partes da URL, `hash`, navegação), `navigator` (`userAgent` =
-`Mozilla/5.0 (X11; Kitsune x86_64) Kitsune/<versão>`, `language`), `URL` e `URLSearchParams`, `localStorage` e
-`sessionStorage` em memória, `history` (sem efeito), `matchMedia` (nunca casa), `getComputedStyle` (só o estilo em
-linha), `atob`/`btoa`, `alert`/`confirm`/`prompt` (vão para o log), e `MutationObserver`, `IntersectionObserver` e
-`ResizeObserver` que não observam nada. `console.log` sai no log do sistema como `[jsrun:PID] ...`.
+`Mozilla/5.0 (X11; Kitsune x86_64) Kitsune/<versão>`, `language`), `URL` e `URLSearchParams`, `atob`/`btoa`,
+`alert`/`confirm`/`prompt` (vão para o log). `console.log` sai no log do sistema como `[jsrun:PID] ...`.
 
-A rede (`fetch`, `XMLHttpRequest`, cookies, CORS, `TextEncoder`, `Blob`, `crypto`...) está no §13.
+A rede (`fetch`, `XMLHttpRequest`, cookies, CORS, `TextEncoder`, `Blob`, `crypto`...) está no §13; o teclado, os campos,
+o foco, o mouse, as medidas de layout, os observers, `<template>`, custom elements e shadow DOM, `localStorage`
+persistente, `history.pushState`, `Intl` e o resto que os frameworks usam estão no §14.
 
-**Ainda não**: módulos (`type=module`,
-`import`), Web Workers, canvas, teclado e texto digitado nos campos (o script não vê o que se digita, e `input`/`change`
-não disparam), eventos de mouse além do clique, medidas de layout (`getBoundingClientRect`, `offsetWidth`... são 0),
-estilo computado de verdade, `<link>` e `<img>` acrescentados por script depois do início (as imagens novas são
-buscadas; folhas novas não). Os scripts rodam todos depois do documento inteiro (como `defer`), não no meio do
-parse; `document.write` acrescenta ao fim. O documento volta inteiro a cada mudança: barato em páginas pequenas,
-caro numa SPA grande (cada envio é um parse e um layout). Os scripts só começam na aba ativa.
+**Ainda não**: módulos (`type=module`, `import`), Web Workers, canvas, `<link>` acrescentado por script depois do
+início (as imagens novas são buscadas; folhas novas não). Os scripts rodam todos depois do documento inteiro (como
+`defer`), não no meio do parse; `document.write` acrescenta ao fim. O documento volta inteiro a cada mudança: barato
+em páginas pequenas, caro numa SPA grande (cada envio é um parse e um layout). Os scripts só começam na aba ativa.
 
 ### 12.3 Provas
 
@@ -799,3 +796,124 @@ pausas maiores que os 15 s de ociosidade (o layout da página leva segundos no T
 | Tudo junto no QEMU (BIOS, 256 MiB), página `/net` de `tools/w24-site.py` (rotas em `tools/w24net.py`) | `tools/perf/scen/w55-net-js.sh`: **23/23** verificações do script e 8 do log (cookies guardados e salvos em `~/.cookies`, CORS recusado e pré-voo no log, o escudo contou o `fetch`, conexões reutilizadas), repetido três vezes; `docs/img/browser-net-js.png` |
 | Nada quebrou com o keep-alive no servidor de teste e no navegador | `w52-browser-js.sh` 19/19 e `w53-shields.sh` 21/21 com o mesmo build |
 | Página real (Wikipédia) com cookies e conexões reutilizadas; um pânico do CSS achado e corrigido | `w50-real-site.sh` (§13.6) |
+
+## 14. O DOM para frameworks: entrada, medidas, observers, estrutura, armazenamento e histórico
+
+Resto da etapa 2 do item 11 do [`ROADMAP`](../ROADMAP.md) (aceite: um app pequeno de Preact e um de Vue funcionam de
+verdade) e preparo da etapa 6. O código novo do processo está em arquivos próprios, carregados depois do `dom.js` e do
+`net.js` na ordem de `jsrun.rs` (cada um constrói sobre os anteriores pelo objeto interno `kjs.dom`, que o `dom.js`
+exporta); o `dom.js` só ganhou ganchos: `mutators` (toda mudança da árvore), `hooks.wireAttrs`/`wireKids` (o que a
+cópia do navegador leva de um elemento) e `hooks.created` (classe do elemento, custom elements).
+
+| Arquivo | O quê |
+|---|---|
+| `events.js` | classes de evento (`KeyboardEvent`, `MouseEvent`, `PointerEvent`, `WheelEvent`, `InputEvent`, `FocusEvent`, `SubmitEvent`, `PopStateEvent`...), `addEventListener` com `once`/`passive`/`signal`, o estado dos controles (`value`, `checked`, `selectedIndex`, `defaultValue`, `form.elements`, validação), foco (`focus()`/`blur()`, `activeElement`, `autofocus`), ações padrão de um clique (caixa e rádio, `label`, `summary`, link, envio com `submit`), `form.submit()`/`requestSubmit()`/`reset()` e as mensagens de entrada |
+| `layoutapi.js` | o retrato do layout: `getBoundingClientRect`, `offset*`, `client*`, `scroll*`, `scrollTo`/`scrollBy`/`scrollIntoView`, `innerWidth`/`scrollY`/`devicePixelRatio`, `visualViewport`, `elementFromPoint`, `getComputedStyle`, `matchMedia` (com `change`), `CSS.supports`, `DOMRect` |
+| `observers.js` | `MutationObserver` de verdade, `IntersectionObserver`, `ResizeObserver`, `requestIdleCallback`, `PerformanceObserver` |
+| `structure.js` | classes dos elementos (`HTMLInputElement`...; `instanceof` funciona), `<template>`/`content`, `style` como `CSSStyleDeclaration`, `TreeWalker`/`NodeIterator`, `Range`, `Selection`, `compareDocumentPosition`, `normalize`, `splitText`, custom elements e shadow DOM |
+| `storage.js` | `localStorage` (persistente, por origem) e `sessionStorage` |
+| `history.js` | `history.pushState`/`replaceState`/`back`/`forward`/`go`/`state`/`length`, `popstate`, `hashchange`, `location` (`hash`, `search`, `pathname`... que navegam) |
+| `intl.js` | um `Intl` pequeno (pt-BR e en): `DateTimeFormat`, `NumberFormat`, `PluralRules`, `Collator`, `RelativeTimeFormat`, `ListFormat`, `Segmenter`, e os `toLocale*String`/`localeCompare` |
+| `webapis.js` | `window.open` (nova aba), `postMessage` na mesma janela, `MessageChannel`, `BroadcastChannel` (só a página), `a.pathname` e afins, `href`/`src` absolutos, `navigator` (`clipboard`, `permissions`, `serviceWorker`, `storage`...), e os que recusam sem quebrar: `Notification` (negada), service workers (rejeitados), `WebSocket` (falha como servidor inalcançável) |
+
+### 14.1 Entrada: quem manda nos controles
+
+O navegador continua desenhando e editando os campos (cursor, texto, caixa marcada) sem esperar o processo: digitar
+não fica preso à velocidade do JavaScript. A página recebe cada tecla **com o texto do campo depois dela** e o estado
+dos controles passa a viver no processo (`value`, `checked`, `selectedIndex`); a cópia do documento que volta ao
+navegador leva esse estado (o `value` atual no atributo `value`, `checked`, a `<option>` escolhida, o texto do
+`<textarea>`), e o navegador refaz o seu `FormState` a partir dela a cada documento (`script::relayout_js`): o que um
+script atribui (`input.value = ''` depois do Enter) aparece na tela, e o foco e o cursor ficam no mesmo controle
+(identificado pelo `uid` do elemento, `FieldInfo::uid`).
+
+A corrida entre o que se digita e o documento que o processo manda é resolvida com uma numeração: toda entrada
+enviada leva `n`; o processo responde `Q<n>` antes do documento que já reflete as entradas até `n`. Se chega um
+documento de um processo que ainda não viu todas as teclas (`Inputs::settled` falso), o campo focado mantém o texto
+do navegador (o próximo documento o trará). Sem isso, digitar rápido perdia letras.
+
+| Mensagem | Quando | Na página |
+|---|---|---|
+| `key` (`k`, `c`, `kc`, `m`, `uid`, `v`) | cada tecla num campo focado; na página sem campo focado só se ela escuta teclas (`W key`) | `keydown`, `keypress`, `input` (com `inputType`), `keyup`; `change` no Enter ou ao sair do campo; `preventDefault` no `keydown` desfaz a mudança |
+| `key` com `seq` | Enter num campo de um `<form>` de verdade | `submit` (cancelável); o envio espera o veredito `A seq 0/1` como o clique (§12.1). Controles fora de formulário nunca são enviados |
+| `focus` (`uid`) | o foco do navegador mudou (clique, Tab, Esc) | `blur`/`focusout`, `focus`/`focusin`, `activeElement` |
+| `G<uid>` (da página) | `el.focus()` / `blur()` num controle | o navegador põe o cursor lá |
+| `field` (`ck`, `si`, `v`) | um clique avançou um `<select>`, o Espaço marcou uma caixa | `input`/`change` (a caixa vira o `click` que representa) |
+| `click` (`uid`, `x`, `y`, `cx`, `cy`, `seq`) | clique | `pointerdown`, `mousedown`, foco, `pointerup`, `mouseup`, `click` com as ações padrão: caixa/rádio (desfeita se `preventDefault`), `label` → controle, `summary` → `details`, link `#fragmento` da própria página (entrada do histórico, sem recarregar), botão de envio → `submit` |
+| `mouse` (`move`, `dbl`, `ctx`, `wheel`) | `move` só se a página escuta movimento (`W move`), no máximo um por quadro; os outros só se escuta (`dblclick`, `contextmenu`, `wheel`) | `mousemove`/`pointermove`, `mouseover`/`out`/`enter`/`leave` calculados no processo |
+| `W<tipos>` (da página) | um `addEventListener`/`onX`/atributo `onX` de um tipo pedido sob demanda (`move`, `key`, `wheel`, `scroll`, `ctx`, `dbl`) | a lista cresce, nunca diminui |
+| `vis` | a aba aparece ou some | `visibilitychange`, `document.hidden`, `pageshow`/`pagehide` |
+
+O `contextmenu` não impede o menu do navegador e a roda não é cancelável (o navegador já rolou).
+
+### 14.2 Medidas: o retrato do layout
+
+O layout já registra a caixa de cada elemento quando a página tem scripts (`Doc::set_track`); agora registra também
+um resumo do estilo calculado de cada elemento (`Page::styles`, `StyleRec`: `display`, cor, fundo, tamanho e peso da
+fonte, posição, margens, enchimentos, bordas). **Decisão: o retrato vai ao processo depois de cada layout**, numa
+mensagem binária só (`script::boxes_message`, dado de rede com id 0): 52 bytes por elemento (uid, a união das caixas
+do elemento em px CSS, coordenadas da página, e o estilo), mais a viewport e a rolagem. Pedir sob demanda exigiria uma
+ida e volta síncrona ao compositor por medida (um quadro cada) e os frameworks medem em laços; o custo de mandar
+sempre é pequeno perto do próprio layout (uma página de 2000 elementos: ~100 KiB por layout). O processo lê tudo
+sincronamente desse retrato. **Limite**: um elemento criado depois do último layout tem caixa zero até o layout do
+documento que o contém (no mesmo quadro na prática: o processo manda o documento, o navegador faz o layout e manda o
+retrato); `getComputedStyle` cobre as propriedades de caixa e cor mais usadas (o resto vem do estilo em linha ou de
+valores iniciais), sem pseudoelementos. `view` leva a rolagem e o tamanho quando mudam sem layout (a cada quadro de
+rolagem se a página escuta `scroll` ou tem um `IntersectionObserver`, senão quando a rolagem para) e dispara `scroll`
+e `resize`. `scrollTo`/`scrollIntoView` mandam `S<x> <y>` e o navegador rola.
+
+Os observers seguem o retrato: `ResizeObserver` compara o tamanho do conteúdo de cada alvo depois de cada retrato,
+`IntersectionObserver` calcula a interseção com a viewport (ou o `root`), com `rootMargin` e `threshold`, depois de
+cada retrato e cada rolagem; ambos entregam numa tarefa. `MutationObserver` usa o gancho `mutators` do `dom.js`
+(`childList`, `attributes` com `attributeFilter`/`oldValue`, `characterData`, `subtree`) e entrega num microtask.
+
+### 14.3 Estrutura, custom elements e shadow DOM
+
+`<template>` guarda o conteúdo num `DocumentFragment` (`content`); `innerHTML` do template escreve nele. Os elementos
+ganham a classe certa (`HTMLInputElement`, `HTMLButtonElement`...), menos `<video>`, `<audio>`, `<source>` e `<track>`
+(do código de mídia). `customElements.define/get/whenDefined/upgrade/getName`: elementos já no documento são
+atualizados na definição, `connectedCallback`/`disconnectedCallback`/`attributeChangedCallback` (com
+`observedAttributes`) rodam nas mudanças da árvore. `attachShadow({mode})` cria um `ShadowRoot`; os eventos de dentro
+chegam ao host e acima (sem retarget: quem escuta fora vê o alvo de dentro), `getRootNode`, `isConnected`,
+`assignedSlot`, `slot.assignedNodes()`. **O navegador desenha a árvore sombra no lugar dos filhos do host** (gancho
+`wireKids`), com cada `<slot>` trocado pelos filhos do host atribuídos a ele (por `slot="nome"`) ou pelo seu conteúdo
+padrão; um `<style>` dentro da sombra vale para a página toda (sem escopo, sem `:host`, sem `::slotted`, sem
+`adoptedStyleSheets`, que não anunciamos para que bibliotecas como o Lit usem `<style>`). `<iframe>` não tem layout
+aninhado: o elemento existe no DOM, sem documento dentro.
+
+### 14.4 `localStorage` e histórico
+
+`localStorage` fica no navegador por origem (`kitsune_core::web::script::WebStorage`), no arquivo `~/.webstorage`
+(uma linha por item, `origem TAB chave TAB valor`, com escapes), lido ao abrir a janela do navegador e escrito no
+máximo a cada 3 s depois de uma mudança (`webstorage: saved` no log). A página recebe os itens da sua origem logo
+depois do `init` (`store`) e manda cada mudança (`L` + `["set", k, v]`, `["del", k]`, `["clear"]`). Cotas: 512 Ki
+unidades UTF-16 por origem no processo (`QuotaExceededError`), 1 MiB por origem e 4 MiB no todo no navegador, 64
+origens (a menos usada sai). `sessionStorage` vive com o processo (uma recarga começa vazia). O evento `storage` entre
+abas não existe ainda.
+
+`history.pushState`/`replaceState` mandam `H push|replace <url>`; o navegador aceita só a mesma origem
+(`Browser::push_state`), troca o endereço da barra (a menos que a pessoa esteja editando) e grava a entrada com o
+número do documento da entrada atual (`History::docs`). Voltar ou avançar para uma entrada do mesmo documento não
+carrega nada: o navegador manda `pop` (`url`, índice) e a página dispara `popstate` (e `hashchange` se só o fragmento
+mudou). Uma recarga, ou chegar a uma entrada de outro documento, é um documento novo. `location.hash = ...` e um
+clique num link `#fragmento` da própria página viram entradas do mesmo documento (com `hashchange` e a rolagem até o
+alvo) em vez de recarregar a página: é o roteamento de muitos apps (o TodoMVC). `history.go(n)` manda `B<n>`.
+`beforeunload` nunca dispara (o navegador não pergunta antes de sair).
+
+### 14.5 Limites
+
+Sem `Worker` (o construtor não existe: as páginas testam e seguem sem), `WebSocket` só recusa, `Notification` e
+service workers recusam, `navigator.clipboard` recusa (a área de transferência do sistema não é dada à página),
+`BroadcastChannel` e `postMessage` só dentro da página. `Intl` cobre pt-BR e inglês; fusos: UTC e os fixos do Brasil.
+Sem `contenteditable` editável, sem seleção de texto da página visível ao script (`getSelection` é um objeto que o
+script pode preencher), sem `:hover`/`:focus` nos seletores do script. O documento continua indo inteiro ao
+navegador a cada lote de mudanças (§12.2).
+
+### 14.6 Provas
+
+| O quê | Evidência |
+|---|---|
+| Mensagens de entrada, `Subs`, `Inputs`/`Q`, `view`, o retrato do layout (caixa e estilo por elemento, `display:none`), `WebStorage` (cotas, arquivo, origens), o parser das operações `L` (escapes, surrogates, entrada hostil), `FieldInfo::uid`/`field_by_uid`, `FormState::set_text` | `kitsune_core` `web::script::tests_input` (8 testes) |
+| Histórico do mesmo documento: `push_state`, `replace`, `go`, `take_pop`, outra origem recusada, recarga é documento novo | `browser::ui_tests::same_document` (4 testes) |
+| Nomes de atributo dos templates (`@click`, `:class`, `v-model.trim`) | `web::dom::html_tests` |
+| O DOM inteiro em JavaScript no hospedeiro, com o navegador simulado (inclusive com a árvore do parser do navegador: `KITSUNE_INIT=script_init`): 34 verificações de API (MutationObserver, template, classes, formulários, valores no documento, custom elements com slots, shadow DOM, retrato, `getComputedStyle`, `matchMedia`, observers, `once`/`signal`, mouse, teclas, `localStorage`, `pushState`, `Intl`, `Range`, `TreeWalker`, `postMessage`, `window.open`), o TodoMVC de Preact + htm (24) e o app Vue 3 (15) | `node tools/js-dom-check.js user-apps/jsrun/src/bin/jsrun tools/site-assets` |
+| Preact e Vue no QEMU (BIOS, 256 MiB, TCG), digitando e clicando pelo monitor | `tools/perf/scen/w59-spa.sh` com as páginas `/preact` e `/vue` de `tools/w24-site.py` (ver abaixo) |

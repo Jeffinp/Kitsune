@@ -20,7 +20,7 @@ wait_for() { # wait_for PATTERN SECONDS
 wait_first_frame
 dock_icon browser; click; sleep 3
 key ctrl-l; sleep 0.3
-typestr "http://203.0.113.5:8079/js"
+typestr "http://203.0.113.5:${PORT:-8079}/js"
 key ret
 wait_for "jsrun: page ready" 120
 sleep 1
@@ -62,9 +62,9 @@ flush_snaps
   ok=1
   need() { if grep -aq -- "$1" "$OUT/js-out.txt"; then echo "PASS $2"; else echo "MISS $2"; ok=0; fi; }
   needlog() { if grep -aq -- "$1" "$OUT/serial.log"; then echo "PASS $2"; else echo "MISS $2"; ok=0; fi; }
-  needlog "js: http://203.0.113.5:8079/js/app.js -> " "external script fetched"
+  needlog "js: http://203.0.113.5:${PORT:-8079}/js/app.js -> " "external script fetched"
   needlog "browser: 2 script(s) handed to pid" "script process started"
-  need "^js: app.js start, ua=Mozilla/5.0 host=203.0.113.5:8079 path=/js" "location and navigator"
+  need "^js: app.js start, ua=Mozilla/5.0 host=203.0.113.5:${PORT:-8079} path=/js" "location and navigator"
   need "^js: inline sees app = object readyState loading" "scripts run in order"
   need "^js: DOMContentLoaded, items before: 0" "DOMContentLoaded"
   need "^js: list has 4 items; matches true closest list" "createElement, appendChild, innerHTML, selectors"

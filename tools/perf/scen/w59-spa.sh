@@ -10,6 +10,7 @@
 #   tools/w24-site.py 8279 &
 #   PORT=8279 QEMU_MEM=256M QEMU_NETDEV="user,id=n0,net=203.0.113.0/24,host=203.0.113.5,dhcpstart=203.0.113.15,dns=203.0.113.3" \
 #     tools/perf/run.sh <img> bios <out> 900 tools/perf/scen/w59-spa.sh
+# The pages must fit the browser window as it opens (BIOS, 1280x720): the scenario does not scroll.
 source "$(dirname "$0")/../lib.sh"
 PORT=${PORT:-8079}
 SITE="http://203.0.113.5:$PORT"
@@ -44,7 +45,8 @@ open_url() { key ctrl-l; sleep 0.4; typestr "$1"; key ret; }
 wait_first_frame
 dock_icon browser; click; sleep 3
 
-# ---- Preact + htm TodoMVC ----
+# ---- Preact + htm TodoMVC ---- (ONLY=preact or ONLY=vue runs one part; the verdict then misses the other)
+if [ "${ONLY:-}" != vue ]; then
 open_url "$SITE/preact"
 wait_for "todo: at input=" 180
 sleep 2
@@ -81,8 +83,10 @@ key ctrl-r
 wait_more "todo: n=2 left=1" 1 120
 sleep 2
 shot e-preact-reloaded
+fi
 
 # ---- Vue 3 ----
+if [ "${ONLY:-}" != preact ]; then
 open_url "$SITE/vue"
 wait_for "vue: at inc=" 240
 sleep 2
@@ -113,6 +117,7 @@ typestr "oi"; key ret
 wait_for 'vue: sent .*sent="oi"' 60
 sleep 3
 shot g-vue-done
+fi
 flush_snaps
 
 {
