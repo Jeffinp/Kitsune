@@ -72,13 +72,16 @@ impl MediaPlayer {
             .and_then(|s| Some(busy.get(s)?.saturating_sub(*m.busy.get(s)?)))
             .unwrap_or(0);
         let compositor = busy[0].saturating_sub(m.busy[0]);
+        let page = crate::userproc::slot_of(self.js)
+            .and_then(|s| Some(busy.get(s)?.saturating_sub(*m.busy.get(s)?)))
+            .unwrap_or(0);
         let shown = self.player.presented.saturating_sub(m.presented);
         let dropped = self.player.dropped.saturating_sub(m.dropped);
         let media_ms = (self.player.position() - m.position).max(0) / 1_000_000;
         crate::klog!(
             Info,
             "media: element {} played {} ms of media in {} ms ({}): {} pictures shown ({} fps), {} dropped; \
-             CPU decoder {}%, compositor {}%, all {}%; clock {} ({})",
+             CPU decoder {}%, compositor {}%, page {}%, all {}%; clock {} ({})",
             self.uid,
             media_ms,
             ms,
@@ -88,6 +91,7 @@ impl MediaPlayer {
             dropped,
             decoder * 100 / ticks,
             compositor * 100 / ticks,
+            page * 100 / ticks,
             total * 100 / ticks,
             if self.player.audio_clock() {
                 "sound"

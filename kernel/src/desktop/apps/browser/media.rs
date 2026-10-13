@@ -59,6 +59,8 @@ pub(crate) struct MediaPlayer {
     pub uid: u32,
     /// The decoder process.
     pub pid: u32,
+    /// The page's script process (for the log's CPU figures).
+    js: u32,
     pub player: Player<Vec<u8>>,
     /// The mixer stream (owner: the decoder's pid).
     stream: Option<u32>,
@@ -290,6 +292,7 @@ impl MediaSet {
         let mut p = MediaPlayer {
             uid,
             pid,
+            js,
             player: Player::new(FLOW, audio_out),
             stream: None,
             size: (0, 0),

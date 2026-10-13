@@ -100,8 +100,10 @@ pub static INPUT_TSC: AtomicU64 = AtomicU64::new(0);
 pub static PRIM_CYC: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
 pub static PRIM_N: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
 /// Per-thread CPU cycles (credited at each context switch) and the TSC at
-/// which the running thread was switched in. See [`cpu_now`].
-pub static THREAD_CYC: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
+/// which the running thread was switched in. See [`cpu_now`]. One per scheduler slot (a page with
+/// a video has the browser's script process, a worker or two and the decoders: more than 8).
+pub static THREAD_CYC: [AtomicU64; kitsune_core::sysmon::MAX_THREADS] =
+    [const { AtomicU64::new(0) }; kitsune_core::sysmon::MAX_THREADS];
 pub static SLICE_START: AtomicU64 = AtomicU64::new(0);
 /// Framebuffer upload accounting: bytes written to VRAM and how many of them
 /// differed from what was already there.
