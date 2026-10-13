@@ -8,6 +8,7 @@ the dependency rules of the core.
 
 ```
 user-apps/                   ring 3 programs (detached workspaces): abi (shared contract, no deps) | sdk | demo | wasmhost
+                             kterm | jsrun (QuickJS) | mediadec (WebM: libvpx VP9, libopus)
 kitsune_core/src/            pure no_std logic, host-tested (forbid(unsafe_code))
   ui/         drawing and visual identity: gfx raster | ttf glyph fontcache textlayout | iconart appart
               brand pointer cursor | anim | style | widgets chrome layout | wallpaper
@@ -16,6 +17,7 @@ kitsune_core/src/            pure no_std logic, host-tested (forbid(unsafe_code)
   network/    net dns icmp sntp lease netstats | x509 tlsverify
   browsing/   web (HTML/CSS/layout engine) | browser (model: tabs, history, errors) | redirect | shields (ad blocker)
   format/     base64 | inflate deflate gzip zip | png bmp ppm gif jpeg image | elf | text | unixtime | search
+              webm (Matroska demuxer) | md5
   platform/   appabi wasmsec | appmanifest appinstall | appfs | appnet      (the WASM app platform)
   system/     klog sysmon sysif | notify | process schedule paging heap | entropy rng | settings
               input keymap clipboard
@@ -67,6 +69,7 @@ Files split this way, with their children:
 | `browsing/browser/addressbar` | `request`, `state`, `keys`, `navigation`, `internal`, `bookmarks`, `bar` |
 | `browsing/web/{layout,style,css,dom}`, `format/svg` | see their folders |
 | `format/jpeg` | `headers`, `scan`, `output` (+ `huffman`, `idct`, `progressive`) |
+| `format/webm` | `ebml` (numbers and element headers), `ids`, `header` (Info, Tracks, Cues, OpusHead), `demux` (the incremental machine) |
 | `ui/raster` | `color`, `corners`, `resample`, `shadow` |
 | `ui/brand` | `head`, `halo`, `hints`, `render`, `svg` |
 | `ui/anim` | `bezier`, `spring`, `transition`, `zoom`, `caret` |

@@ -132,6 +132,7 @@ Alvos em `fuzz/fuzz_targets/` (crate independente, fora do workspace):
 | `userabi` | caminhos de programas ring 3 (`resolve`), blobs de argumentos (`pack_args`/`unpack_args`) arbitrários | `kitsune-userabi`: caminho normalizado, absoluto, idempotente, sem `.`/`..`; nada além do blob; ida e volta dos argumentos |
 | `archive_text` | bytes como arquivo ZIP (listar e extrair com teto), nomes de entrada e conteúdo reescritos por `ZipWriter` e relidos, e bytes como texto em qualquer codificação | `format::zip`, `format::text`: nunca pânico, nada extraído passa do teto, nomes seguros nunca saem da pasta, o que escrevemos lemos igual, Windows-1252 volta idêntico |
 | `entropy_api` | sequência de operações (`add` com id e crédito declarado quaisquer, timestamps, `fill` de qualquer tamanho, reseed, relógio) | `kitsune_core::entropy`: nunca pânico; crédito por fonte <= 8 bits por byte e nunca decrescente; nota nunca decrescente e timing sozinho nunca Strong; crédito na chave <= 256 por classe; nenhuma saída de 32 bytes se repete |
+| `webm_demux` | `[modo, pedaço, busca, ...bytes]`: os bytes crus, ou dentro de um segmento de tamanho desconhecido (com ou sem uma lista de trilhas válida VP9 + Opus), empurrados em pedaços de 1 a 256 bytes, com uma busca (`seek`) no meio | `kitsune_core::webm`: nunca pânico; um pedaço só e pedaços pequenos dão os mesmos eventos até o primeiro erro; pacote até `MAX_BLOCK`, trilhas até `MAX_TRACKS`, cues até `MAX_CUES` e em ordem |
 | `app_sandbox` | sequência de operações com caminhos em bytes crus sobre dois apps que dividem um `MemFs` **ou** um `VolumeFs` sobre um OJFS v3 de 1 MiB em RAM (o primeiro bool escolhe; mais URLs) | `appfs` (normalização, `Sandbox`, `VolumeFs`, cota, descritores) e `appnet`: nada existe fora de `/data/<id>`, os arquivos do sistema e do usuário ficam intactos, a cota vale, `fsck` limpo, URL aceita nunca é local |
 
 ```bash
@@ -155,6 +156,7 @@ cargo fuzz run i18n_format -- -max_total_time=600 -print_final_stats=1
 cargo fuzz run entropy_api -- -max_total_time=600 -print_final_stats=1
 cargo fuzz run compositor_ops -- -max_total_time=300 -print_final_stats=1
 cargo fuzz run html_img_form -- -max_total_time=600 -print_final_stats=1
+cargo fuzz run webm_demux -- -max_total_time=600 -print_final_stats=1
 ```
 
 O perfil de release do `fuzz/` liga `overflow-checks` e `debug-assertions`: um
@@ -592,6 +594,26 @@ variável de ambiente). Projeto e limites: [`design/tls-browser.md`](design/tls-
 mostra os quadros por segundo e a linha `cpu samples` de cada segundo do serial deve ficar em `idle=250` com a página
 parada (nenhuma thread ocupada). Para sites reais: `w50-real-site.sh` com `SITES`, `CONTINUE=1` e a mesma leitura.
 Projeto: [`design/tls-browser.md`](design/tls-browser.md) §11b.
+
+### Mídia: WebM, VP9 e Opus (W57)
+
+Projeto em [`design/midia.md`](design/midia.md). Três camadas:
+
+1. **Demuxer** (`kitsune_core::webm`): `cargo test -p kitsune_core webm` (pacotes idênticos ao `ffprobe` do arquivo
+   `testdata/small.webm`, qualquer fatiamento, busca por cue, tamanhos desconhecidos, entradas hostis) e o alvo de
+   fuzz `webm_demux`.
+2. **Decodificadores no hospedeiro**: `tools/media/gen-test-media.sh M` gera, com o `ffmpeg` do hospedeiro, os
+   arquivos (320x180, 640x360 e 1280x720, VP9 + Opus, 3 s) e as referências (`framemd5` do libvpx, PCM do ffmpeg, RGBA
+   do primeiro quadro); `tools/media/check-host.sh M` compila o **mesmo C e o mesmo pipeline** do `mediadec` com o
+   clang do hospedeiro (`tools/media/mediacheck`) e confere: MD5 de cada quadro idêntico, PCM com a mesma contagem de
+   amostras e SNR > 40 dB, cor a no máximo 1 nível da fórmula exata, o servidor de mensagens em memória
+   (`--serve-test`) e um arquivo corrompido sem queda. Deixa em `M/*.pcm.md5` o MD5 do PCM do hospedeiro.
+3. **No QEMU**: `MEDIA=M QEMU_MEM=256M bash tools/perf/run.sh IMG bios OUT 1500 tools/perf/scen/w57-mediadec.sh`. O
+   cenário serve `M` por HTTP (porta 8857), baixa os arquivos com `wget` no Terminal, roda `run mediadec X.webm --md5` e
+   compara cada MD5 de quadro com o `framemd5` e o MD5 do áudio com o do hospedeiro (o Opus em ponto fixo é inteiro: os
+   bytes são os mesmos), depois `--serve-test`, um arquivo cortado e um corrompido (terminam sozinhos, o sistema segue),
+   `--info`, `--rgb 1280x720` e `--show` (captura `d-show.png`). Veredito em `OUT/verdict.txt`, com os fps de cada
+   tamanho.
 
 ### Compositor (W27): teste diferencial, oráculo no QEMU e custo de quadro
 
