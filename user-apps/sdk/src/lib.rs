@@ -153,6 +153,34 @@ pub fn brk(end: u64) -> u64 {
 /// Where the heap begins.
 pub const HEAP_BASE: u64 = 0x1000_0000;
 
+/// The next message from the browser, for a page's script process ([`abi::SYS_PAGE_RECV`]): waits up
+/// to `timeout_ms` (`u64::MAX`: no limit). Returns its length in `buf`, `0` when none came, or `-errno`.
+pub fn page_recv(buf: &mut [u8], timeout_ms: u64) -> i64 {
+    // SAFETY: the pointer and length describe `buf`, which the kernel may write.
+    unsafe {
+        syscall3(
+            abi::SYS_PAGE_RECV,
+            buf.as_mut_ptr() as u64,
+            buf.len() as u64,
+            timeout_ms,
+        )
+    }
+}
+
+/// Send a message to the browser ([`abi::SYS_PAGE_SEND`]). Returns `0`, or `-errno` (`EAGAIN`: the
+/// browser has not taken the earlier ones yet).
+pub fn page_send(data: &[u8]) -> i64 {
+    // SAFETY: the pointer and length describe `data`.
+    unsafe {
+        syscall3(
+            abi::SYS_PAGE_SEND,
+            data.as_ptr() as u64,
+            data.len() as u64,
+            0,
+        )
+    }
+}
+
 /// `fmt::Write` over `write(1, ...)`.
 pub struct Stdout;
 

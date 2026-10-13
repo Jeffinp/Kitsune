@@ -104,6 +104,7 @@ pub extern "C" fn syscall_entry(rsp: u64) -> u64 {
         abi::SYS_OPEN..=abi::SYS_GETARGS => file_call(r, rsp, slot),
         abi::SYS_WIN_OPEN..=abi::SYS_WIN_TITLE => file_call(r, rsp, slot),
         abi::SYS_SPAWN..=abi::SYS_PROC_KILL => file_call(r, rsp, slot),
+        abi::SYS_PAGE_RECV..=abi::SYS_PAGE_SEND => page_call(r, rsp, slot),
         _ => {
             r.rax = ENOSYS as u64;
             rsp

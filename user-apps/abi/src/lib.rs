@@ -2,7 +2,7 @@
 //!
 //! Numbers 0–6 (exit, write, yield, getpid, sleep, uptime, brk) and 16–21 (the WebAssembly host,
 //! `kitsune_core::appabi::remote`) are documented where they are served; this crate owns 32–42 (files
-//! and arguments), 48–51 (a window) and 52–54 (child processes).
+//! and arguments), 48–51 (a window), 52–54 (child processes) and 56–57 (the browser's script process).
 //! A call is `rax` = number, `rdi`, `rsi`, `rdx`, `r10`, `r8` = arguments, result in `rax`
 //! (negative = `-errno`, see [`errno`]). Pointers are user addresses; the kernel copies through the
 //! process's page tables and never trusts them.
@@ -42,6 +42,17 @@ pub const SYS_SPAWN: u64 = 52;
 pub const SYS_PROC_POLL: u64 = 53;
 /// `proc_kill(pid)`: stop a child.
 pub const SYS_PROC_KILL: u64 = 54;
+
+/// `page_recv(ptr, cap, timeout_ms)`: the next message from the browser to the page's script process
+/// (only the process the browser started for a page has this link). Returns its length, `0` when none
+/// came within the timeout (`0` only looks, `u64::MAX` waits without limit) and `E2BIG` (the message is
+/// dropped) when it does not fit in `cap`.
+pub const SYS_PAGE_RECV: u64 = 56;
+/// `page_send(ptr, len)`: a message from the script process to the browser; `EAGAIN` when the browser
+/// has not taken the earlier ones yet (try again a little later).
+pub const SYS_PAGE_SEND: u64 = 57;
+/// Largest page message either way, in bytes.
+pub const MAX_PAGE_MSG: usize = 4 * 1024 * 1024;
 
 /// Largest window content, in pixels (the biggest the desktop shows).
 pub const WIN_MAX_W: u32 = 1280;
@@ -123,6 +134,7 @@ pub const MAX_ARGS: usize = 4096;
 /// Negative results.
 pub mod errno {
     pub const ESRCH: i64 = -3;
+    pub const E2BIG: i64 = -7;
     pub const EIO: i64 = -5;
     pub const ENOEXEC: i64 = -8;
     pub const EAGAIN: i64 = -11;
