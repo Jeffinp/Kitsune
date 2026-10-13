@@ -111,6 +111,7 @@ pub fn report(khz: u64, ticks: u64) {
         );
     }
     let isr_n = take(&ISR_N);
+    super::pcs::report_pcs();
     let idle = take(&TICK_IDLE);
     let busy = take(&TICK_BUSY);
     crate::serial_println!(

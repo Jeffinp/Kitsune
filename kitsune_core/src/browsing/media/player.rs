@@ -162,6 +162,16 @@ impl<F> Player<F> {
         self.shown.as_ref().map(|q| q.pts)
     }
 
+    /// Pictures shown and pictures dropped (late here, or decoded too late to be sent at all).
+    pub fn quality(&self) -> (u32, u32) {
+        (self.presented, self.dropped)
+    }
+
+    /// The decoder dropped `n` pictures that were too late to send.
+    pub fn decoder_dropped(&mut self, n: u32) {
+        self.dropped = self.dropped.saturating_add(n);
+    }
+
     pub fn queued_frames(&self) -> usize {
         self.frames.len()
     }

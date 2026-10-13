@@ -9,6 +9,9 @@ const AUDIO_LEAD_NS: i64 = 1_500_000_000;
 const LATE_NS: i64 = 40_000_000;
 /// ...unless no picture went for this long (a decoder slower than the video still shows some).
 const LATE_EVERY_MS: u64 = 200;
+/// A next picture this far behind the player's clock: decoding jumps to the last keyframe already
+/// due, if there is one (the pictures in between would only be decoded to be dropped).
+const SKIP_LAG_NS: i64 = 1_000_000_000;
 
 impl Server {
     /// The next video frame to decode (its index and time), if the budget allows it.
@@ -64,11 +67,14 @@ impl Server {
         if !self.pending.is_empty() {
             return;
         }
+        self.catch_up(now_ms);
         match (self.next_video(), self.next_audio()) {
             (Some((i, vt)), Some((j, at))) => {
-                // The sound first, up to a lead over the pictures: it is cheap and it is the
-                // player's clock (a slow picture is dropped, a missing sound stops everything).
-                if at <= vt.saturating_add(AUDIO_LEAD_NS) {
+                // The sound first, up to a lead over the pictures (or over the clock, when the
+                // pictures are behind it): it is cheap and it is the player's clock (a slow picture
+                // is dropped, a missing sound stops everything).
+                let lead_from = self.clock_now(now_ms).map_or(vt, |c| vt.max(c));
+                if at <= lead_from.saturating_add(AUDIO_LEAD_NS) {
                     self.decode_audio(j)
                 } else {
                     self.decode_video(i, now_ms)
@@ -93,6 +99,35 @@ impl Server {
         }
     }
 
+    /// The pictures fell far behind the clock: go on from the last keyframe already due (the
+    /// skipped pictures count as dropped).
+    fn catch_up(&mut self, now_ms: u64) {
+        let Some(clock) = self.clock_now(now_ms) else {
+            return;
+        };
+        let Server {
+            sources,
+            video,
+            late,
+            ..
+        } = self;
+        let Some(v) = video.as_mut() else { return };
+        let Some((_, buf)) = sources.get(v.src).and_then(|s| s.video.as_ref()) else {
+            return;
+        };
+        let Some(i) = buf.next(&v.cursor) else { return };
+        let Some(f) = buf.get(i) else { return };
+        if f.pts + f.dur >= clock - SKIP_LAG_NS {
+            return;
+        }
+        if let Some((k, skipped)) = buf.key_after(i, clock)
+            && let Some(key) = buf.get(k)
+        {
+            v.cursor = Cursor::seek(key.pts);
+            *late = late.saturating_add(skipped as u32);
+        }
+    }
+
     /// The player's clock now, if it runs.
     fn clock_now(&self, now_ms: u64) -> Option<i64> {
         let (t, running, at) = self.clock;
@@ -108,6 +143,7 @@ impl Server {
             target,
             bgr,
             late,
+            late_sent,
             last_frame_ms,
             ..
         } = self;
@@ -146,7 +182,9 @@ impl Server {
         let head_words = proto::FRAME_HEAD / 4;
         let mut words = vec![0u32; head_words + (w * h) as usize];
         let mut head = Vec::with_capacity(proto::FRAME_HEAD);
-        proto::frame_head(&mut head, pts, w, h, *bgr);
+        let skipped = late.saturating_sub(*late_sent).min(u32::from(u16::MAX));
+        *late_sent = *late_sent + skipped;
+        proto::frame_head(&mut head, pts, w, h, *bgr, skipped as u16);
         for (k, c) in head.chunks_exact(4).enumerate() {
             words[k] = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
         }

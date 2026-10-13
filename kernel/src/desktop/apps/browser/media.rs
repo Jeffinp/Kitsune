@@ -422,7 +422,13 @@ impl MediaSet {
             let events = p.player.take_events();
             p.note(&events);
             if !events.is_empty() {
-                let m = wire::state_message(p.uid, p.player.state(), p.player.position(), &events);
+                let m = wire::state_message(
+                    p.uid,
+                    p.player.state(),
+                    p.player.position(),
+                    &events,
+                    p.player.quality(),
+                );
                 crate::userproc::page_post(js, m);
             }
         }
@@ -467,7 +473,8 @@ fn take(
                 return d.set_media_size(p.uid, h.width, h.height);
             }
         }
-        Out::Frame { pts, .. } => {
+        Out::Frame { pts, skipped, .. } => {
+            p.player.decoder_dropped(u32::from(skipped));
             p.player.frame(pts, len, m);
         }
         Out::Audio { pts, bytes, .. } => {

@@ -91,13 +91,14 @@ fn state_and_buffered_messages() {
         src: 0,
     });
     let ev = p.take_events();
-    let m = String::from_utf8(state_message(5, p.state(), 1234, &ev)).unwrap();
+    let m = String::from_utf8(state_message(5, p.state(), 1234, &ev, (7, 2))).unwrap();
     assert!(
         m.starts_with("{\"t\":\"media\",\"id\":5,\"ev\":[\"durationchange\",\"loadedmetadata\"]"),
         "{m}"
     );
     assert!(m.contains("\"ct\":1234") && m.contains("\"w\":640") && m.contains("\"d\":3000000000"));
     assert!(m.contains("\"p\":1") && m.contains("\"rs\":1"));
+    assert!(m.ends_with(",\"fs\":7,\"fd\":2}"), "{m}");
     let b = String::from_utf8(buffered_message(5, 1, 3, 0, &[(0, 10), (20, 30)])).unwrap();
     assert_eq!(
         b,
@@ -128,7 +129,7 @@ fn decoder_messages_round_trip_and_hostile_ones_are_refused() {
     };
     assert_eq!(parse_out(&proto::header(&h)), Some(Out::Header(h)));
     let mut f = vec![];
-    proto::frame_head(&mut f, -7, 2, 1, true);
+    proto::frame_head(&mut f, -7, 2, 1, true, 3);
     f.extend_from_slice(&[1, 2, 3, 255, 4, 5, 6, 255]);
     assert_eq!(
         parse_out(&f),
@@ -137,13 +138,14 @@ fn decoder_messages_round_trip_and_hostile_ones_are_refused() {
             w: 2,
             h: 1,
             bgr: true,
+            skipped: 3,
             rgba: &[1, 2, 3, 255, 4, 5, 6, 255]
         })
     );
     // Pixels missing, or a size beyond the limits.
     assert_eq!(parse_out(&f[..f.len() - 1]), None);
     let mut big = vec![];
-    proto::frame_head(&mut big, 0, 5000, 1, false);
+    proto::frame_head(&mut big, 0, 5000, 1, false, 0);
     assert_eq!(parse_out(&big), None);
     let mut a = vec![];
     proto::audio_head(&mut a, 9, 1);

@@ -20,6 +20,7 @@ use crate::sync::RacyCell;
 use core::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 mod bench;
+mod pcs;
 mod report;
 mod stats;
 pub use bench::*;

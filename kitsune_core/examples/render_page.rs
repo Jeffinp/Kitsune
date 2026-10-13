@@ -2,6 +2,8 @@
 //! (`tools/render-page.py` turns it into a PNG): a way to look at real pages without booting the system.
 //!
 //! `cargo run --release -p kitsune_core --example render_page -- page.html [width] [zoom]`
+//! (`--script`: the file is a document as a page's script process sends it, read the way the
+//! browser does; `--repeat N`: lay it out N times, for timing.)
 use kitsune_core::web::imgcache::NoImages;
 use kitsune_core::web::{Cmd, Doc, FixedAdvance, Font, Layout};
 use std::io::Write;
@@ -62,8 +64,19 @@ fn main() {
     let width: i32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(960);
     let zoom: u16 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(100);
     let t0 = std::time::Instant::now();
-    let mut doc = Doc::parse(&html);
+    let mut doc = if args.iter().any(|a| a == "--script") {
+        let mut d = Doc::parse(b"<!doctype html><html></html>");
+        d.replace_from_script(&html);
+        d
+    } else {
+        Doc::parse(&html)
+    };
     eprintln!("parse: {:?}", t0.elapsed());
+    let repeat: usize = args
+        .iter()
+        .position(|a| a == "--repeat")
+        .and_then(|i| args.get(i + 1)?.parse().ok())
+        .unwrap_or(1);
     // `--links`: print the style sheets the page asks for and stop. `--css FILE...` (after the
     // other arguments): add those files as external sheets, in order.
     if args.iter().any(|a| a == "--links") {
@@ -73,7 +86,7 @@ fn main() {
         return;
     }
     if let Some(i) = args.iter().position(|a| a == "--css") {
-        for f in &args[i + 1..] {
+        for f in args[i + 1..].iter().take_while(|a| !a.starts_with("--")) {
             if let Ok(css) = std::fs::read(f) {
                 let t = std::time::Instant::now();
                 doc.add_sheet(&String::from_utf8_lossy(&css));
@@ -90,13 +103,23 @@ fn main() {
         None => &FixedAdvance,
     };
     let t = std::time::Instant::now();
-    let page = doc.layout(&Layout {
-        width,
-        zoom,
-        images: &NoImages,
-        metrics: m,
-    });
-    eprintln!("layout: {:?} ({} commands)", t.elapsed(), page.cmds.len());
+    let lay = || {
+        doc.layout(&Layout {
+            width,
+            zoom,
+            images: &NoImages,
+            metrics: m,
+        })
+    };
+    let mut page = lay();
+    for _ in 1..repeat {
+        page = lay();
+    }
+    eprintln!(
+        "layout: {:?} ({} commands)",
+        t.elapsed() / repeat as u32,
+        page.cmds.len()
+    );
     let out = std::io::stdout();
     let mut out = out.lock();
     let _ = writeln!(

@@ -184,3 +184,16 @@ fn opus_durations() {
     assert_eq!(opus_packet_ns(&[]), 0);
     assert_eq!(opus_packet_ns(&[3]), 0);
 }
+
+#[test]
+fn a_decoder_far_behind_jumps_to_the_last_keyframe_due() {
+    let mut b = TrackBuffer::new(true);
+    video(&mut b, 0, 300, 30); // keyframes at 0, 30, 60, ... (frames of F)
+    // From frame 5 with the clock at frame 95: the keyframe at 90, 85 frames skipped.
+    assert_eq!(b.key_after(5, 95 * F), Some((90, 85)));
+    // The clock exactly on a keyframe counts it.
+    assert_eq!(b.key_after(5, 60 * F), Some((60, 55)));
+    // No keyframe after the frame and before the clock: nothing to jump to.
+    assert_eq!(b.key_after(31, 59 * F), None);
+    assert_eq!(b.key_after(299, 10_000 * F), None);
+}

@@ -72,6 +72,7 @@ fn volume_changed(p: &MediaPlayer, js: u32) {
         p.player.state(),
         p.player.position(),
         &[Event::VolumeChange],
+        p.player.quality(),
     );
     crate::userproc::page_post(js, m);
 }

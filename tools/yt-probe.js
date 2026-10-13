@@ -6,7 +6,7 @@
 // a layout box. Made for bringing up YouTube (docs/design/tls-browser.md §16), useful for any page.
 //
 //   node tools/yt-probe.js [URL] [--engine qjs|node] [--secs N] [--cache DIR] [--referer URL] [--play]
-//     [--spy] [--direct CA.pem] [-v] [--net-log]
+//     [--spy] [--direct CA.pem] [-v] [--net-log] [--save-docs]
 //
 // --engine qjs (the default) runs the real page process: QuickJS with glue.c and page.c, built for the
 // host from tools/jsrun-host.c (needs clang), talking over pipes; its times are native ones (the QEMU
@@ -33,6 +33,8 @@ const VERBOSE = flag('-v');
 const PLAY = flag('--play');
 const NETLOG = flag('--net-log');
 const SPY = flag('--spy');
+// --save-docs: every document the page sends is kept as CACHE/doc-N.html (to see what changes).
+const SAVE_DOCS = flag('--save-docs');
 // --direct CA.pem: no HTTP proxy (the path a QEMU guest's traffic takes), trusting CA.pem.
 const DIRECT = opt('--direct', '');
 const W = +opt('--w', '960');
@@ -260,7 +262,10 @@ function takeSent() {
     if (kind === 'v') { mediaData(m); continue; }
     const rest = m.slice(1).toString();
     switch (kind) {
-      case 'D': summary.docs++; docHtml = rest; layoutDue = true; break;
+      case 'D':
+        summary.docs++; docHtml = rest; layoutDue = true;
+        if (SAVE_DOCS) fs.writeFileSync(path.join(CACHE, 'doc-' + summary.docs + '.html'), stamp() + '\n' + rest);
+        break;
       case 'V': mediaCmd(rest); break;
       case 'X': aborted.add(+rest); break;
       case 'C': setCookie(rest, pageUrl); break;

@@ -146,8 +146,15 @@ pub fn parse_data(m: &[u8]) -> Option<(u32, u8, u32, &[u8])> {
     Some((id, src, seq, &m[nl + 1..]))
 }
 
-/// The state of player `id` as the page mirrors it, with the events to fire (in order).
-pub fn state_message(id: u32, st: &State, position: i64, events: &[Event]) -> Vec<u8> {
+/// The state of player `id` as the page mirrors it, with the events to fire (in order). `frames`:
+/// the pictures shown and dropped so far (`getVideoPlaybackQuality`).
+pub fn state_message(
+    id: u32,
+    st: &State,
+    position: i64,
+    events: &[Event],
+    frames: (u32, u32),
+) -> Vec<u8> {
     let mut s = String::with_capacity(160);
     let _ = write!(s, "{{\"t\":\"media\",\"id\":{id},\"ev\":[");
     for (i, e) in events.iter().enumerate() {
@@ -161,7 +168,7 @@ pub fn state_message(id: u32, st: &State, position: i64, events: &[Event]) -> Ve
     });
     let _ = write!(
         s,
-        "],\"ct\":{},\"p\":{},\"e\":{},\"sk\":{},\"rs\":{},\"w\":{},\"h\":{},\"v\":{},\"a\":{},\"d\":{},\"vol\":{},\"mu\":{},\"err\":{}}}",
+        "],\"ct\":{},\"p\":{},\"e\":{},\"sk\":{},\"rs\":{},\"w\":{},\"h\":{},\"v\":{},\"a\":{},\"d\":{},\"vol\":{},\"mu\":{},\"err\":{},\"fs\":{},\"fd\":{}}}",
         position,
         u8::from(st.paused),
         u8::from(st.ended),
@@ -178,7 +185,9 @@ pub fn state_message(id: u32, st: &State, position: i64, events: &[Event]) -> Ve
         },
         st.volume,
         u8::from(st.muted),
-        st.error.unwrap_or(0)
+        st.error.unwrap_or(0),
+        frames.0,
+        frames.1
     );
     s.into_bytes()
 }

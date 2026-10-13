@@ -296,6 +296,16 @@ impl TrackBuffer {
         (i..self.frames.len()).find(|&j| self.frames[j].key)
     }
 
+    /// The last keyframe after index `i` that starts at or before `t`, and how many frames lie
+    /// between (a decoder far behind the clock jumps there instead of decoding them all).
+    pub fn key_after(&self, i: usize, t: i64) -> Option<(usize, usize)> {
+        let end = self.frames.partition_point(|f| f.pts <= t);
+        (i + 1..end)
+            .rev()
+            .find(|&j| self.frames[j].key)
+            .map(|j| (j, j - i))
+    }
+
     /// Everything after the decoder at `c` has been decoded (the end of a stream that ended).
     pub fn done(&self, c: &Cursor) -> bool {
         c.target.is_none() && self.next(c).is_none()

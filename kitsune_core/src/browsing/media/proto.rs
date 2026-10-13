@@ -54,9 +54,9 @@ pub const IN_CUE: u8 = 0x0F;
 /// `u64` duration (ns, 0 unknown), `u32` width, `u32` height, `u8` has video, `u8` has audio, `u8`
 /// channels of the stream, `u8` source, `u32` output rate (48000; the sound is always stereo).
 pub const OUT_HEADER: u8 = 0x81;
-/// `u8` 1 for B, G, R, A pixels (else R, G, B, A), two zero bytes (the pixels start 4-aligned, at
-/// [`FRAME_HEAD`]), `i64` time (ns), `u32` width, `u32` height, then `width * height` pixels, 4 bytes
-/// each.
+/// `u8` 1 for B, G, R, A pixels (else R, G, B, A), `u16` pictures dropped since the last one sent
+/// (decoded too late to show; the pixels start 4-aligned, at [`FRAME_HEAD`]), `i64` time (ns), `u32`
+/// width, `u32` height, then `width * height` pixels, 4 bytes each.
 pub const OUT_FRAME: u8 = 0x82;
 /// Where the pixels of an [`OUT_FRAME`] start.
 pub const FRAME_HEAD: usize = 20;
@@ -122,6 +122,8 @@ pub enum Out<'a> {
         h: u32,
         /// The pixels are B, G, R, A.
         bgr: bool,
+        /// Pictures the decoder dropped (too late) since the previous one.
+        skipped: u16,
         rgba: &'a [u8],
     },
     /// Stereo 48 kHz s16le samples (`frames` per channel).
@@ -208,6 +210,7 @@ pub fn parse_out(m: &[u8]) -> Option<Out<'_>> {
                 w,
                 h,
                 bgr: b[0] == 1,
+                skipped: u16::from_le_bytes([b[1], b[2]]),
                 rgba: &m[FRAME_HEAD..],
             }
         }
@@ -344,8 +347,10 @@ pub fn error(code: u32, text: &str) -> Vec<u8> {
 }
 
 /// The head of an [`OUT_FRAME`] ([`FRAME_HEAD`] bytes; the pixels follow).
-pub fn frame_head(out: &mut Vec<u8>, pts: i64, w: u32, h: u32, bgr: bool) {
-    out.extend_from_slice(&[OUT_FRAME, u8::from(bgr), 0, 0]);
+pub fn frame_head(out: &mut Vec<u8>, pts: i64, w: u32, h: u32, bgr: bool, skipped: u16) {
+    out.push(OUT_FRAME);
+    out.push(u8::from(bgr));
+    out.extend_from_slice(&skipped.to_le_bytes());
     out.extend_from_slice(&pts.to_le_bytes());
     out.extend_from_slice(&w.to_le_bytes());
     out.extend_from_slice(&h.to_le_bytes());
