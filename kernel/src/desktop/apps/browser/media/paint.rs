@@ -15,8 +15,15 @@ pub(super) fn fb_bgr() -> bool {
     FB_BGR.load(core::sync::atomic::Ordering::Relaxed)
 }
 
-/// Copy an RGBA picture (`sw` x `sh`, bytes R, G, B, A) into `dst` (screen coordinates), scaled by
-/// nearest neighbour, clipped to the canvas's clip.
+/// Copy an RGBA picture (`sw` x `sh`, bytes R, G, B, A, or B, G, R, A with `src_bgr`) into `dst`
+/// (screen coordinates), scaled by nearest neighbour, clipped to the canvas's clip.
+///
+/// This runs for every picture of a playing video, so the framebuffers QEMU gives (3 or 4 bytes a
+/// pixel, R, G, B or B, G, R) go a row at a time: a picture of the box's size in the framebuffer's
+/// own layout is one copy per row, anything else a table of source columns (no division per
+/// pixel), and a screen row showing the same source row as the one above is a copy of it. Only an
+/// odd framebuffer goes pixel by pixel. (The 3-byte framebuffer of QEMU's BIOS mode used to take
+/// the pixel-by-pixel path: most of the compositor's time while a video played.)
 fn blit_rgba(c: &mut Canvas, src: &[u8], sw: u32, sh: u32, src_bgr: bool, dst: Rect) {
     let (sw, sh) = (sw as usize, sh as usize);
     if sw == 0 || sh == 0 || src.len() < sw * sh * 4 || dst.w <= 0 || dst.h <= 0 {
@@ -27,54 +34,70 @@ fn blit_rgba(c: &mut Canvas, src: &[u8], sw: u32, sh: u32, src_bgr: bool, dst: R
     };
     let info = c.fb_info();
     let (dw, dh) = (dst.w as usize, dst.h as usize);
-    if info.bytes_per_pixel != 4 {
-        // An odd framebuffer: the slow path.
-        for y in r.y..r.bottom() {
-            let sy = ((y - dst.y) as usize * sh / dh).min(sh - 1);
-            for x in r.x..r.right() {
-                let sx = ((x - dst.x) as usize * sw / dw).min(sw - 1);
-                let i = (sy * sw + sx) * 4;
-                c.put(
-                    x as usize,
-                    y as usize,
-                    Color::rgb(src[i], src[i + 1], src[i + 2]),
-                );
+    let bpp = info.bytes_per_pixel;
+    let fb_bgr = match info.pixel_format {
+        bootloader_api::info::PixelFormat::Bgr if bpp == 3 || bpp == 4 => true,
+        bootloader_api::info::PixelFormat::Rgb if bpp == 3 || bpp == 4 => false,
+        _ => {
+            // An odd framebuffer: the slow path.
+            for y in r.y..r.bottom() {
+                let sy = ((y - dst.y) as usize * sh / dh).min(sh - 1);
+                for x in r.x..r.right() {
+                    let sx = ((x - dst.x) as usize * sw / dw).min(sw - 1);
+                    let i = (sy * sw + sx) * 4;
+                    let (red, blue) = if src_bgr {
+                        (src[i + 2], src[i])
+                    } else {
+                        (src[i], src[i + 2])
+                    };
+                    c.put(x as usize, y as usize, Color::rgb(red, src[i + 1], blue));
+                }
             }
+            return;
         }
-        return;
-    }
-    let fb_bgr = matches!(info.pixel_format, bootloader_api::info::PixelFormat::Bgr);
+    };
     FB_BGR.store(fb_bgr, core::sync::atomic::Ordering::Relaxed);
     // Swap R and B when the picture's order is not the framebuffer's.
-    let bgr = fb_bgr != src_bgr;
+    let (c0, c2) = if fb_bgr != src_bgr { (2, 0) } else { (0, 2) };
     let stride = info.stride;
     // The source column of every screen column, once.
     let cols: Vec<usize> = (r.x..r.right())
         .map(|x| ((x - dst.x) as usize * sw / dw).min(sw - 1))
         .collect();
+    let same_cols = sw == dw && r.x == dst.x && cols.len() == sw;
+    let len = cols.len() * bpp;
     let buf = c.buffer_mut();
+    let mut above: Option<(usize, usize)> = None;
     for y in r.y..r.bottom() {
         let sy = ((y - dst.y) as usize * sh / dh).min(sh - 1);
-        let row = &src[sy * sw * 4..(sy + 1) * sw * 4];
-        let start = (y as usize * stride + r.x as usize) * 4;
-        let Some(out) = buf.get_mut(start..start + cols.len() * 4) else {
-            continue;
-        };
-        if !bgr && sw == dw && r.x == dst.x && cols.len() == sw {
-            // The picture's size and order: the row as it is.
-            out.copy_from_slice(row);
+        let start = (y as usize * stride + r.x as usize) * bpp;
+        if buf.len() < start + len {
             continue;
         }
-        for (o, &sx) in out.as_chunks_mut::<4>().0.iter_mut().zip(&cols) {
-            let p = &row[sx * 4..sx * 4 + 4];
-            if bgr {
-                o[0] = p[2];
+        if let Some((prev_sy, prev_start)) = above
+            && prev_sy == sy
+        {
+            buf.copy_within(prev_start..prev_start + len, start);
+            continue;
+        }
+        above = Some((sy, start));
+        let row = &src[sy * sw * 4..(sy + 1) * sw * 4];
+        let out = &mut buf[start..start + len];
+        if bpp == 4 && c0 == 0 && same_cols {
+            // The picture's size and order: the row as it is.
+            out.copy_from_slice(row);
+        } else if same_cols {
+            for (o, p) in out.chunks_exact_mut(bpp).zip(row.as_chunks::<4>().0) {
+                o[0] = p[c0];
                 o[1] = p[1];
-                o[2] = p[0];
-            } else {
-                o[0] = p[0];
+                o[2] = p[c2];
+            }
+        } else {
+            for (o, &sx) in out.chunks_exact_mut(bpp).zip(&cols) {
+                let p = &row[sx * 4..sx * 4 + 4];
+                o[0] = p[c0];
                 o[1] = p[1];
-                o[2] = p[2];
+                o[2] = p[c2];
             }
         }
     }
