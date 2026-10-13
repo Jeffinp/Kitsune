@@ -4,6 +4,32 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — Navegador: bloqueador de anúncios e rastreadores nativo
+
+- **Escudo na barra de endereço** (à esquerda da estrela) com a contagem de itens retirados da página da aba e um
+  balão com a **chave por site** ("Bloquear neste site", lembrada em `~/.shields`; desligar ou ligar recarrega a página),
+  as contagens (anúncios, rastreadores, caixas escondidas) e uma frase. Chave **global** em Ajustes, Rede, "Navegador"
+  (`adblock=` em `/etc/kitsune.conf`). Ligado por padrão. Glifos novos `Shield` e `ShieldOff`; strings em pt e en.
+- **Núcleo** (`kitsune_core::shields`, testado no host): lista própria embutida (`shields/data/`, ver `THIRD-PARTY.md`:
+  nada copiado de listas de terceiros) de hosts de anúncios e de rastreadores (com subdomínios, só para terceiros),
+  trechos de caminho e uma folha cosmética de seletores genéricos (até 32). Busca binária no próprio texto ordenado,
+  sem alocar por requisição. `PageShield` (por aba) conta cada endereço uma vez; `SiteList` guarda os sites liberados.
+- **Pipeline**: folhas e `@import`s bloqueados não entram na fila (`SheetSet::begin_with`/`finish_with`); imagens
+  bloqueadas nunca são pedidas e **não ganham caixa** (`ImgState::Blocked`, `ImageCache::block`); `Doc::hide_matching`
+  esconde as caixas de anúncio e as conta. A navegação de topo nunca é bloqueada. Detalhes em `tls-browser.md` §11.
+- **Provas**: no host, `browsing::shields::tests` (25 testes, mais os de `settings`, `layout` e `iconart`; 3247 no
+  `kitsune_core`); no QEMU (BIOS, `tools/w24-site.py` com a página `/ads`), `w53-shields.sh`: com o filtro ligado a serial diz
+  `ads=4 trackers=2 hidden=2 total=8` e o servidor **não** vê `/ads/ad-theme.css`, `/ads/banner-728.png`,
+  `/pagead/ad.png`, `/tracking/pixel.png` nem a imagem dentro da caixa escondida (vê só `/ads` e `/g.png`) e o guest nunca
+  tenta os hosts `.invalid`; pela chave do balão o site é desligado, a página recarrega, o servidor vê **todos** os
+  pedidos, o guest tenta os dois hosts `.invalid` e o título fica vermelho (a folha de anúncio chegou); ligando de
+  novo volta ao mesmo total. `w53-persist-1/2.sh`: a escolha por site sobrevive a um reinício. `w53-settings.sh`: a chave
+  global em Ajustes abre `/ads` sem filtro. Capturas: `docs/img/browser-shield-on.png`, `browser-shield-off.png`.
+- Não feito: remover `utm_*`/`fbclid`, http para https, lista atualizável, bloqueio de scripts (o navegador ainda não os
+  carrega; a fonte de scripts deve perguntar `PageShield::check`). Limites em `tls-browser.md` §11.4.
+- Fuzz: `html_img_form` ganhou o estado `Blocked` e `shields_exercise` (endereços, lista de sites, cosmético e folhas
+  com bytes hostis).
+
 ## 2026-10 — Arquivos grandes divididos
 
 - Os arquivos de código acima de ~600 linhas foram divididos por responsabilidade, sem mudar comportamento (a regra de

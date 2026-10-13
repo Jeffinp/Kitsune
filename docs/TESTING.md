@@ -578,6 +578,15 @@ pela metade. Cenários: `w24-pages.sh`, `w24-chrome.sh`, `w24-chrome2.sh`, `w24-
 servidores: `tools/w24-site.py` (:8079) e `tools/nettest-server.py` (HTTPS autoassinado :8078).
 Os números de tempo real do TCG variam com a carga do hospedeiro; use `-icount` para comparar.
 
+### Bloqueador de anúncios (W53)
+
+Testes no host: `cargo test -p kitsune_core shields` (listas, casamento, contagem, lista de sites, imagens e folhas
+bloqueadas, cosmético). No QEMU, com a página `/ads` do `tools/w24-site.py` (`2>> /tmp/w53-requests.log` guarda o que o
+guest pediu): `w53-shields.sh` (`REQLOG=/tmp/w53-requests.log`; escreve `w53-result.txt` com PASS/FAIL e as capturas),
+`w53-persist-1.sh` + `w53-persist-2.sh` (a escolha por site depois de reiniciar, com `FS_IMG`) e `w53-settings.sh` (a chave
+global). As posições do escudo e da chave são as da janela padrão em BIOS 1280x720 (`SHIELD_X`, `SWITCH_X`... mudam por
+variável de ambiente). Projeto e limites: [`design/tls-browser.md`](design/tls-browser.md) §11.
+
 ### Compositor (W27): teste diferencial, oráculo no QEMU e custo de quadro
 
 Projeto em [`design/compositor.md`](design/compositor.md). O desktop piscava com várias janelas (sombras

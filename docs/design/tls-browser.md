@@ -527,7 +527,9 @@ chave do balão fica apagada. Esc, clique fora, troca de aba e página nova fech
 | Cosmético: caixas escondidas e contadas uma vez, vence o `display` da página, página hostil funda | idem |
 | `adblock=` nos Ajustes (padrão ligado, ida e volta, lixo ignorado), geometria do botão e do balão, glifos `Shield`/`ShieldOff` | `system::settings::tests`, `ui::layout::tests`, `ui::iconart::tests` |
 | Fuzz: `fuzz/fuzz_targets/html_img_form.rs` ganhou `ImgState::Blocked` e `shields_exercise` (endereços, página, lista de sites, cosmético e folhas com bytes hostis) | ver CHANGELOG |
-| Página `/ads` de `tools/w24-site.py` e o cenário `tools/perf/scen/w53-shields.sh` no QEMU | ver CHANGELOG e a seção de provas abaixo, se houver |
+| QEMU (BIOS), página `/ads` de `tools/w24-site.py`, `tools/perf/scen/w53-shields.sh`: ligado, a serial diz `shields: page 203.0.113.5 on=true ads=4 trackers=2 hidden=2 total=8` e o servidor só vê `/ads` e `/g.png`; pela chave do balão o site é desligado, a página recarrega e o servidor vê as cinco requisições (folha, dois anúncios por caminho, pixel e a imagem da caixa escondida) e o guest tenta os dois hosts `.invalid`; ligado de novo, volta ao mesmo total | `docs/img/browser-shield-on.png`, `browser-shield-off.png`; 21 verificações PASS no `w53-result.txt` |
+| A escolha por site sobrevive a um reinício (`~/.shields`) | `w53-persist-1.sh` e `w53-persist-2.sh` (`FS_IMG` do primeiro) |
+| A chave global de Ajustes abre a página sem filtro | `w53-settings.sh` |
 
 ## 12. JavaScript: o motor existe, ainda fora do navegador
 
