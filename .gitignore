@@ -44,3 +44,7 @@ kitsune-ovmf-vars.fd
 
 # user-app build output (detached workspaces)
 user-apps/*/target/
+
+# Python bytecode (tools/*.py)
+__pycache__/
+*.pyc
