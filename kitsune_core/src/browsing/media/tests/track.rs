@@ -37,21 +37,15 @@ fn a_gap_splits_the_ranges_but_rounding_does_not() {
     for i in 0..50 {
         b.push(i * 20 * MS, Some(20 * MS), true, 0, vec![0; 10]);
     }
-    // 1 ms short: still one range.
+    // A 1 ms gap: still one range.
     for i in 0..50 {
-        b.push(
-            1000 * MS + 1 * MS + i * 20 * MS,
-            Some(20 * MS),
-            true,
-            0,
-            vec![0; 10],
-        );
+        b.push(1001 * MS + i * 20 * MS, Some(20 * MS), true, 0, vec![0; 10]);
     }
     assert_eq!(ranges(&b), [(0, 2001 * MS)]);
     // A real gap.
     b.push(5000 * MS, Some(20 * MS), true, 0, vec![0; 10]);
     assert_eq!(ranges(&b).len(), 2);
-    assert!(RANGE_SLACK_NS < 100 * MS);
+    const _: () = assert!(RANGE_SLACK_NS < 100 * MS);
 }
 
 #[test]

@@ -235,7 +235,7 @@ com o mesmo esquema do `jsrun`: C de terceiros vendorizado sem mudança (**libvp
 libc mínima própria (`csrc/libc`: `setjmp`/`longjmp` para o caminho de erro do libvpx, `qsort`, `snprintf`), o
 `malloc` do SDK e só inteiros e ponteiros na fronteira com o Rust. O demuxer é o `kitsune_core::webm`. Pilha de 1 MiB
 (`BIG_STACK`: o libopus põe seus buffers na pilha), heap de até 128 MiB (`BIG_HEAP`; um 720p usa ~40 MiB). Também é
-um **servidor de mensagens** para o player futuro (`mediadec --serve`, iniciado por `userproc::spawn_media`, sobre as
+o decodificador do player de `<video>`/`<audio>` do Navegador (`mediadec --serve`, iniciado por `userproc::spawn_media`, sobre as
 mesmas chamadas 56/57 do `jsrun --page`, sem chamada nova). Projeto, protocolo, provas (MD5 de todos os quadros
 idêntico ao ffmpeg, no hospedeiro e no QEMU, cenário `w57-mediadec.sh`) e velocidade em [`midia.md`](midia.md).
 

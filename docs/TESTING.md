@@ -634,6 +634,35 @@ Projeto em [`design/midia.md`](design/midia.md). Três camadas:
    bytes são os mesmos), depois `--serve-test`, um arquivo cortado e um corrompido (terminam sozinhos, o sistema segue),
    `--info`, `--rgb 1280x720` e `--show` (captura `d-show.png`). Veredito em `OUT/verdict.txt`, com os fps de cada
    tamanho.
+### Player: `<video>`, `<audio>` e MSE (W58)
+
+Projeto em [`design/tls-browser.md`](design/tls-browser.md) §14. Hospedeiro:
+
+```bash
+cargo test -j2 -p kitsune_core media                          # TimeRanges, track buffer, relógio, player, mensagens, controles
+cargo test -j2 -p kitsune_core layout_tests::media            # caixa de <video>/<audio>
+node tools/js-media-check.js user-apps/jsrun/src/bin/jsrun    # a API em JavaScript com um navegador falso (52)
+target/mediacheck/release/mediacheck V.webm --serve-test         # o decodificador do player (src inteiro, seek, fetch)
+target/mediacheck/release/mediacheck V.webm --serve-mse A.webm   # MSE: vídeo e som em fontes separadas
+```
+
+(`tools/media/check-host.sh M` compila o `mediacheck` e roda o `--serve-test`.) No QEMU, com som gravado:
+
+```bash
+python3 tools/w24-site.py 8079 &        # gera os vídeos de teste com o ffmpeg em $W24_MEDIA (padrão /tmp/w24media)
+OUT=/tmp/w58; QEMU_MEM=256M PORT=8079 \
+QEMU_NETDEV="user,id=n0,net=203.0.113.0/24,host=203.0.113.5,dhcpstart=203.0.113.15,dns=203.0.113.3" \
+QEMU_EXTRA="-audiodev wav,id=snd0,path=$OUT-audio.wav,out.frequency=48000 -device AC97,audiodev=snd0" \
+bash tools/perf/run.sh IMG bios $OUT 900 tools/perf/scen/w58-video.sh   # veredito em $OUT/verdict.txt
+```
+
+O cenário abre `/video` (toca, fim, seek para 1 s, clique no play dos controles) e `/mse` (dois `SourceBuffer`s por
+`Range`), confere os eventos que a página imprime (`media: ...`), compara capturas com 1 s de intervalo (a imagem e a
+barra de tempo andam), lê as linhas `media: element N played ...` do serial (quadros mostrados/descartados, relógio) e
+mede o som gravado com `tools/perf/audio-check.py` (cinco tons de 440 Hz com 3/2/3/3/2 s). Sem `QEMU_EXTRA` toca mudo
+pelo relógio do sistema. `w58-real.sh` (`PAGES='real?src=URL ...'`) abre um WebM qualquer e registra se tocou e a
+vazão; `/relay?u=URL` faz o servidor de teste baixar o arquivo uma vez e servi-lo com `Range`.
+
 ### Rede dos scripts (W55): fetch, XHR, cookies, CORS, keep-alive
 
 Host: `cargo test -p kitsune_core http1 cookies cors script` (leitor HTTP/1.1 e chunked, Range, cookies, CORS, as

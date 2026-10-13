@@ -17,6 +17,7 @@ kitsune_core/src/            pure no_std logic, host-tested (forbid(unsafe_code)
   network/    net dns icmp sntp lease netstats | x509 tlsverify
   browsing/   web (HTML/CSS/layout engine) | browser (model: tabs, history, errors) | redirect | shields (ad blocker)
               http1 (HTTP/1.1 framing) | cookies (the jar) | cors (same-origin rules)
+              media (the <video>/<audio> player: ranges, track buffers, clock, state, messages, controls)
   format/     base64 | inflate deflate gzip zip | png bmp ppm gif jpeg image | elf | text | unixtime | search
               webm (Matroska demuxer) | md5
   platform/   appabi wasmsec | appmanifest appinstall | appfs | appnet      (the WASM app platform)
@@ -89,6 +90,8 @@ Files split this way, with their children:
 | `kernel/fetch` | `client`, `thread`, `load` (+ `apps`, `jobs`, `cookies`, `script` with `script/serve`) |
 | `kernel/netstack` | `http` (one exchange), `pool` (kept-alive connections), `tls` |
 | `browsing/http1`, `browsing/cookies` | `reader`, `request`; `parse`, `jar`, `store` |
+| `browsing/media` | `ranges`, `track`, `proto` (browser ↔ decoder), `clock`, `player` (+ `state`, `feed`), `wire` (page ↔ browser), `controls` |
+| `kernel/desktop/apps/browser/media` | `paint`, `controls` (clicks), `stats`, `direct` (a `src` URL fetched into the decoder) |
 | `kernel/fb/shapes` | `rrect`, `shadow`, `blit`, `glow` |
 
 ## Dependency rules (core)

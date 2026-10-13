@@ -43,8 +43,7 @@ pub fn spawn_page(cred: Option<Cred>) -> Result<u32, SpawnError> {
 /// Start the media decoder as a message server (`mediadec --serve`), acting as `cred`: the same two
 /// queues as a page's script process, so a player talks to it with [`page_post`] and [`page_take`]
 /// (WebM bytes in, RGBA pictures and PCM out; the protocol is in `docs/design/midia.md`). Returns
-/// its pid. Nothing starts it yet: it is the decoding half of the browser's future `<video>`.
-#[allow(dead_code)] // the caller (the browser's player) is the next step
+/// its pid. The browser's player starts one per playing `<video>`/`<audio>` element.
 pub fn spawn_media(cred: Option<Cred>) -> Result<u32, SpawnError> {
     let image = embedded("mediadec").ok_or(SpawnError::NoHost)?;
     let args = abi::pack_args("/", &[String::from("--serve")]).unwrap_or_default();

@@ -123,4 +123,5 @@ gravação). As medidas de nível são relativas ao primeiro som, então não de
 * Só saída (sem microfone), só AC'97 (sem HDA nem virtio-sound), sem interrupções (polling a cada tick enquanto toca).
 * Sem `f32` no kernel (o player converte), sem filtro de reamostragem melhor que o linear, volume linear (sem curva
   logarítmica no deslizante).
-* O navegador ainda não tem `<audio>`/`<video>` nem WebAudio: isso vem com os decodificadores (etapa 4).
+* O navegador tem `<audio>`/`<video>` (um fluxo do mixer por elemento, cujo relógio "tocado" é o relógio do player;
+  ver [`tls-browser.md`](tls-browser.md) §14), mas não WebAudio.
