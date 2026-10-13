@@ -75,26 +75,17 @@ const S = 1e9;
   let out = take();
   const opens = out.filter((o) => o.cmd && o.cmd.startsWith('open')).map((o) => o.cmd);
   check(opens.includes('open 4') && opens.includes('open 5'), 'both players opened: ' + JSON.stringify(opens));
-  const fetches = out.filter((o) => o.fetch);
-  check(fetches.length === 2 && fetches.some((f) => f.url === 'http://h:8079/media/a.webm') && fetches.some((f) => f.url === 'http://h:8079/y.webm'), 'fetches of the sources: ' + fetches.map((f) => f.url));
-  check(fetches.every((f) => f.headers.includes('range: bytes=0-1048575')), 'Range requests');
+  const srcs = out.filter((o) => o.cmd && o.cmd.startsWith('src')).map((o) => o.cmd);
+  check(srcs.includes('src 4 http://h:8079/media/a.webm') && srcs.includes('src 5 http://h:8079/y.webm'),
+    'the browser fetches the sources itself: ' + JSON.stringify(srcs));
+  check(!out.some((o) => o.fetch || o.data), 'the page fetches nothing and sends no bytes');
   check(run(`document.querySelectorAll('video')[1].currentSrc`) === 'http://h:8079/y.webm', 'currentSrc of the <source>');
   run(`globalThis.log = []; const v = document.querySelector('video'); for (const e of ['loadstart','progress','loadedmetadata','loadeddata','canplay','canplaythrough','play','playing','pause','seeking','seeked','timeupdate','ended','volumechange','durationchange','waiting','suspend','error']) v.addEventListener(e, () => log.push(e)); v.onended = () => log.push('onended');`);
-  // The server answers with the whole 3000-byte file.
-  const fa = fetches.find((f) => f.url.endsWith('a.webm'));
-  kjs.onMessage(JSON.stringify({ t: 'fetch', id: fa.id, ev: 'head', status: 206, statusText: 'Partial', url: fa.url, redirected: false, type: 'basic', cookie: '', headers: [['content-range', 'bytes 0-2999/3000']] }));
-  kjs.onData(fa.id, toAB(Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(2996, 1)])));
-  kjs.onMessage(JSON.stringify({ t: 'fetch', id: fa.id, ev: 'end' }));
+  // What the decoder holds, as the download goes.
+  media({ id: 4, buf: [0, 0, 0, [[0, 3 * S]]] });
   await settle();
-  out = take();
-  const d = out.find((o) => o.data && o.id === 4);
-  check(d && d.src === 0 && d.n === 3000 && d.bytes[0] === 0x1a, 'the bytes go to source 0 of player 4');
-  check(!out.some((o) => o.cmd === 'eos 4 1'), 'no end of stream before the append is answered');
-  media({ id: 4, buf: [0, d.seq, 0, [[0, 3 * S]]] });
-  await settle();
-  out = take();
-  check(out.some((o) => o.cmd === 'eos 4 1'), 'end of stream once all is in');
-  check(run(`document.querySelector('video').buffered.length === 1 && document.querySelector('video').buffered.end(0) === 3`), 'buffered from the answer');
+  check(run(`document.querySelector('video').buffered.length === 1 && document.querySelector('video').buffered.end(0) === 3`), 'buffered from the decoder');
+  check(run('log').includes('progress'), 'progress');
   // The browser: metadata, data, enough.
   state(4, ['durationchange', 'loadedmetadata'], { rs: 1, w: 640, h: 360, d: 3 * S });
   state(4, ['loadeddata', 'canplay', 'canplaythrough'], { rs: 4, w: 640, h: 360, d: 3 * S });
@@ -248,6 +239,17 @@ const S = 1e9;
   await settle();
   out = take();
   check(ctx.closed2 === 1 && run('ms2.readyState') === 'closed' && out.some((o) => o.cmd === 'close ' + m2), 'sourceclose and the player closes');
+
+  // ---- a Blob source: read here, appended to source 0, then the end of the stream ----
+  run(`globalThis.bv = document.createElement('video'); bv.src = URL.createObjectURL(new Blob([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 7, 7, 7])]));`);
+  await settle();
+  out = take();
+  const blobData = out.find((o) => o.data && o.id === run('bv.uid'));
+  check(blobData && blobData.src === 0 && blobData.n === 7 && blobData.bytes[0] === 0x1a, 'a Blob src: its bytes go to source 0');
+  check(!out.some((o) => o.cmd === 'eos ' + run('bv.uid') + ' 1'), 'no end of stream before the append is answered');
+  media({ id: run('bv.uid'), buf: [0, blobData.seq, 0, [[0, 1 * S]]] });
+  await settle();
+  check(take().some((o) => o.cmd === 'eos ' + run('bv.uid') + ' 1'), 'end of stream once all is in');
 
   // ---- TimeRanges and Audio ----
   threw = false;

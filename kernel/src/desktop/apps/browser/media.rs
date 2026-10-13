@@ -16,13 +16,15 @@ use super::script::JsProc;
 use crate::desktop::*;
 use alloc::collections::VecDeque;
 use kitsune_core::media::clock::AudioSink;
-use kitsune_core::media::player::{Flow, Player};
+use kitsune_core::media::player::{Flow, MEDIA_ERR_NETWORK, Player};
 use kitsune_core::media::proto::{self, Field, Out, parse_out};
 use kitsune_core::media::wire::{self, Command, Control};
 
 mod controls;
+mod direct;
 mod paint;
 mod stats;
+pub(crate) use direct::NetCtx;
 pub(crate) use paint::video_covers;
 
 /// Players playing at once in a page (each is a decoder process with up to 128 MiB).
@@ -72,10 +74,13 @@ pub(crate) struct MediaPlayer {
     backlog: VecDeque<Vec<u8>>,
     /// Where the current stretch of playback began (for the log).
     mark: Option<stats::Mark>,
+    /// The download of a `src` address.
+    direct: Option<direct::Direct>,
 }
 
 impl Drop for MediaPlayer {
     fn drop(&mut self) {
+        crate::fetch::forget_script_fetches(self.pid);
         if let Some(id) = self.stream.take() {
             crate::audio::with(|s| {
                 let _ = s.mixer.close(self.pid, id, false);
@@ -181,17 +186,21 @@ impl MediaSet {
 
     /// A command from the page (`js`: its script process, for the answers).
     pub(crate) fn command(&mut self, js: u32, c: Command) {
-        if let Control::Open = c.control {
+        if c.control == Control::Open {
             self.open(js, c.id);
             return;
         }
-        if let Control::Close = c.control {
+        if c.control == Control::Close {
             self.players.retain(|p| p.uid != c.id);
             return;
         }
         let Some(p) = self.find(c.id) else { return };
         match c.control {
             Control::Open | Control::Close => {}
+            Control::Src(url) => {
+                crate::klog!(Info, "media: element {} plays {url}", p.uid);
+                p.direct = Some(direct::Direct::new(url));
+            }
             Control::Play => {
                 p.player.play();
                 p.started = true;
@@ -281,6 +290,7 @@ impl MediaSet {
             told_running: false,
             backlog: VecDeque::new(),
             mark: None,
+            direct: None,
         };
         p.post(proto::msg(
             proto::IN_FLOW,
@@ -308,6 +318,7 @@ impl MediaSet {
     pub(crate) fn pump(
         &mut self,
         js: u32,
+        net: &mut NetCtx,
         page: Option<&kitsune_core::web::Page>,
         doc: Option<&mut kitsune_core::web::Doc>,
     ) -> Pumped {
@@ -330,6 +341,7 @@ impl MediaSet {
         });
         for p in &mut self.players {
             p.flush_backlog();
+            p.pump_direct(net);
             for _ in 0..MAX_TAKE {
                 let Some(m) = crate::userproc::page_take(p.pid) else {
                     break;
@@ -456,6 +468,12 @@ fn take(
             status,
             ranges,
         } => {
+            if src == 0
+                && seq == 0
+                && let Some(d) = p.direct.as_mut()
+            {
+                d.ranges.clone_from(&ranges);
+            }
             let msg = wire::buffered_message(p.uid, src, seq, status, &ranges);
             crate::userproc::page_post(js, msg);
         }
@@ -465,6 +483,13 @@ fn take(
             let msg = wire::cue_message(p.uid, src, t, (offset != u64::MAX).then_some(offset));
             crate::userproc::page_post(js, msg);
         }
+        Out::Fetch {
+            id,
+            ev,
+            status,
+            total,
+            bytes,
+        } => p.fetched(id, ev, status, total, bytes),
         Out::Error { code, text } => {
             crate::klog!(Info, "browser: media decoder of element {}: {text}", p.uid);
             // No codec or no memory ends the player; a bad frame does not, and broken bytes are

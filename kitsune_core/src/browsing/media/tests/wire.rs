@@ -54,6 +54,14 @@ fn controls_from_the_page() {
     for bad in ["fly 7", "seek 7", "open", "rm 7 9 0 1", "seek x 1", ""] {
         assert_eq!(c(bad), None, "{bad}");
     }
+    assert_eq!(
+        c("src 7 https://h/v.webm?a=1&b=2"),
+        Some((7, Control::Src(String::from("https://h/v.webm?a=1&b=2"))))
+    );
+    assert_eq!(c("src 7 "), None);
+    assert_eq!(c("src x http://h/"), None);
+    let long_url = String::from("src 1 http://h/") + &"a".repeat(3000);
+    assert!(c(&long_url).is_some(), "long addresses are fine");
     let long = String::from("play 1 ") + &"9".repeat(300);
     assert_eq!(c(&long), None);
 }
@@ -173,7 +181,80 @@ fn decoder_messages_round_trip_and_hostile_ones_are_refused() {
     );
     assert_eq!(parse_out(&[0x99]), None);
     assert_eq!(parse_out(&[]), None);
+    let f = proto::msg(
+        proto::OUT_FETCH,
+        &[
+            Field::U32(3),
+            Field::U8(proto::FETCH_END),
+            Field::U32(206),
+            Field::U64(u64::MAX),
+            Field::U64(1000),
+        ],
+    );
+    assert_eq!(
+        parse_out(&f),
+        Some(Out::Fetch {
+            id: 3,
+            ev: proto::FETCH_END,
+            status: 206,
+            total: None,
+            bytes: 1000
+        })
+    );
     assert_eq!(proto::fit((0, 0), 1920, 1080), (1280, 720));
     assert_eq!(proto::fit((0, 0), 640, 360), (640, 360));
     assert_eq!(proto::fit((300, 150), 640, 360), (300, 150));
+}
+
+#[test]
+fn the_fetchers_answers_for_the_decoder() {
+    use crate::browsing::web::script::{
+        FetchHead, ResponseType, end_message, error_message, head_message,
+    };
+    let headers = vec![
+        (String::from("Content-Type"), String::from("video/webm")),
+        (
+            String::from("Content-Range"),
+            String::from("bytes 0-1048575/1052940"),
+        ),
+    ];
+    let head = head_message(&FetchHead {
+        id: 9,
+        status: 206,
+        status_text: "Partial Content",
+        url: "https://h/v.webm",
+        redirected: false,
+        kind: ResponseType::Basic,
+        headers: &headers,
+        cookie: "",
+    });
+    assert_eq!(
+        proto::fetch_event(&head),
+        Some((9, proto::FETCH_HEAD, 206, Some(1_052_940)))
+    );
+    let whole = vec![(String::from("content-length"), String::from("3000"))];
+    let head = head_message(&FetchHead {
+        id: 10,
+        status: 200,
+        status_text: "OK",
+        url: "u",
+        redirected: false,
+        kind: ResponseType::Basic,
+        headers: &whole,
+        cookie: "",
+    });
+    assert_eq!(
+        proto::fetch_event(&head),
+        Some((10, proto::FETCH_HEAD, 200, Some(3000)))
+    );
+    assert_eq!(
+        proto::fetch_event(&end_message(9)),
+        Some((9, proto::FETCH_END, 0, None))
+    );
+    assert_eq!(
+        proto::fetch_event(&error_message(9, "boom")).map(|e| e.1),
+        Some(proto::FETCH_FAIL)
+    );
+    assert_eq!(proto::fetch_event(b"{\"t\":\"media\"}"), None);
+    assert_eq!(proto::fetch_event(b"\xff"), None);
 }

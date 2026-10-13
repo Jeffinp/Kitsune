@@ -94,6 +94,8 @@ pub struct Server {
     clock: (i64, bool, u64),
     /// Pictures decoded too late to show (not sent).
     pub late: u32,
+    /// The request of the fetcher whose bytes come now (the `src`), and how many came.
+    fetch: Option<(u32, u64)>,
     /// Budget (pictures, sound) in bytes and what is out unpaid.
     flow: Option<(u32, u32)>,
     out_video: u32,
@@ -153,6 +155,7 @@ impl Server {
             bgr: false,
             clock: (0, false, 0),
             late: 0,
+            fetch: None,
             flow: None,
             out_video: 0,
             out_audio: 0,
@@ -214,6 +217,18 @@ impl Server {
         let src_at = |i: usize| u8_at(i).filter(|&s| (s as usize) < proto::MAX_SOURCES);
         let short = |s: &mut Server| s.error(proto::ERR_MESSAGE, "short message");
         match kind {
+            b'{' => self.fetch_json(m),
+            proto::FETCH_DATA => match u32_at(0) {
+                Some(id) if self.fetch.is_some_and(|f| f.0 == id) => {
+                    if let Some(f) = self.fetch.as_mut() {
+                        f.1 += (body.len() - 4) as u64;
+                    }
+                    self.append(0, 0, &body[4..]);
+                }
+                // A piece of an answer given up on.
+                Some(_) => {}
+                None => short(self),
+            },
             proto::IN_DATA => match (src_at(0), u32_at(1)) {
                 (Some(src), Some(seq)) => self.append(src as usize, seq, &body[5..]),
                 _ => short(self),
@@ -289,6 +304,37 @@ impl Server {
             },
             _ => self.error(proto::ERR_MESSAGE, "unknown message"),
         }
+    }
+
+    /// The head, the end or a failure of the fetcher's request for the `src`.
+    fn fetch_json(&mut self, m: &[u8]) {
+        let Some((id, ev, status, total)) = proto::fetch_event(m) else {
+            return;
+        };
+        let got = if ev == proto::FETCH_HEAD {
+            // A new request: its bytes are the next of source 0 (an error page's are not).
+            self.fetch = matches!(status, 200 | 206).then_some((id, 0));
+            0
+        } else {
+            match self.fetch {
+                Some((fid, n)) if fid == id => {
+                    self.fetch = None;
+                    n
+                }
+                _ => 0,
+            }
+        };
+        let m = proto::msg(
+            proto::OUT_FETCH,
+            &[
+                Field::U32(id),
+                Field::U8(ev),
+                Field::U32(status),
+                Field::U64(total.unwrap_or(u64::MAX)),
+                Field::U64(got),
+            ],
+        );
+        self.post(m, KIND_OTHER);
     }
 
     /// The source buffer `src`, made on first use.

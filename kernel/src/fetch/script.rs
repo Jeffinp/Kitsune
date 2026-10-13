@@ -39,6 +39,9 @@ pub struct ScriptFetch {
     pub shield_on: bool,
     /// The host the person allowed past a certificate error (empty: none).
     pub insecure_host: Vec<u8>,
+    /// For a media element's decoder (`pid` is the decoder): a `no-cors` request whose body is
+    /// delivered all the same, since no script reads it (the decoder does).
+    pub media: bool,
 }
 
 static QUEUE: SpinLock<VecDeque<ScriptFetch>> = SpinLock::new(VecDeque::new());

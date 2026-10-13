@@ -46,6 +46,9 @@ pub struct Report {
     /// Pictures sent with a budget of two pictures and no acknowledgement, then after one.
     pub budget_held: u32,
     pub budget_after_ack: u32,
+    /// The file as the fetcher would send it for a `src` (head, pieces, end): the requests's events
+    /// came back right and it decoded.
+    pub fetch_ok: bool,
     pub errors: u32,
 }
 
@@ -65,6 +68,7 @@ impl Report {
             && self.first_after_seek_ns == 1_000_000_000
             && self.budget_held == 2
             && self.budget_after_ack > self.budget_held
+            && self.fetch_ok
     }
 }
 
@@ -285,5 +289,53 @@ pub fn selftest(file: &[u8]) -> Report {
     link.inbox.push_back(proto::msg(proto::IN_ACK, &[Field::U32(pic), Field::U32(0)]));
     pump(&mut s, &mut link);
     r.budget_after_ack = count(&link.outbox);
+    r.fetch_ok = fetched(file);
     r
+}
+
+/// Feed `file` as the fetcher answers a request for the decoder (`ScriptFetch::media`).
+fn fetched(file: &[u8]) -> bool {
+    use kitsune_core::web::script::{FetchHead, ResponseType, data_message, end_message, head_message};
+    let mut link = Loopback::default();
+    let mut s = Server::new();
+    let range = alloc::format!("bytes 0-{}/{}", file.len() - 1, file.len());
+    let headers = vec![(String::from("Content-Range"), range)];
+    link.inbox.push_back(head_message(&FetchHead {
+        id: 5,
+        status: 206,
+        status_text: "Partial Content",
+        url: "http://h/v.webm",
+        redirected: false,
+        kind: ResponseType::Basic,
+        headers: &headers,
+        cookie: "",
+    }));
+    for c in file.chunks(256 * 1024) {
+        link.inbox.push_back(data_message(5, c));
+    }
+    // A piece of another (abandoned) request is ignored.
+    link.inbox.push_back(data_message(4, b"junk"));
+    link.inbox.push_back(end_message(5));
+    pump(&mut s, &mut link);
+    let (mut head, mut end, mut pictures) = (false, false, 0);
+    for m in &link.outbox {
+        match parse_out(m) {
+            Some(Out::Fetch {
+                id: 5,
+                ev: proto::FETCH_HEAD,
+                status: 206,
+                total,
+                ..
+            }) => head = total == Some(file.len() as u64),
+            Some(Out::Fetch {
+                id: 5,
+                ev: proto::FETCH_END,
+                bytes,
+                ..
+            }) => end = bytes == file.len() as u64,
+            Some(Out::Frame { .. }) => pictures += 1,
+            _ => {}
+        }
+    }
+    head && end && pictures > 0
 }

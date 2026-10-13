@@ -9,6 +9,10 @@
            Range request and appended to two SourceBuffers (/media/mse.json lists the byte ranges).
 /audio     <audio controls src=/media/a440.webm>: the tone alone.
 /media/*   the files, with Range (206) support.
+/real?src=URL  a page with `<video controls src=URL>` and the same script (plays it once, logs the
+           events): for a video from the internet, or /relay?u=URL, the same file downloaded once by
+           this server (with the host's curl, through its proxy) and served with Range, for a
+           sandbox where the guest cannot verify the real site's certificate.
 
 The files are made once in $W24_MEDIA (default /tmp/w24media). `python3 tools/w24media.py DIR` makes
 them in DIR and prints the index.
@@ -188,10 +192,63 @@ ms.addEventListener('sourceended', () => log('sourceended'));
 </script>""")
 
 
+REAL_JS = r"""
+v.addEventListener('canplaythrough', start);
+v.addEventListener('loadedmetadata', () => log('metadata ' + v.videoWidth + 'x' + v.videoHeight + ' duration ' + v.duration));
+"""
+
+
+def real_page(src):
+    import html
+    return page("Vídeo real", "<h1>Vídeo da internet</h1><video id=v controls src=\"" + html.escape(src) +
+                "\"></video><p id=s>carregando</p><p>" + html.escape(src) + "</p><script>" + LOG_JS + REAL_JS +
+                "</script>")
+
+
+def relay_file(url):
+    """The file at `url`, downloaded once into MEDIA (None if it failed)."""
+    import hashlib
+    os.makedirs(MEDIA, exist_ok=True)
+    p = os.path.join(MEDIA, "relay-" + hashlib.sha1(url.encode()).hexdigest()[:16] + ".webm")
+    if not os.path.exists(p):
+        r = subprocess.run(["curl", "-sS", "-f", "-m", "120", "-A", "Mozilla/5.0 KitsuneTest", "-o", p + ".part", url])
+        if r.returncode != 0:
+            return None
+        os.rename(p + ".part", p)
+    return p
+
+
+def serve_file(h, p):
+    data = open(p, "rb").read()
+    n = len(data)
+    rng = h.headers.get("Range", "")
+    if rng.startswith("bytes="):
+        a, _, b = rng[6:].partition("-")
+        a = int(a or 0)
+        b = min(int(b) if b else n - 1, n - 1)
+        if a >= n:
+            h.reply(416, "text/plain", b"", [("Content-Range", f"bytes */{n}")])
+            return
+        h.reply(206, "video/webm", data[a:b + 1], [("Content-Range", f"bytes {a}-{b}/{n}"),
+                                                  ("Accept-Ranges", "bytes")])
+        return
+    h.reply(200, "video/webm", data, [("Accept-Ranges", "bytes")])
+
+
 def handle(h, method, u, q):
     """Serve a media route; False if the path is not one."""
     if method not in ("GET", "HEAD"):
         return False
+    if u.path == "/real":
+        h.reply(200, "text/html; charset=utf-8", real_page(q.get("src", [""])[0]))
+        return True
+    if u.path == "/relay":
+        p = relay_file(q.get("u", [""])[0])
+        if p is None:
+            h.reply(502, "text/plain", b"the download failed")
+        else:
+            serve_file(h, p)
+        return True
     if u.path == "/video":
         h.reply(200, "text/html; charset=utf-8", VIDEO_PAGE)
         return True
@@ -211,20 +268,7 @@ def handle(h, method, u, q):
         if not os.path.isfile(p):
             h.reply(404, "text/plain", b"no such file")
             return True
-        data = open(p, "rb").read()
-        n = len(data)
-        rng = h.headers.get("Range", "")
-        if rng.startswith("bytes="):
-            a, _, b = rng[6:].partition("-")
-            a = int(a or 0)
-            b = min(int(b) if b else n - 1, n - 1)
-            if a >= n:
-                h.reply(416, "text/plain", b"", [("Content-Range", f"bytes */{n}")])
-                return True
-            h.reply(206, "video/webm", data[a:b + 1], [("Content-Range", f"bytes {a}-{b}/{n}"),
-                                                      ("Accept-Ranges", "bytes")])
-            return True
-        h.reply(200, "video/webm", data, [("Accept-Ranges", "bytes")])
+        serve_file(h, p)
         return True
     return False
 

@@ -81,6 +81,7 @@ pub(super) fn on_fetch(
         shield_on: shield.is_on(),
         insecure_host: browser.insecure_host().unwrap_or_default(),
         req,
+        media: false,
     };
     if !crate::fetch::post_script_fetch(job) {
         crate::userproc::page_post(pid, error_message(id, "the network is unavailable"));

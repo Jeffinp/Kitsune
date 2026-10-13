@@ -4,7 +4,7 @@
 //!
 //! | kind | rest | meaning |
 //! |---|---|---|
-//! | `M` | `op id args...` (ASCII, space separated) | a command for player `id` ([`parse_control`]) |
+//! | `M` | `op id args...` (ASCII, space separated; `src id URL` takes the rest as the address) | a command for player `id` ([`parse_control`]) |
 //! | `m` | `id src seq` and a newline, then bytes | WebM bytes for source buffer `src` ([`parse_data`]) |
 //!
 //! **Browser to page**: JSON `{"t":"media","id":N,...}` with the state and the events
@@ -18,10 +18,12 @@ use alloc::vec::Vec;
 use core::fmt::Write as _;
 
 /// A command from the page.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Control {
     /// A new player for element `id` (its decoder starts).
     Open,
+    /// Play this address (`src`): the browser fetches it into the decoder itself.
+    Src(String),
     /// The element let go of its media (`src` changed, `load()`, removed): the player ends.
     Close,
     Play,
@@ -60,7 +62,7 @@ pub enum Control {
 }
 
 /// A command and the element it is for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Command {
     pub id: u32,
     pub control: Control,
@@ -69,6 +71,18 @@ pub struct Command {
 /// Read an `M` message (without the kind byte). `None` when malformed (the page is not trusted).
 pub fn parse_control(m: &[u8]) -> Option<Command> {
     let text = core::str::from_utf8(m).ok()?;
+    if let Some(rest) = text.strip_prefix("src ") {
+        // `src ID URL`: the address is the rest (it may be long, it has no spaces).
+        let (id, url) = rest.split_once(' ')?;
+        let url = url.trim();
+        if url.is_empty() || url.len() > 8192 || url.contains(char::is_whitespace) {
+            return None;
+        }
+        return Some(Command {
+            id: id.parse().ok()?,
+            control: Control::Src(String::from(url)),
+        });
+    }
     if text.len() > 200 {
         return None;
     }

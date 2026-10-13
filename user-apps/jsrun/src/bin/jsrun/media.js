@@ -7,8 +7,9 @@
 // with JSON: the player's state and the events to fire, what each source buffer holds after an
 // append, where a cluster is. See kitsune_core::media::wire and docs/design/tls-browser.md §14.
 //
-// A `src` that is a URL is fetched here (Range requests of 1 MiB, never more than ~30 s ahead) and
-// appended to an internal source buffer; a `blob:` URL of a MediaSource attaches it.
+// A `src` that is an http(s) address is fetched by the browser itself, straight into the decoder (the
+// page never reads those bytes, so another origin plays without CORS); a `blob:` URL of a MediaSource
+// attaches it; a `blob:` of a Blob or a `data:` address is read here and appended to source 0.
 (function (global, native, kjs) {
   'use strict';
   const send = native.send;
@@ -301,7 +302,7 @@
         this._fail(4, 'unsupported address');
         return;
       }
-      s.loader = new Loader(this, abs);
+      s.loader = /^https?:/i.test(abs) ? new Remote(this, abs) : new Loader(this, abs);
       if (this.preload !== 'none' || this.autoplay) s.loader.start();
     }
     play() {
@@ -470,7 +471,26 @@
     remove(a, b, done) { this.onRemoved = done; send('Mrm ' + this.el.uid + ' ' + this.src + ' ' + ns(a) + ' ' + (b === Infinity ? '9223372036854775807' : ns(b))); }
   }
 
-  // ---- a `src` URL: fetched in pieces, appended to source 0 ----
+  // ---- a `src` address: the browser fetches it into the decoder ----
+
+  class Remote {
+    constructor(el, url) { this.el = el; this.url = url; this.ranges = []; this.started = false; this.done = false; this.lastProgress = -1e9; this.line = this; }
+    start() {
+      if (this.started) return;
+      this.started = true;
+      send('Msrc ' + this.el.uid + ' ' + this.url);
+    }
+    stop() {}
+    tick() {}
+    seek() {}
+    // What source 0 holds, after each piece the decoder took.
+    answered(seq, status, ranges) {
+      this.ranges = fromNs(ranges);
+      if (now() - this.lastProgress > 350) { this.lastProgress = now(); fire(this.el, 'progress'); }
+    }
+  }
+
+  // ---- a `blob:` (of a Blob) or `data:` address: read here, appended to source 0 ----
 
   const AHEAD = 30;
   class Loader {

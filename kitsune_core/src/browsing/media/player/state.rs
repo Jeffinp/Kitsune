@@ -66,6 +66,8 @@ pub const HAVE_CURRENT_DATA: u8 = 2;
 pub const HAVE_FUTURE_DATA: u8 = 3;
 pub const HAVE_ENOUGH_DATA: u8 = 4;
 
+/// `MediaError.code` for a download that failed.
+pub const MEDIA_ERR_NETWORK: u8 = 2;
 /// `MediaError.code` for a decode failure.
 pub const MEDIA_ERR_DECODE: u8 = 3;
 /// `MediaError.code` for a format the player cannot play.

@@ -163,7 +163,14 @@ impl Desktop {
                 js.media.pause_all();
             }
             if !js.media.players.is_empty() {
-                let m = js.media.pump(js.pid, t.page.as_ref(), t.doc.as_mut());
+                let mut net = super::media::NetCtx {
+                    page_url: String::from_utf8_lossy(t.browser.nav_url()).into_owned(),
+                    shield: &mut t.shield,
+                    insecure_host: t.browser.insecure_host().unwrap_or_default(),
+                };
+                let m = js
+                    .media
+                    .pump(js.pid, &mut net, t.page.as_ref(), t.doc.as_mut());
                 if t.id == active_id {
                     media_redraw |= m.redraw;
                     media_relayout |= m.relayout;

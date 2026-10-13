@@ -2,6 +2,12 @@
 //! the same link as a page's script process (calls 56/57). One message per call; the first byte says
 //! what it is; numbers are little endian. The table is in `docs/design/midia.md`.
 //!
+//! A `src` that is a URL is fetched by the browser's fetcher straight into the decoder: the answer
+//! comes as the fetcher writes it for a script (`web::script::net`: the head and the end as JSON,
+//! [`FETCH_DATA`] pieces), the bytes go to source 0, and the decoder tells the player how the
+//! request went ([`OUT_FETCH`]). The page's script never sees those bytes (a media element reads
+//! other origins without CORS, and only the decoder may read them).
+//!
 //! The decoder holds the coded frames (one [`super::track::TrackBuffer`] per track of each source
 //! buffer), decodes ahead of the player within the budget the player gives ([`IN_FLOW`], returned
 //! with [`IN_ACK`]) and sends pictures and sound; the player shows and plays them on its clock.
@@ -10,7 +16,11 @@ use alloc::vec::Vec;
 
 /// `u8` source, `u32` sequence number, then WebM bytes for that source (init segment, clusters...).
 /// Answered with [`OUT_BUFFERED`] carrying the same sequence number.
-pub const IN_DATA: u8 = 0x01;
+pub const IN_DATA: u8 = 0x10;
+/// The fetcher's body piece of a request made for the decoder (`web::script::DATA_TAG`): `u32`
+/// request id, then bytes, appended to source 0. A message starting with `{` is the fetcher's JSON
+/// (the head, the end or an error of the request; see [`fetch_event`]).
+pub const FETCH_DATA: u8 = 0x01;
 /// `u32` width, `u32` height of the pictures sent (0, 0: the video's own size, within the limits),
 /// and optionally `u32` 1 for pictures in B, G, R, A byte order (a framebuffer's).
 pub const IN_SIZE: u8 = 0x04;
@@ -63,8 +73,18 @@ pub const OUT_DRAINED: u8 = 0x85;
 pub const OUT_MARK: u8 = 0x86;
 /// `u8` source, `i64` time, `u64` file offset of the cluster (`u64::MAX`: no index).
 pub const OUT_CUE: u8 = 0x87;
+/// `u32` request id, `u8` what happened ([`FETCH_HEAD`], [`FETCH_END`], [`FETCH_FAIL`]), `u32` HTTP
+/// status, `u64` the file's size (`u64::MAX`: unknown), `u64` bytes of the answer so far.
+pub const OUT_FETCH: u8 = 0x88;
 /// `u32` code ([`ERR_DEMUX`]...), then a UTF-8 text.
 pub const OUT_ERROR: u8 = 0x8F;
+
+/// [`OUT_FETCH`]: the head arrived.
+pub const FETCH_HEAD: u8 = 1;
+/// The whole answer arrived.
+pub const FETCH_END: u8 = 2;
+/// The request failed.
+pub const FETCH_FAIL: u8 = 3;
 
 /// [`OUT_BUFFERED`] status: the bytes were taken.
 pub const BUF_OK: u8 = 0;
@@ -130,6 +150,13 @@ pub enum Out<'a> {
     Error {
         code: u32,
         text: &'a str,
+    },
+    Fetch {
+        id: u32,
+        ev: u8,
+        status: u32,
+        total: Option<u64>,
+        bytes: u64,
     },
 }
 
@@ -224,6 +251,13 @@ pub fn parse_out(m: &[u8]) -> Option<Out<'_>> {
             src: *b.first()?,
             t: i64_at(b, 1)?,
             offset: u64_at(b, 9)?,
+        },
+        OUT_FETCH => Out::Fetch {
+            id: u32_at(b, 0)?,
+            ev: *b.get(4)?,
+            status: u32_at(b, 5)?,
+            total: u64_at(b, 9).filter(|&t| t != u64::MAX),
+            bytes: u64_at(b, 17)?,
         },
         OUT_ERROR => Out::Error {
             code: u32_at(b, 0)?,
@@ -339,4 +373,51 @@ pub fn fit(asked: (u32, u32), w: u32, h: u32) -> (u32, u32) {
     } else {
         (((sw * u64::from(MAX_H) / sh) as u32).max(1), MAX_H)
     }
+}
+
+/// What a JSON message of the fetcher says about a request: its id, what happened
+/// ([`FETCH_HEAD`], [`FETCH_END`], [`FETCH_FAIL`]), the status, and the file's size (from
+/// `Content-Range`, else `Content-Length`). `None` for anything else.
+pub fn fetch_event(json: &[u8]) -> Option<(u32, u8, u32, Option<u64>)> {
+    let text = core::str::from_utf8(json).ok()?;
+    if !text.starts_with("{\"t\":\"fetch\"") {
+        return None;
+    }
+    let number = |key: &str| -> Option<u64> {
+        let at = text.find(key)? + key.len();
+        let digits: &str = &text[at..];
+        let end = digits
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(digits.len());
+        digits[..end].parse().ok()
+    };
+    let id = u32::try_from(number("\"id\":")?).ok()?;
+    let ev = if text.contains("\"ev\":\"head\"") {
+        FETCH_HEAD
+    } else if text.contains("\"ev\":\"end\"") {
+        FETCH_END
+    } else if text.contains("\"ev\":\"error\"") {
+        FETCH_FAIL
+    } else {
+        return None;
+    };
+    let status = number("\"status\":").map_or(0, |s| s.min(999) as u32);
+    let lower = text.to_ascii_lowercase();
+    let header = |name: &str| -> Option<&str> {
+        let key = alloc::format!("[\"{name}\",\"");
+        let at = lower.find(&key)? + key.len();
+        let end = text[at..].find('"')? + at;
+        Some(&text[at..end])
+    };
+    let total = header("content-range")
+        .and_then(|v| v.rsplit('/').next())
+        .and_then(|t| t.trim().parse().ok())
+        .or_else(|| {
+            if status == 200 {
+                header("content-length").and_then(|v| v.trim().parse().ok())
+            } else {
+                None
+            }
+        });
+    Some((id, ev, status, total))
 }

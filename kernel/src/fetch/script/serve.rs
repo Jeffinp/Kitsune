@@ -296,7 +296,7 @@ fn exchange(net: &mut netstack::Net, job: &ScriptFetch, x: Exchange) -> Result<H
     let include = job.req.credentials == Credentials::Include;
     let mut a = Answer {
         redirect: None,
-        opaque: x.cross && job.req.mode == Mode::NoCors,
+        opaque: x.cross && job.req.mode == Mode::NoCors && !job.media,
         compressed: false,
         piece: new_piece(id),
         whole: Vec::new(),
