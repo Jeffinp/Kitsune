@@ -830,9 +830,11 @@ script atribui (`input.value = ''` depois do Enter) aparece na tela, e o foco e 
 (identificado pelo `uid` do elemento, `FieldInfo::uid`).
 
 A corrida entre o que se digita e o documento que o processo manda é resolvida com uma numeração: toda entrada
-enviada leva `n`; o processo responde `Q<n>` antes do documento que já reflete as entradas até `n`. Se chega um
-documento de um processo que ainda não viu todas as teclas (`Inputs::settled` falso), o campo focado mantém o texto
-do navegador (o próximo documento o trará). Sem isso, digitar rápido perdia letras.
+enviada leva `n`; o processo responde `Q<n>` antes do documento que já reflete as entradas até `n`. O navegador
+guarda quais controles tiveram o texto mudado por teclas ainda não reconhecidas (`Inputs::edited`/`unseen_edits`);
+se chega um documento que ainda não as viu, esses controles mantêm o texto do navegador (o próximo documento o
+trará). Sem isso, digitar rápido perdia letras. Uma mudança feita pelo navegador sem tecla (o `<select>` avançado
+por um clique) faz a página mandar o documento de novo, para a cópia do navegador seguir.
 
 | Mensagem | Quando | Na página |
 |---|---|---|
