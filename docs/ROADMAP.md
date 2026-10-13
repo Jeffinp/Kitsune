@@ -133,7 +133,7 @@ abaixo, e nenhuma existe ainda. Ordem proposta, cada etapa com aceite próprio:
    segue); chamadas **60–65** (`audio_open/write/status/close/ctl/wait`); `play arquivo.wav`, `tone`, `beep`, `volume`;
    seção Som nos Ajustes. Provado no QEMU gravando o que o guest toca (`w56-audio.sh`): 440 Hz medidos 440,01 Hz,
    2 s medidos 1999,8 ms, silêncio exato depois, WAV de 22,05 kHz reamostrado, acorde de dois fluxos, volume 25 %
-   medido 0,250, relógio com inclinação 0,998. Ver `docs/design/audio.md`. Falta: HDA/virtio-sound, provar com `dsound`
+   medido 0,250, relógio com inclinação 0,998–1,017. Ver `docs/design/audio.md`. Falta: HDA/virtio-sound, provar com `dsound`
    no Windows e em hardware real.
 6. **O próprio YouTube:** o player pede dezenas de APIs (Web Workers, `requestAnimationFrame`, `MutationObserver`,
    `IntersectionObserver`, Canvas, WebAudio, DRM não, mas vários recursos de segurança). Aceite: abrir um vídeo e vê-lo

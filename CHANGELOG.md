@@ -26,7 +26,7 @@ O sistema tem som. Projeto em `docs/design/audio.md`.
   no guest a 22,05 kHz mono → **660,02 Hz**, 999,9 ms; WAV 44,1 kHz estéreo 8 bits → **550,03 Hz**, 799,8 ms; acorde de
   dois fluxos → **440,01 + 660,02 Hz**; volume do sistema em 25 % → nível **0,250** do primeiro; volume do fluxo em 50 % →
   **0,500**; ≥ 99,95 % da energia na frequência certa em todos; relógio do fluxo contra o `uptime` com inclinação
-  **0,998**; nenhuma falha de buffer. `w56-audio-nodev.sh`: sem placa, `tone` responde "não há dispositivo de som" e
+  **0,998 e 1,017** (duas execuções, 6 leituras em ~1 s cada); nenhuma falha de buffer nem atraso do `audiod`; o cenário também fotografa Ajustes → Som. `w56-audio-nodev.sh`: sem placa, `tone` responde "não há dispositivo de som" e
   o sistema segue. **Não testado**: `dsound` no Windows (WHPX) e hardware real.
 
 ## 2026-10 — Navegador: CPU e congelamentos em páginas reais
