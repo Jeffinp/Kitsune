@@ -1084,7 +1084,7 @@ download segue em ordem até lá), mais de 2 players por página, e o `sequence`
   **2008,0 ms** (MSE), cada um seguido de silêncio exato, 100 % da energia no tom, os dois canais iguais. Nenhuma
   falha de buffer do dispositivo.
 * **O relógio**: tempo de mídia contra tempo real 1,001–1,008 (som) e 1,000 (sistema).
-* **Velocidade**: o som é perfeito, mas a imagem não acompanha os 30 fps sob TCG: **11–13 quadros/s mostrados** no
+* **Velocidade** (medida antes do §17, que a levou a 29–30 fps): o som é perfeito, mas a imagem não acompanha os 30 fps sob TCG: **11–13 quadros/s mostrados** no
   360p (os atrasados são descartados para manter a sincronia), com a CPU emulada em 100 %: decodificador **63–67 %**,
   compositor **31–35 %**. A decodificação VP9 sozinha a 360p faz ~46 fps sob TCG ([`midia.md`](midia.md)), então o
   decodificador já gasta ~2/3 da CPU só para acompanhar o vídeo. Em hardware real ou com KVM o VP9 360p decodifica a
@@ -1252,6 +1252,7 @@ daqui** (sem KVM, ~20–50× mais lento que nativo; no WHPX do dono vai sobrar, 
 | Ponteiro andando sobre a barra durante o vídeo (`MOUSE=1`): IRQ → quadro na tela | média 661 ms, mediana 459 ms, máx. 1,75 s | média 58 ms, mediana 49 ms, máx. 0,54 s | — |
 | "a task ran for too long" | sim | **não** | não |
 
+O vídeo de teste do W58 (`testsrc2` 640x360 a 30 fps) passou de 11–13 para **29–30 fps** mostrados, sem descartes.
 O MP4 da gravação vem de `tools/media/make-demo-video.sh` (a captura do monitor do QEMU só faz ~4,6 quadros/s: a CPU
 emulada também paga o `screendump`; o log do guest é a medida confiável).
 
@@ -1345,4 +1346,4 @@ mostrar muitos quadros perdidos em janelas de 5 s. Os dois sinais agora são med
 | `getVideoPlaybackQuality`, o orçamento na página, o documento no máximo 1/s e igual não reenviado | `node tools/js-media-check.js user-apps/jsrun/src/bin/jsrun` (57) |
 | Convolução e cópia bit a bit iguais ao libvpx/ffmpeg | `tools/media/check-host.sh M` (90/90 MD5 nos três tamanhos) |
 | A reprodução | `tools/perf/scen/w61-youtube-record.sh` (§ `TESTING.md`), com e sem `perf-trace`, e `MOUSE=1` |
-| Nada quebrou | W52, W58, W59, W60 (`TESTING.md`) |
+| Nada quebrou (imagem sem `perf-trace`, com a raiz do gateway) | `w52-browser-js.sh` 19/19, `w58-video.sh` 48/48 (o vídeo de teste 640x360 agora a **29–30 fps** mostrados, eram 11–13, com o som conferido), `w59-spa.sh` 24/24, `w60-youtube.sh` PASS 12/12 (e o vídeo a 19–24 fps) |
