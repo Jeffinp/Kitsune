@@ -1,7 +1,7 @@
 //! Laying a tab's page out and keeping its scroll in range.
 
 use crate::desktop::*;
-use kitsune_core::web::imgcache::{ImageCache, PageImages, image_key};
+use kitsune_core::web::imgcache::{ImageCache, ImgState, PageImages, image_key};
 use kitsune_core::web::{Cmd as WebCmd, Layout};
 
 /// Put tab `t` at scroll `y` without easing.
@@ -46,16 +46,29 @@ pub(crate) fn layout_browser(t: &mut TabData, images: &mut ImageCache, width: i3
     if register {
         t.forms = kitsune_core::web::form::FormState::new(&page.forms);
         t.img_keys.clear();
+        let logged = t.shield.blocked().len();
+        let mut left_out = false;
         for r in &page.images {
             let key = image_key(&base, &r.src);
             if let Some(k) = &key {
-                let data = (k.starts_with("data:#")).then_some(r.src.as_str());
-                images.want(k, data);
+                if t.shield.check(k.as_bytes()).is_some() {
+                    // The ad blocker: never fetched, and the layout gives it no box.
+                    if images.state(k) != ImgState::Blocked && images.block(k) {
+                        left_out = true;
+                    }
+                } else {
+                    let data = (k.starts_with("data:#")).then_some(r.src.as_str());
+                    images.want(k, data);
+                }
             }
             t.img_keys.push(key);
         }
-        if page.images.len() > kitsune_core::web::imgcache::MAX_PAGE_IMAGES {
+        if left_out || page.images.len() > kitsune_core::web::imgcache::MAX_PAGE_IMAGES {
             page = lay(images);
+        }
+        if left_out {
+            super::shield::log_new(&t.shield, logged, "image");
+            super::shield::log_tally(&t.shield);
         }
     }
     // Make each stored picture exactly the size of its box so painting is a plain copy.

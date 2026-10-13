@@ -190,6 +190,7 @@ impl Desktop {
             }
             A_MOTION => s.reduce_motion = !s.reduce_motion,
             A_TOASTS => s.toasts = !s.toasts,
+            A_ADBLOCK => s.ad_block = !s.ad_block,
             A_TOAST_SECS | A_ZOOM => {
                 st.drag = hid;
                 self.settings_slider(id, hid, hrect, px, &mut s);
@@ -406,6 +407,7 @@ impl Desktop {
                 st.knobs[0].set(if s.reduce_motion { 256 } else { 0 });
                 st.knobs[1].set(if s.toasts { 256 } else { 0 });
                 st.knobs[2].set(if s.clock24 { 256 } else { 0 });
+                st.knobs[3].set(if s.ad_block { 256 } else { 0 });
                 for k in st.knobs.iter_mut() {
                     k.step(dt_ms, 60);
                 }
@@ -426,7 +428,7 @@ impl Desktop {
                 || st.sb.active(crate::desktop::shell::toasts::now_ms())
                 || {
                     let s = crate::settings::get();
-                    [s.reduce_motion, s.toasts, s.clock24]
+                    [s.reduce_motion, s.toasts, s.clock24, s.ad_block]
                         .iter()
                         .zip(&st.knobs)
                         .any(|(on, k)| k.target() != if *on { 256 } else { 0 })

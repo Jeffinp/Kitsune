@@ -130,7 +130,7 @@ troubleshooting: [`docs/BUILDING.md`](docs/BUILDING.md) (Portuguese).
 | **System apps** | Terminal (a shell with dozens of commands, pipes, scripts, `ping`/`nslookup`/`curl`), Editor (find and replace, undo, 16 MiB files), Files (copy/move with progress, trash), Images, Browser, Activity monitor, Log, Settings, Calculator | [`editor-shell.md`](docs/design/editor-shell.md), [`sysmgmt.md`](docs/design/sysmgmt.md), [`image.md`](docs/design/image.md) |
 | **Storage** | **OJFS v3**: journal, copy-on-write, extents, CRC32, `fsck` at boot, automatic migration from v2, block cache; a single VFS layer for the desktop | [`ojfs3.md`](docs/design/ojfs3.md) |
 | **Network** | `virtio-net` and NE2000, ARP/IPv4/ICMP/DHCP with renewal, cached DNS, TCP, **verified TLS 1.3**, time by SNTP | [`tls-browser.md`](docs/design/tls-browser.md) |
-| **Browser** | HTML, CSS (cascade), layout, PNG/BMP/PPM/GIF/JPEG images, GET and POST forms (`<select>`, `<textarea>`), bookmarks, find in page, zoom, redirects, gzip/deflate, resource limits | [`tls-browser.md`](docs/design/tls-browser.md) |
+| **Browser** | HTML, CSS (cascade), layout, PNG/BMP/PPM/GIF/JPEG images, GET and POST forms (`<select>`, `<textarea>`), bookmarks, find in page, zoom, redirects, gzip/deflate, **a native ad and tracker blocker** (shield in the address bar, per-site switch), resource limits | [`tls-browser.md`](docs/design/tls-browser.md) |
 | **WebAssembly apps** | A runtime with its own ABI and a WASI subset, a manifest with permissions and quotas, installation in `/apps`, data in `/data/<id>`. Bundled: Clock, Notes, Paint and Snake; DOOM runs as an app | [`apps.md`](docs/design/apps.md) |
 | **Languages** | Brazilian Portuguese and English, live, plurals, date and number formats | [`i18n.md`](docs/design/i18n.md) |
 | **System** | Persistent settings (`/etc/kitsune.conf`), a ring-buffer kernel log (`/var/log`), notifications, entropy with reseeding and per-source health | [`sysmgmt.md`](docs/design/sysmgmt.md), [`entropy.md`](docs/design/entropy.md) |
@@ -255,7 +255,7 @@ Kitsune/
 │   ├── ui/            #   drawing and visual identity (gfx, fonts, icons, brand, animation, widgets)
 │   ├── storage/       #   block device, cache, OJFS v2/v3, VFS
 │   ├── network/       #   DHCP, DNS, ICMP, SNTP, X.509, TLS verification
-│   ├── browsing/      #   HTML/CSS engine, browser model, redirects
+│   ├── browsing/      #   HTML/CSS engine, browser model, redirects, ad blocker
 │   ├── format/        #   PNG, BMP, PPM, GIF, JPEG, deflate/gzip, ZIP, text encodings, base64, Unix time, search
 │   ├── platform/      #   the WebAssembly app platform: ABI, manifest, installation, sandbox
 │   ├── system/        #   log, monitor, notifications, processes, heap, entropy, settings, input

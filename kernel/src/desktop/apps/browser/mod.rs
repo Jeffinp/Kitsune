@@ -13,6 +13,7 @@
 //!
 //! - `state`, `model` the window state and its methods
 //! - `fetch`, `page`, `tabs`, `layout` loading, scrolling, tabs and page layout
+//! - `shield` the ad blocker's side of it: the per-site list on disk, the toggle, the popover's geometry
 //! - `keys`, `mouse`, `hover` input
 //! - `ui` the chrome (toolbar, tab strip, start and error pages, popups); `paint` the page
 
@@ -24,6 +25,7 @@ mod model;
 mod mouse;
 mod page;
 pub(super) mod paint;
+mod shield;
 mod state;
 mod tabs;
 mod ui;

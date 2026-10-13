@@ -21,10 +21,14 @@
 //! tz_city=17
 //! terminal_font=17
 //! editor_font=13
+//! adblock=1
 //! ```
 //!
 //! `language` is a tag of [`Lang`] (`pt-BR`, `en`; `pt` and `en-US` read the same). `clock` is `24`,
 //! `12` or `auto` (the default: follow the language, 24 hours in Portuguese and 12 in English).
+//!
+//! `adblock` is the browser's ad and tracker blocker (`1`, the default, or `0`); the sites where the person
+//! turned it off are a separate list, `/home/.shields` (see `browsing::shields`).
 //!
 //! `auto_lock` (minutes without input before the screen locks; 0 or absent = never; only for an account with a password).
 //! `terminal_font` and `editor_font` (text size in pixels, [`FONT_MIN`] to [`FONT_MAX`]) are written
@@ -103,6 +107,8 @@ pub struct Settings {
     pub editor_font: u8,
     /// Minutes without input before the screen locks (0 = never).
     pub auto_lock_min: u8,
+    /// The browser blocks ads and trackers (a site can still turn it off for itself).
+    pub ad_block: bool,
 }
 impl Default for Settings {
     /// The defaults: dynamic wallpaper, indigo accent, 24-hour clock, Brasilia time
@@ -132,6 +138,7 @@ impl Settings {
             terminal_font: FONT_DEFAULT,
             editor_font: FONT_DEFAULT,
             auto_lock_min: 0,
+            ad_block: true,
         }
     }
 

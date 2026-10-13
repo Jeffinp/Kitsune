@@ -9,7 +9,7 @@
 //!   / `alt=...` / `width=...`; inside `<form action=...><input name=... value=...>`;
 //!   as a `data:image/png;base64,` payload.
 //! * `mode >> 2`: the state every `<img>` is reported in (pending, ready with
-//!   a size taken from the bytes, unsupported, failed, too big, too many).
+//!   a size taken from the bytes, unsupported, failed, too big, too many, blocked by the ad blocker).
 //! * `zoom`: mapped onto `[0, 400]` (the engine clamps to 50..=300).
 //!
 //! Invariants checked after every layout: no coordinate overflows, every
@@ -69,7 +69,7 @@ impl TextMetrics for Weird {
 }
 
 fn state_from(sel: u8, a: u8, b: u8) -> ImgState {
-    match sel % 6 {
+    match sel % 7 {
         0 => ImgState::Pending,
         1 => ImgState::Ready {
             w: i32::from(a) * 40 + 1,
@@ -78,8 +78,41 @@ fn state_from(sel: u8, a: u8, b: u8) -> ImgState {
         2 => ImgState::Unsupported,
         3 => ImgState::Failed,
         4 => ImgState::TooBig,
-        _ => ImgState::TooMany,
+        5 => ImgState::TooMany,
+        _ => ImgState::Blocked,
     }
+}
+
+/// The ad blocker on hostile bytes: addresses, page hosts, the site list file, the cosmetic rules on
+/// the page itself and the sheet queue with a blocking page. Never panics, counts stay sane.
+fn shields_exercise(raw: &[u8], html: &str) {
+    use kitsune_core::shields::{self, PageShield, SiteList};
+    let _ = shields::classify(raw, raw);
+    let mut url = b"https://".to_vec();
+    url.extend_from_slice(raw);
+    let _ = shields::classify(b"example.org", &url);
+    let mut shield = PageShield::new(&url, true);
+    let _ = shield.check(&url);
+    let _ = shield.check(raw);
+    assert!(shield.tally().ads + shield.tally().trackers <= 2);
+    let mut sites = SiteList::parse(raw);
+    sites.set_off(raw, true);
+    assert_eq!(SiteList::parse(&sites.to_text()), sites);
+    let mut doc = Doc::parse(html.as_bytes());
+    let hidden = shields::hide_ads(&mut doc);
+    shield.add_hidden(hidden);
+    check_page(&doc.layout(&Layout {
+        width: 400,
+        zoom: 100,
+        images: &NoImages,
+        metrics: &FixedAdvance,
+    }));
+    let mut set = kitsune_core::web::sheets::SheetSet::default();
+    set.begin_with(&doc, b"https://example.org/", &mut shield);
+    let _ = set.finish_with(&mut doc, "https://example.org/a.css", Some(&html[..html.len().min(2000)]), &mut shield);
+    let mut cache = ImageCache::new();
+    cache.block(html);
+    let _ = cache.state(html);
 }
 
 fn check_page(p: &Page) {
@@ -150,6 +183,7 @@ fn exercise(data: &[u8]) {
     };
 
     let state = state_from(mode >> 2, raw.first().copied().unwrap_or(0), raw.get(1).copied().unwrap_or(0));
+    shields_exercise(raw, &html);
     let doc = Doc::parse(html.as_bytes());
     let _ = doc.title();
     let mut page = None;

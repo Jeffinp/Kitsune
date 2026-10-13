@@ -2,6 +2,7 @@
 
 use super::index::kv_row;
 use crate::desktop::apps::ajustes::builder::Ui;
+use crate::desktop::apps::ajustes::state::A_ADBLOCK;
 use crate::desktop::apps::ajustes::state::A_REBOOT;
 use crate::desktop::apps::ajustes::state::A_SHUTDOWN;
 use crate::desktop::apps::ajustes::state::ROW;
@@ -135,6 +136,17 @@ pub(super) fn page_network(ui: &mut Ui<'_, '_>, d: &Desktop) {
         tx = Arg::Num(snap.tx_packets as i64)
     );
     kv_row(ui, card, 3, t!("settings.net.packets"), &pk);
+    ui.header(t!("settings.net.privacy"));
+    let card = ui.card(ROW);
+    let k = ui.st.knobs[3].value();
+    ui.row_switch(
+        card,
+        0,
+        t!("settings.net.adblock"),
+        t!("settings.net.adblock_sub"),
+        k,
+        A_ADBLOCK,
+    );
 }
 
 pub(super) fn page_disk(ui: &mut Ui<'_, '_>, d: &Desktop) {

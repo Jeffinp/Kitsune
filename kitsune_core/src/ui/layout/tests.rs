@@ -163,6 +163,31 @@ fn the_shield_takes_room_from_the_address_text() {
 }
 
 #[test]
+fn the_blocker_button_sits_between_the_address_and_the_star() {
+    let r = Rect::new(0, 0, 700, 500);
+    let base = BrowserChrome::of(r, 1, 100);
+    assert_eq!(base.blocker.w, 0);
+    let c = base.with_blocker(40);
+    assert_eq!(c.blocker.w, 40);
+    assert!(c.blocker.right() < c.star.x && c.blocker.x > c.shield.right());
+    assert!(c.blocker.x >= c.bar.x && c.blocker.bottom() <= c.bar.bottom());
+    assert_eq!(c.text_right(true), c.blocker.x - 4);
+    assert_eq!(base.text_right(true), base.star.x - 4);
+    assert_eq!(base.text_right(false), base.bar.right() - 12);
+    // Never more than a third of the omnibox, and the text never gets a negative width.
+    let narrow = BrowserChrome::of(Rect::new(0, 0, 300, 300), 1, 5000).with_blocker(5000);
+    assert!(narrow.blocker.w <= narrow.bar.w / 3);
+    assert!(narrow.text_right(true) >= narrow.text_x());
+    // The popover hangs under the button, inside the window.
+    let win = Rect::new(0, 0, 700, 500);
+    let p = browser_blocker_popover(c.blocker, c.bar, win, 200);
+    assert!(p.x >= win.x + 8 && p.right() <= win.right() - 8);
+    assert_eq!(p.y, c.bar.bottom() + 8);
+    let tiny = browser_blocker_popover(c.blocker, c.bar, Rect::new(0, 0, 200, 300), 100);
+    assert!(tiny.x >= 8 && tiny.w >= 120);
+}
+
+#[test]
 fn tab_rects_share_the_strip_and_animate_with_their_weights() {
     let strip = Rect::new(0, 100, 700, 36);
     let full = browser_tab_rects(strip, &[256, 256, 256]);

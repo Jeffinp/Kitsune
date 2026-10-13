@@ -14,6 +14,9 @@ pub(crate) enum BrowserHover {
     NewTab,
     Star,
     Shield,
+    /// The ad blocker's button in the address bar, and the switch in its popover.
+    Blocker,
+    BlockerSwitch,
     Bar,
     /// A tab of the strip (index into the tabs, not the strip).
     Tab(usize),
@@ -65,6 +68,8 @@ pub(crate) struct TabData {
     pub hover_link: Option<usize>,
     /// The certificate summary of the page on screen (https only).
     pub cert: Option<kitsune_core::browser::CertInfo>,
+    /// The ad blocker for the page on screen: on or off, and what it left out.
+    pub shield: kitsune_core::shields::PageShield,
     /// The progress bar under the omnibox.
     pub load: kitsune_core::browser::motion::LoadBar,
     /// Fill of the favourite star, 0 (outline) to 1 (filled).
@@ -107,6 +112,10 @@ pub(crate) struct BrowserState {
     pub hover: BrowserHover,
     /// The security popover is open.
     pub popover: bool,
+    /// The ad blocker's popover is open.
+    pub shield_pop: bool,
+    /// The sites where the person turned the ad blocker off (saved in `/home/.shields`).
+    pub sites: kitsune_core::shields::SiteList,
     /// The page's context menu: where it opened, what it can do.
     pub ctx: Option<PageMenu>,
     /// The line over the bottom of the page ("Favorito adicionado") and its fade.
@@ -177,6 +186,7 @@ impl TabData {
             sel: None,
             hover_link: None,
             cert: None,
+            shield: kitsune_core::shields::PageShield::off(),
             load: kitsune_core::browser::motion::LoadBar::new(),
             star: kitsune_core::anim::Tween::at(0.0),
             cancelled: false,
@@ -204,6 +214,8 @@ impl BrowserState {
             strip_h: kitsune_core::anim::Tween::at(0.0),
             hover: BrowserHover::None,
             popover: false,
+            shield_pop: false,
+            sites: super::shield::load_sites(),
             ctx: None,
             notice: None,
             notice_flash: kitsune_core::browser::motion::Flash::new(),

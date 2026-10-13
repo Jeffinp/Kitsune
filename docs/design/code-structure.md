@@ -14,7 +14,7 @@ kitsune_core/src/            pure no_std logic, host-tested (forbid(unsafe_code)
   security/   account password | perm | session                        (users, passwords, permissions)
   storage/    blockdev blockcache | fs (OJFS v2) fs3 (OJFS v3) | vfs secured
   network/    net dns icmp sntp lease netstats | x509 tlsverify
-  browsing/   web (HTML/CSS/layout engine) | browser (model: tabs, history, errors) | redirect
+  browsing/   web (HTML/CSS/layout engine) | browser (model: tabs, history, errors) | redirect | shields (ad blocker)
   format/     base64 | inflate deflate gzip zip | png bmp ppm gif jpeg image | elf | text | unixtime | search
   platform/   appabi wasmsec | appmanifest appinstall | appfs | appnet      (the WASM app platform)
   system/     klog sysmon sysif | notify | process schedule paging heap | entropy rng | settings

@@ -1090,6 +1090,9 @@ settings.net.no_link = No signal
 settings.net.waiting = Looking for an address
 settings.net.connected = Connected
 settings.net.connection = Connection
+settings.net.privacy = Browser
+settings.net.adblock = Ad and tracker blocker
+settings.net.adblock_sub = Each site can be allowed from the shield in the address bar
 settings.net.addresses = Addresses
 settings.net.static = Static
 settings.net.left = {t} left
@@ -1213,6 +1216,17 @@ web.sec.verified_note = The connection is encrypted and the site's identity was 
 web.sec.unverified = Not verified
 web.sec.unverified_note = You chose to continue with this site for this session. Do not enter passwords or personal details.
 web.sec.http_note = This connection is not encrypted: other people on the network can see what you send and receive.
+# Navegador: bloqueador de anúncios e rastreadores (escudo na barra de endereço)
+web.shield.title = Ad blocker
+web.shield.site_switch = Block on this site
+web.shield.ads = Ads blocked
+web.shield.trackers = Trackers blocked
+web.shield.hidden = Boxes hidden
+web.shield.note_on = Known ads and trackers are not requested from the network and ad boxes are hidden. Links are never blocked.
+web.shield.note_off_site = Off for this site: the page opened without the filter. Turn it back on if the site does not ask you to disable it.
+web.shield.note_off_global = Turned off in Settings (Network). Turn it on there to block ads and trackers.
+web.notice.shield_on = Ad blocker on for this site
+web.notice.shield_off = Ad blocker off for this site
 # Navegador: find bar, context menu, notices
 web.find.placeholder = Find in page
 web.find.none = None
@@ -1439,6 +1453,7 @@ kit.accent_colors = Accent colors
 kit.glyphs = Glyphs
 # Notificações: toasts the system raises for the person (the log keeps the English text)
 notify.bookmarks_unsaved = Could not save your bookmarks
+notify.shields_unsaved = Could not save your ad blocker choice
 notify.wallpaper_missing = Wallpaper not found; using the default
 notify.wallpaper_refused = Wallpaper refused ({why}); using the default
 notify.app_refused = Could not open: {why}

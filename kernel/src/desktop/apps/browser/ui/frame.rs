@@ -88,6 +88,9 @@ impl Desktop {
         if bs.popover {
             self.draw_security_popover(c, r, &ch, bs);
         }
+        if bs.shield_pop {
+            self.draw_blocker_popover(c, r, &ch, bs);
+        }
         self.draw_suggestions(c, &ch, bs, focused);
         if let Some(m) = &bs.ctx {
             self.draw_page_menu(c, r, m, bs);

@@ -153,13 +153,11 @@ impl Desktop {
             }
         }
 
+        self.draw_blocker_button(c, ch, bs);
+
         // The address.
         let tx = ch.text_x();
-        let right = if can_star {
-            star.x - 4
-        } else {
-            bar.right() - 12
-        };
+        let right = ch.text_right(can_star);
         let room = (right - tx).max(8);
         let ty = text::center_y(bar.y, bar.h, BODY, Weight::Regular);
         let url = text::from_bytes(t.browser.url()).into_owned();

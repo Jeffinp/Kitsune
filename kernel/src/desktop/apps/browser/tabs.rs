@@ -138,6 +138,7 @@ impl Desktop {
             t.sel_anchor = None;
         }
         b.popover = false;
+        b.shield_pop = false;
         b.ctx = None;
         b.hover = BrowserHover::None;
         for s in b.glass.iter() {

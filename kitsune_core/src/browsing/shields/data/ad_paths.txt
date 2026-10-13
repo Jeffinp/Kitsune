@@ -1,0 +1,13 @@
+/adserver/
+/ads/banner
+/ads/ad
+/adframe.
+/adview.
+/advert/
+/adverts/
+/advertisement/
+/banner_ads/
+/doubleclick/
+/pagead/
+/show_ads.
+/adsbygoogle.js
