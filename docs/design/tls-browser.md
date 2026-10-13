@@ -1185,7 +1185,8 @@ sonda e no QEMU.
 |---|---|
 | Carga dos scripts do embed (compilar + nível de cima) | `ytembeds` 0,57 MB: 1,9 s; `base.js` 1,9 MB: 7,4 s; módulo de 1,1 MB inserido depois: 2,3 s; BotGuard 63 KB: 0,3 s (antes do novo `malloc`: 6,2 s, 62,2 s e 15,8 s). Nativo (hospedeiro, `jsrun-host`): 0,08–0,13 s, 0,35–0,47 s, 0,12 s |
 | Rede | `youtubei/v1/player` 33 KB em 96 ms; módulo de 1 MB a 5,2 MB/s; 8 conexões e 7 handshakes TLS para ~20 pedidos |
-| Memória | hospedeiro: ~40 MB de pico do processo de página (`VmHWM`, binário incluso) |
+| Memória | QEMU: o heap do processo da página passou de 32 MiB (`proc: 'jsrun' pid N heap 32 MiB`; não chegou a 48) com o player carregado e os pedidos feitos; hospedeiro: ~40 MB de pico do processo (`VmHWM`, binário incluso) |
+| Outra rodada, com o hospedeiro ocupado (um `cargo clippy` em paralelo) | `base.js` em 11,6 s |
 
 ### 16.6 O que falta e os limites conhecidos
 
@@ -1210,6 +1211,7 @@ sonda e no QEMU.
 | `<script>` na árvore e `ScriptRef::elem`, `PageScript`, `init` com `wait` + `script_message`, `Mode::Script` e `is_javascript_type`, `Referer` de links/formulários/recarga, `<noscript>` escondido | `cargo test -p kitsune_core` (`script::tests`, `html_tests`, `net::tests`, `cors::tests`, `browser::referrer_tests`, `layout_tests::styles`) |
 | O prelúdio com os scripts do YouTube, no QuickJS de verdade e no V8 | `node tools/yt-probe.js ...` (§16.2): 0 exceções, `player` 200, BotGuard, pedidos SABR com PO token |
 | Nada quebrou no prelúdio | `node tools/js-dom-check.js`, `js-net-check.js`, `js-media-check.js` |
+| Nada quebrou (mesma imagem: `<script>` na árvore, scripts por mensagem, `malloc` novo, `Referer`, `<noscript>`) | `w52-browser-js.sh` 19/19, `w58-video.sh` PASS (48 linhas, som medido), `w59-spa.sh` 24/24 |
 | Tudo junto no QEMU | `tools/perf/scen/w60-youtube.sh`: PASS em 8 etapas (HTML, `base.js`, scripts entregues, scripts rodaram, scripts inseridos, `player`, `videoplayback`, `<video>` com player) e FAIL honesto em 4 (bytes no `SourceBuffer`, `playing`, imagens, som), pelo motivo do §16.4 |
 
 Para tentar no computador do dono (Windows, WHPX, IP residencial): `python tools/w24-site.py 8479` no Windows e, no
