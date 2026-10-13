@@ -54,6 +54,8 @@ interface pequena de chamadas de sistema. É o primeiro passo da fase 3 de
 | 52 | `spawn(req, len)` | inicia um filho (programa embutido ou imagem ELF, argumentos, pasta, entrada padrão; até 1 MiB; `pack_spawn`); devolve o pid. Age com a mesma `Cred` do pai |
 | 53 | `proc_poll(pid, ptr, cap)` | move até `cap` bytes da saída do filho e diz se ele ainda roda (`pack_poll`: bytes, estado, status) |
 | 54 | `proc_kill(pid)` | para um filho |
+| 56 | `page_recv(ptr, cap, timeout_ms)` | só o processo de script de uma página do Navegador (`spawn_page`): a próxima mensagem do navegador; devolve o tamanho, 0 se nada veio no prazo (0 só olha, `u64::MAX` espera sem limite), `E2BIG` se não cabe (a mensagem é descartada); os outros processos recebem `ENOSYS` |
+| 57 | `page_send(ptr, len)` | idem, uma mensagem para o navegador (até 4 MiB); `EAGAIN` com 8 MiB esperando |
 
 Todo ponteiro é traduzido pelas tabelas do próprio processo, página por página
 (`AddressSpace::copy_in`), antes de o kernel tocar nele: um ponteiro ruim é um erro de retorno
@@ -195,8 +197,15 @@ QuickJS com o mesmo script, nativo no hospedeiro (Linux, clang -O2, a CPU deste 
 JIT, como o V8, é bem mais rápido nesses laços). O alocador por baixo (`linked_list_allocator` do SDK, primeiro
 encaixe) não foi medido à parte; o QuickJS já agrupa os objetos pequenos em arenas de 4 KiB.
 
-**Ainda não.** `Intl` (datas e números localizados), módulos (`import`), `setTimeout` e qualquer API da web (DOM,
-`fetch`): isso é a etapa 2 do roadmap. O motor ainda não está ligado ao Navegador. Sem `test262`.
+**Modo página (`jsrun --page`).** O Navegador inicia um `jsrun` por aba cuja página tem scripts
+(`userproc::spawn_page`, com a `Cred` da sessão). Nesse modo o programa avalia primeiro o DOM em JavaScript
+(`src/bin/jsrun/dom.js`) e entra no laço de `src/page.c`: espera uma mensagem (chamada 56) ou o próximo timer, roda as
+tarefas vencidas com **3 s cada** (o interrupt handler do QuickJS interrompe a que passar disso; o processo e a página
+seguem), os jobs de promise, e devolve o documento pela chamada 57 quando mudou. O desenho, as mensagens e as APIs
+estão no [`tls-browser.md`](tls-browser.md) §12; prova no cenário `w52-browser-js.sh`.
+
+**Ainda não.** `Intl` (datas e números localizados), módulos (`import`), `fetch`/`XMLHttpRequest`. Sem `test262`.
+Fora do modo página não há `setTimeout` nem DOM.
 
 ## O que foi provado em QEMU (cenário W43)
 

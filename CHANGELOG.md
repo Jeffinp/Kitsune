@@ -4,6 +4,23 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — JavaScript nas páginas do Navegador (etapa 2, mínima)
+
+- O Navegador roda o JavaScript das páginas: **um processo `jsrun --page` (anel 3) por aba** com scripts, com a sua
+  cópia do DOM em JavaScript (`user-apps/jsrun/src/bin/jsrun/dom.js`) e o laço de `src/page.c`. Scripts inline e
+  `src` (buscados pelo `fetcher`, `KIND_SCRIPT`, até 1 MiB cada) rodam em ordem; `DOMContentLoaded` e `load`;
+  `document`, seletores, `createElement`/`appendChild`/`innerHTML`/`classList`/`setAttribute`/`style`/`dataset`,
+  eventos com captura e bolha e atributos `on*`, `setTimeout`/`setInterval`/`requestAnimationFrame`, `location`,
+  `navigator`, `URL`, `localStorage` em memória. Cada mudança volta ao navegador como documento inteiro e refaz o
+  layout. 3 s por tarefa: um laço infinito é interrompido e a página continua.
+- Cliques: o elemento sob o ponteiro (caixa por elemento no layout, `Page::node_at`) recebe o evento; link e botão de
+  envio esperam o veredito (`preventDefault`) por até 1,5 s; `javascript:` e `location.href` funcionam. Em páginas
+  com scripts, `<button>` e campos fora de `<form>` aparecem (num formulário que nunca é enviado).
+- Kernel: chamadas **56 `page_recv`** e **57 `page_send`** (só para o processo de uma página), `userproc::spawn_page`.
+- Núcleo: `web::script` (`ScriptSet`, mensagens, `Session`), `Element::uid`, `parse_html_full`,
+  `Doc::replace_from_script`, `Doc::set_track`; exemplo `script_init`. Página `/js` em `tools/w24-site.py`.
+- Cenário `tools/perf/scen/w52-browser-js.sh` (19/19 no QEMU). Detalhes e limites em `docs/design/tls-browser.md` §12.
+
 ## 2026-10 — Arquivos grandes divididos
 
 - Os arquivos de código acima de ~600 linhas foram divididos por responsabilidade, sem mudar comportamento (a regra de
