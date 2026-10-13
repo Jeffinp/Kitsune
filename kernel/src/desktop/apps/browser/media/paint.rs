@@ -58,7 +58,7 @@ fn blit_rgba(c: &mut Canvas, src: &[u8], sw: u32, sh: u32, src_bgr: bool, dst: R
     };
     FB_BGR.store(fb_bgr, core::sync::atomic::Ordering::Relaxed);
     // Swap R and B when the picture's order is not the framebuffer's.
-    let (c0, c2) = if fb_bgr != src_bgr { (2, 0) } else { (0, 2) };
+    let swap = fb_bgr != src_bgr;
     let stride = info.stride;
     // The source column of every screen column, once.
     let cols: Vec<usize> = (r.x..r.right())
@@ -83,22 +83,37 @@ fn blit_rgba(c: &mut Canvas, src: &[u8], sw: u32, sh: u32, src_bgr: bool, dst: R
         above = Some((sy, start));
         let row = &src[sy * sw * 4..(sy + 1) * sw * 4];
         let out = &mut buf[start..start + len];
-        if bpp == 4 && c0 == 0 && same_cols {
+        if bpp == 4 && !swap && same_cols {
             // The picture's size and order: the row as it is.
             out.copy_from_slice(row);
-        } else if same_cols {
-            for (o, p) in out.chunks_exact_mut(bpp).zip(row.as_chunks::<4>().0) {
-                o[0] = p[c0];
-                o[1] = p[1];
-                o[2] = p[c2];
+            continue;
+        }
+        // A pixel is one 4-byte load and one 4-byte store (under emulation every memory access
+        // counts): with 3 bytes a pixel the store's last byte is the next pixel's first, written
+        // over by it, so the row's last pixel goes byte by byte.
+        let n = cols.len();
+        let whole = if bpp == 4 { n } else { n.saturating_sub(1) };
+        let px = |sx: usize| {
+            let v = u32::from_le_bytes([
+                row[sx * 4],
+                row[sx * 4 + 1],
+                row[sx * 4 + 2],
+                row[sx * 4 + 3],
+            ]);
+            if swap {
+                (v & 0xFF00_FF00) | ((v >> 16) & 0xFF) | ((v & 0xFF) << 16)
+            } else {
+                v
             }
-        } else {
-            for (o, &sx) in out.chunks_exact_mut(bpp).zip(&cols) {
-                let p = &row[sx * 4..sx * 4 + 4];
-                o[0] = p[c0];
-                o[1] = p[1];
-                o[2] = p[c2];
-            }
+        };
+        for i in 0..whole {
+            let sx = if same_cols { i } else { cols[i] };
+            out[i * bpp..i * bpp + 4].copy_from_slice(&px(sx).to_le_bytes());
+        }
+        if whole < n {
+            let sx = if same_cols { whole } else { cols[whole] };
+            let v = px(sx).to_le_bytes();
+            out[whole * bpp..whole * bpp + 3].copy_from_slice(&v[..3]);
         }
     }
 }
