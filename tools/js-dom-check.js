@@ -319,7 +319,7 @@ class WorkerProc {
     vm.runInContext('delete globalThis.Intl;', ctx);
     ctx.__kjs_native = {
       send: (m) => this.fromWorker(String(m)),
-      sendBytes: () => 0,
+      sendBytes: (h) => { this.fromWorker(String(h)); return 0; },
       random: (n) => { const b = nodeCrypto.randomBytes(n); return b.buffer.slice(b.byteOffset, b.byteOffset + n); },
       evalScript: (c, n) => { try { vm.runInContext(c, ctx, { filename: n }); return true; } catch (e) { log('Uncaught ' + e); return false; } },
     };
@@ -333,8 +333,25 @@ class WorkerProc {
     if (kind === 'M') this.page.kjs.onMessage(JSON.stringify({ t: 'worker', id: this.id, ev: 'message', data: rest }));
     else if (kind === 'E') this.page.kjs.onMessage(JSON.stringify({ t: 'worker', id: this.id, ev: 'error', message: rest }));
     else if (kind === 'Z') { this.closed = true; this.page.kjs.onMessage(JSON.stringify({ t: 'worker', id: this.id, ev: 'end' })); }
+    else if (kind === 'F') {
+      // The network answers every request of a worker with {"ok":true} (and a cookie, as the browser does).
+      const rid = +rest.split('\n')[0];
+      this.later = this.later || [];
+      this.later.push(() => this.answer(rid));
+    }
   }
-  async pump() { for (let i = 0; i < 50; i++) { if (!this.kjs.runOne()) break; await new Promise((r) => setImmediate(r)); } }
+  answer(rid) {
+    {
+      this.kjs.onMessage(JSON.stringify({ t: 'fetch', id: rid, ev: 'head', status: 200, statusText: 'OK', url: 'http://h:8279/x', redirected: false, type: 'basic', cookie: 'c=1', headers: [['content-type', 'application/json']] }));
+      const b = Buffer.from('{"ok":true}');
+      this.kjs.onData(rid, b.buffer.slice(b.byteOffset, b.byteOffset + b.length));
+      this.kjs.onMessage(JSON.stringify({ t: 'fetch', id: rid, ev: 'end' }));
+    }
+  }
+  async pump() {
+    for (const f of (this.later || []).splice(0)) f();
+    for (let i = 0; i < 50; i++) { if (!this.kjs.runOne()) break; await new Promise((r) => setImmediate(r)); }
+  }
 }
 Page.prototype.onWorkerOp = function (rest) {
   this.workers = this.workers || new Map();
@@ -353,7 +370,7 @@ async function workers() {
   const p = new Page('<!doctype html><html><head><title>w</title></head><body><p id="o"></p></body></html>', 'http://h:8279/w');
   await p.pump(30);
   p.eval(`globalThis.wlog = [];
-    const code = "onmessage = (e) => { postMessage({ got: e.data.n, sq: e.data.n * e.data.n, d: e.data.d instanceof Date, u8: Array.from(e.data.u8), m: new Map([[1, 'a']]) }); }; " +
+    const code = "onmessage = (e) => { fetch('http://h:8279/x.json').then((r) => r.json()).then((j) => postMessage({ got: e.data.n, sq: e.data.n * e.data.n, d: e.data.d instanceof Date, u8: Array.from(e.data.u8), m: new Map([[1, 'a']]), net: j.ok })); }; " +
       "postMessage('ready ' + typeof document + ' ' + typeof window + ' ' + typeof self.postMessage + ' ' + (self instanceof WorkerGlobalScope) + ' ' + location.protocol + ' ' + typeof fetch + ' ' + typeof setTimeout);";
     const w = new Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
     w.onmessage = (e) => wlog.push(e.data);
@@ -364,8 +381,9 @@ async function workers() {
     for (const w of (p.workers || new Map()).values()) await w.pump();
   }
   const got = p.eval('wlog');
+  if (got.length !== 2) console.log('   | wlog ' + JSON.stringify(got) + ' worker logs: ' + [...(p.workers || new Map()).values()].map((w) => w.logs.join(' / ')).join(' | '));
   check(got.length === 2 && got[0] === 'ready undefined undefined function true blob: function function', 'a worker runs its script without document or window: ' + JSON.stringify(got[0]));
-  check(got[1] && got[1].got === 7 && got[1].sq === 49 && got[1].d === true && got[1].u8.join() === '1,2' && got[1].m instanceof p.eval('Map') && got[1].m.get(1) === 'a', 'postMessage both ways with structured clone (Date, Uint8Array, Map)');
+  check(got[1] && got[1].got === 7 && got[1].sq === 49 && got[1].d === true && got[1].u8.join() === '1,2' && got[1].m instanceof p.eval('Map') && got[1].m.get(1) === 'a' && got[1].net === true, 'postMessage both ways with structured clone (Date, Uint8Array, Map), fetch in the worker');
   p.eval(`globalThis.w2 = new Worker(URL.createObjectURL(new Blob(['setTimeout(() => close(), 1)']))); globalThis.werr = 0; globalThis.w3 = new Worker('data:text/javascript,1'); w3.onerror = () => werr++;`);
   for (let i = 0; i < 10; i++) { await p.pump(10); for (const w of (p.workers || new Map()).values()) await w.pump(); }
   check(p.eval('werr') === 1 && p.workers.size === 2, 'a third worker is refused with an error event');

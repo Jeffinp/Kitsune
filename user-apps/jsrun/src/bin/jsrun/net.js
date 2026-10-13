@@ -623,7 +623,7 @@
     const rec = pending.get(m.id);
     if (!rec) return;
     if (m.ev === 'head') {
-      if (typeof m.cookie === 'string') document._cookieText = m.cookie;
+      if (typeof m.cookie === 'string') kjs.dom.document._cookieText = m.cookie;
       rec.head(m);
     } else if (m.ev === 'end') { pending.delete(m.id); rec.end(); }
     else if (m.ev === 'error') { pending.delete(m.id); rec.error(String(m.message || 'network error')); }
@@ -632,7 +632,7 @@
   const baseOnMessage = kjs.onMessage;
   kjs.onMessage = function (text) {
     if (text.startsWith('{"t":"fetch"')) { onNet(JSON.parse(text)); return; }
-    if (text.startsWith('{"t":"cookie"')) { document._cookieText = String(JSON.parse(text).v); return; }
+    if (text.startsWith('{"t":"cookie"')) { kjs.dom.document._cookieText = String(JSON.parse(text).v); return; }
     baseOnMessage(text);
   };
   kjs.onData = function (id, buffer) {
