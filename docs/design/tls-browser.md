@@ -796,4 +796,6 @@ pausas maiores que os 15 s de ociosidade (o layout da página leva segundos no T
 | CORS (pré-voo, lista segura, Allow-Origin/Credentials, cabeçalhos expostos, Referer, proibidos) | `browsing::cors::tests` |
 | Mensagens `F`/`X`/`C` e as de volta | `web::script::net::tests` |
 | `fetch`/XHR/streams/abort/`FormData`/`TextDecoder` em stream no JavaScript, com um navegador falso | `node tools/js-net-check.js user-apps/jsrun/src/bin/jsrun` |
-| Tudo junto no QEMU (BIOS, 256 MiB), página `/net` de `tools/w24-site.py` (rotas em `tools/w24net.py`) | `tools/perf/scen/w55-net-js.sh`: **23/23** verificações do script e 8 do log (cookies guardados e salvos em `~/.cookies`, CORS recusado e pré-voo no log, o escudo contou o `fetch`, conexões reutilizadas); `docs/img/browser-net-js.png` |
+| Tudo junto no QEMU (BIOS, 256 MiB), página `/net` de `tools/w24-site.py` (rotas em `tools/w24net.py`) | `tools/perf/scen/w55-net-js.sh`: **23/23** verificações do script e 8 do log (cookies guardados e salvos em `~/.cookies`, CORS recusado e pré-voo no log, o escudo contou o `fetch`, conexões reutilizadas), repetido três vezes; `docs/img/browser-net-js.png` |
+| Nada quebrou com o keep-alive no servidor de teste e no navegador | `w52-browser-js.sh` 19/19 e `w53-shields.sh` 21/21 com o mesmo build |
+| Página real (Wikipédia) com cookies e conexões reutilizadas; um pânico do CSS achado e corrigido | `w50-real-site.sh` (§13.6) |
