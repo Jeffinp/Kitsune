@@ -1,6 +1,7 @@
 // Host check of the page network in JavaScript (user-apps/jsrun/src/bin/jsrun/{dom,net}.js) with Node:
 // node tools/js-net-check.js user-apps/jsrun/src/bin/jsrun
 // A fake browser answers the F messages; prints ok/FAIL per check and exits 1 on a failure.
+const vm = require('vm');
 const fs = require('fs');
 const nodeCrypto = require('crypto');
 const dir = process.argv[2];
