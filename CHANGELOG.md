@@ -4,6 +4,28 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — O YouTube fluido (no QEMU sem KVM)
+
+A gravação do YouTube travava (1–4 quadros/s e o player parado em `waiting` aos 13 s). Medido e corrigido um fator por
+vez (`docs/design/tls-browser.md` §17); o W61 agora mostra **19–24 quadros/s** (240p), sem `waiting`, som contínuo, e o
+ponteiro responde em ~50 ms durante o vídeo (era ~0,7 s).
+
+- **Kernel**: blocos de até 2 KiB do heap vêm de slabs por classe (eram uma lista ligada percorrida a cada alloc e
+  free: ~55 mil ciclos cada sob TCG); thread **rebaixada** no escalonador (o JavaScript da página enquanto o vídeo
+  toca com folga); chamada 67 `cpu_ms` (o limite de 3 s de uma tarefa da página conta CPU, não relógio); `perf-trace`
+  com amostras do PC de todas as threads e sem o pânico de mais de 8 threads.
+- **Navegador**: o quadro de vídeo é copiado por linha também no framebuffer de 3 bytes do modo BIOS (era pixel a
+  pixel, e com R e B trocados); o decodificador não amplia (o compositor amplia ao copiar); a qualidade honesta:
+  `decodingInfo().smooth` pela velocidade medida do decodificador (o clipe embutido, duas passadas) e
+  `getVideoPlaybackQuality()` com os quadros descartados de verdade.
+- **Página (`jsrun`)**: documento igual ao último não vai; com vídeo tocando e sem entrada, no máximo um por segundo; o
+  escape do documento sem regex sobre centenas de KB de CSS; classes médias (1–64 KiB) no `malloc` do C.
+- **Decodificador (`mediadec`)**: o som não espera as imagens atrasadas, pulo ao keyframe vencido, quadros pouco
+  atrasados ainda mostrados; convolução vertical com janela deslizante e cópia de bloco em SSE2 (bit a bit iguais);
+  `memcpy`/`memset` em SSE2 no lugar dos `rep movs`.
+- **Ferramentas**: `w61-youtube-record.sh` com `MOUSE=1`; `yt-probe.js --save-docs --timers`; `render_page --script
+  --repeat`.
+
 ## 2026-10 — O YouTube toca no Navegador
 
 - O embed oficial do YouTube (`/embed/dQw4w9WgXcQ`) toca no Kitsune, no QEMU: o JavaScript do Google roda no `jsrun`, o

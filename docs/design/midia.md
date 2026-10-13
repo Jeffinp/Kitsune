@@ -123,9 +123,13 @@ pré-rolagem) funcionam sobre os quadros, sem pedir nada de novo. O que foi toca
 passa de 24 MiB; acima de 48 MiB um pedaço é recusado (`BUF_FULL`, o `QuotaExceededError`).
 
 **Orçamento.** O decodificador trabalha à frente do player dentro do que ele permite (`IN_FLOW`: bytes de imagem e de
-som esperando por ele; `IN_ACK` devolve): o som primeiro (barato, e é o relógio), até 1,5 s à frente das imagens; uma
-imagem que já passou do relógio do player (`IN_TIME` a cada 250 ms) é decodificada (o VP9 precisa dela) mas não é
-convertida nem enviada. Um seek (`IN_SEEK` com época) responde `OUT_MARK` antes de qualquer saída da posição nova; o
+som esperando por ele; `IN_ACK` devolve): o som primeiro (barato, e é o relógio), até 1,5 s à frente das imagens ou
+do relógio, o que estiver mais adiante (com as imagens atrasadas o som não pode esperar por elas); uma imagem que
+passou do relógio do player (`IN_TIME` a cada 250 ms) há mais de 250 ms é decodificada (o VP9 precisa dela) mas não é
+convertida nem enviada (uma a cada 200 ms vai mesmo assim), e com a próxima imagem mais de 750 ms atrás do relógio a
+decodificação pula para o último keyframe já vencido (`TrackBuffer::key_after`). As imagens descartadas assim vão
+contadas no cabeçalho do quadro seguinte (o player as soma às suas: `getVideoPlaybackQuality`). O tamanho pedido
+(`IN_SIZE`) nunca é maior que o do vídeo: o navegador amplia ao copiar. Um seek (`IN_SEEK` com época) responde `OUT_MARK` antes de qualquer saída da posição nova; o
 player descarta o que vier de épocas velhas.
 
 **`src` por endereço.** O navegador pede o arquivo ao `fetcher` (fila dos pedidos de scripts, `Range` de 1 MiB) com o
@@ -149,14 +153,16 @@ em todo navegador) sem abrir a porta para a página ler respostas de outra orige
 | → | `0x0D` | FLOW | `u32` bytes de imagem, `u32` bytes de som que o player aceita esperando |
 | → | `0x0E` | ACK | `u32`, `u32`: bytes de imagem e de som que o player liberou |
 | → | `0x0F` | CUE | `u8` fonte, `i64` tempo: onde está o cluster (pelas `Cues`) |
+| → | `0x11` | BENCH | decodificar duas vezes o clipe embutido (o `small.webm` dos testes, 320x180) e responder BENCH |
 | ← | `0x81` | HEADER | `u64` duração (ns), `u32` largura, `u32` altura, `u8` vídeo, `u8` áudio, `u8` canais, `u8` fonte, `u32` 48000 |
-| ← | `0x82` | FRAME | `u8` 1 se B, G, R, A, 2 bytes 0, `i64` tempo, `u32` largura, `u32` altura, pixels (a partir do byte 20) |
+| ← | `0x82` | FRAME | `u8` 1 se B, G, R, A, `u16` imagens descartadas (atrasadas) desde a anterior, `i64` tempo, `u32` largura, `u32` altura, pixels (a partir do byte 20) |
 | ← | `0x83` | AUDIO | `i64` tempo (ns), `u32` amostras por canal, s16le estéreo 48 kHz |
 | ← | `0x84` | BUFFERED | `u8` fonte, `u32` sequência, `u8` estado (0, 1 cheio, 2 quebrado), `u32` n, n pares `i64` início/fim |
 | ← | `0x85` | DRAINED | `u32` época, `u32` quadros, `u32` pacotes de som |
 | ← | `0x86` | MARK | `u32` época |
 | ← | `0x87` | CUE | `u8` fonte, `i64` tempo, `u64` offset (`u64::MAX`: sem índice) |
 | ← | `0x88` | FETCH | `u32` id, `u8` 1 cabeça / 2 fim / 3 erro, `u32` status, `u64` tamanho do arquivo, `u64` bytes recebidos |
+| ← | `0x89` | BENCH | `u32` imagens e `u64` pixels de uma passada, `u32` ms da segunda passada, `u32` ms das duas |
 | ← | `0x8F` | ERROR | `u32` código (1 contêiner, 2 vídeo, 3 áudio, 4 mensagem, 5 memória, 6 sem codec), texto UTF-8 |
 
 Os tempos do áudio tiram o atraso do codec (o `pre-skip`, ~6,5 ms): o primeiro sample é o tempo 0, como manda o
@@ -208,6 +214,7 @@ teste de 3 s (90 quadros, keyframe por segundo). "Nativo" é o mesmo C no hosped
 | C genérico, **QEMU TCG** (`w57`, anel 3) | 79 fps | 34,6 fps | 8,8 fps |
 | + intrínsecos SSE2 (transformadas, filtro de laço, convolução), nativo | ~2800–4000 fps | ~1100–1300 fps | ~300–360 fps |
 | + intrínsecos SSE2, **QEMU TCG** (`w57`, anel 3) | **91 fps** | **45,7 fps** | **13,0 fps** |
+| + filtro vertical com janela deslizante, cópia de bloco em SSE2 (2026-10, `tls-browser.md` §17), nativo | ~4800–5200 fps | ~1400–1800 fps | ~430–440 fps |
 
 * **Meta (360p a 30 fps nativo): passada com folga de ~35×.** Mesmo sob emulação TCG, sem KVM, o 360p decodifica a
   ~46 fps, acima do tempo real; o 720p fica em ~13 fps sob TCG (em hardware real ou com KVM, ~300 fps).
@@ -215,6 +222,11 @@ teste de 3 s (90 quadros, keyframe por segundo). "Nativo" é o mesmo C no hosped
   intrínsecos SSE2 **do próprio libvpx** (C, sem assembly); a convolução de 8 taps da predição inter (cujo SSE2 no
   libvpx é assembly) foi reescrita em intrínsecos em `csrc/convolve_sse2.c`, com a mesma aritmética. Todas são bit a
   bit iguais ao C: o MD5 de cada quadro continua igual ao do ffmpeg.
+* O filtro vertical (`vert` em `convolve_sse2.c`) desce cada faixa de colunas guardando em registradores as 8 linhas
+  de que precisa: uma carga por linha de saída em vez de oito, os mesmos bytes lidos e a mesma conta (MD5 igual). O
+  `vpx_convolve_copy` (vetor de movimento inteiro) usa cargas SSE2 em vez de um `memcpy` por linha, e o `memcpy`/
+  `memset` do programa todo (C e Rust) são os da `csrc/libc/libc.c`, em SSE2: os do `compiler_builtins` são `rep
+  movs`/`rep stos`, que o QEMU TCG executa um elemento por passo (eram ~15 % do decodificador lá).
 * O áudio custa ~0,3 s por 3 s de som sob TCG (~10 % de um núcleo emulado); nativo, ~10 ms.
 * A conversão para RGBA (com escala para 1280x720) custa ~1–1,6 ms por quadro nativo e ~31 ms sob TCG (era ~140 ms
   com a escala bilinear escalar).
@@ -223,8 +235,8 @@ teste de 3 s (90 quadros, keyframe por segundo). "Nativo" é o mesmo C no hosped
 
 ## O que falta
 
-* Velocidade sob emulação: o player toca 360p com o som perfeito, mas mostra ~11–13 quadros/s no QEMU TCG (o
-  decodificador usa ~65 % da CPU emulada só para acompanhar os 30 fps); em hardware real ou com KVM sobra.
+* Velocidade sob emulação: sob o QEMU TCG o YouTube toca em 240p (o orçamento medido, `tls-browser.md` §17); 360p
+  real pede mais CPU do que sobra ao decodificador lá. Em hardware real, com KVM ou WHPX sobra.
 * VP9 perfil 2 (10 bits, HDR), Opus multicanal (família 1), AV1, H.264/AAC.
 * Threads no decodificador (o VP9 suporta por tiles; um processo tem um fio hoje).
 * Busca para além do que foi baixado num `src` por endereço: o download segue em ordem até lá (as `Cues` no fim do

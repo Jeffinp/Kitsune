@@ -660,6 +660,28 @@ O veredito diz etapa por etapa até onde chegou (HTML, `base.js`, scripts, scrip
 o console e as linhas de mídia do serial. Numa rede que reassina o HTTPS a imagem precisa da raiz do gateway
 (`EXTRA_PEM` de `tools/gen-trust-store.sh`, nunca commitado).
 
+### YouTube tocando: gravação e desempenho (W61)
+
+Projeto e diário em [`design/tls-browser.md`](design/tls-browser.md) §17. Com a imagem do W60 (raiz do gateway em
+`EXTRA_PEM`, nunca commitada; de preferência `--features perf-trace`):
+
+```bash
+setsid nohup python3 tools/w24-site.py 8479 > /tmp/site-yt.log 2>&1 &
+OUT=/tmp/w61; VIDEO=dQw4w9WgXcQ REC=40 QEMU_MEM=256M QEMU_NIC=virtio-net-pci PORT=8479 \
+QEMU_NETDEV="user,id=n0,net=203.0.113.0/24,host=203.0.113.5,dhcpstart=203.0.113.15,dns=203.0.113.3" \
+QEMU_EXTRA="-audiodev wav,id=snd0,path=$OUT-audio.wav,out.frequency=48000 -device AC97,audiodev=snd0" \
+  bash tools/perf/run.sh IMG bios $OUT 800 tools/perf/scen/w61-youtube-record.sh    # MOUSE=1: o ponteiro anda
+bash tools/media/make-demo-video.sh $OUT $OUT-audio.wav /tmp/w61.mp4 3.2               # o MP4 (captura a ~4,6 fps)
+```
+
+A medida confiável é o log do guest: a cada 10 s tocando, `media: element N played X ms of media in Y ms (playing):
+F pictures shown (fps), D dropped (K by the decoder); CPU decoder %, compositor %, page %` (e `(waiting)` quando o som
+acaba), `media: decoder speed test: ... budget ...` (o orçamento que decide a qualidade) e `fmt=NNN` nos pedidos do
+player (242 = 240p, 243 = 360p, 244 = 480p). Com `perf-trace`: `[trace] input ... irq->frame` (com `MOUSE=1`, quanto a
+tela demora a seguir o ponteiro) e `[trace] pc <slot> r<anel> 0xADDR n` (endereços mais quentes por thread; mapear
+com `nm -C` no ELF do kernel, tirando a base `0x10000000000`, ou no do programa com símbolos, ver §17.1). Medida em
+2026-10 (TCG, 916x480): 19–22 fps com `perf-trace`, 21–24 fps sem, 0 `waiting`.
+
 ### DOM para frameworks (W59): Preact, Vue e Workers
 
 Host: `cargo test -p kitsune_core script:: same_document html_tests` (mensagens de entrada, retrato do layout,
@@ -691,7 +713,7 @@ Projeto em [`design/tls-browser.md`](design/tls-browser.md) §14. Hospedeiro:
 ```bash
 cargo test -j2 -p kitsune_core media                          # TimeRanges, track buffer, relógio, player, mensagens, controles
 cargo test -j2 -p kitsune_core layout_tests::media            # caixa de <video>/<audio>
-node tools/js-media-check.js user-apps/jsrun/src/bin/jsrun    # a API em JavaScript com um navegador falso (52)
+node tools/js-media-check.js user-apps/jsrun/src/bin/jsrun    # a API em JavaScript com um navegador falso (57)
 target/mediacheck/release/mediacheck V.webm --serve-test         # o decodificador do player (src inteiro, seek, fetch)
 target/mediacheck/release/mediacheck V.webm --serve-mse A.webm   # MSE: vídeo e som em fontes separadas
 ```

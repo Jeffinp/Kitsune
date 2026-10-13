@@ -63,6 +63,7 @@ interface pequena de chamadas de sistema. É o primeiro passo da fase 3 de
 | 64 | `audio_ctl(id, op, valor)` | volume do fluxo, pausa, descartar a fila, volume e mudo do sistema, taxa do dispositivo |
 | 65 | `audio_wait(id, quer, timeout_ms)` | espera `quer` bytes livres na fila, ou (`0`) até tudo ter tocado; 1 quando vale, 0 no prazo |
 | 66 | `getrandom(ptr, len)` | `len` bytes (até 64 KiB) do gerador do kernel (o mesmo do TLS); é o `crypto.getRandomValues` das páginas. |
+| 67 | `cpu_ms()` | ms de CPU que o processo já teve (os ticks do seu slot no escalonador, de 4 em 4 ms). O processo da página mede as suas tarefas com ela: uma tarefa esperando a CPU (o processo rebaixado enquanto o vídeo da página toca, `tls-browser.md` §17) não está rodando há muito tempo. |
 
 Todo ponteiro é traduzido pelas tabelas do próprio processo, página por página
 (`AddressSpace::copy_in`), antes de o kernel tocar nele: um ponteiro ruim é um erro de retorno
@@ -185,7 +186,9 @@ Detalhes que importam:
   imagem embutida com aquele nome, não para um arquivo `jsrun.elf` qualquer. A pilha é mapeada inteira na criação
   (1024 quadros).
 * **`malloc` do lado C** (`src/bin/jsrun/heap.rs`): blocos de até 1 KiB vêm de classes de 16 bytes (lista livre por
-  classe, pedaços de 256 KiB do alocador do SDK), os maiores do alocador do SDK (first-fit em lista ligada). Só com
+  classe, pedaços de 256 KiB do alocador do SDK), de 1 a 64 KiB de classes médias (quatro por dobra, cada bloco pedido
+  ao SDK uma vez e guardado numa lista livre ao ser liberado), os maiores do alocador do SDK (first-fit em lista
+  ligada; com o YouTube tocando, o first-fit para os blocos médios era ~22% do processo). Só com
   o first-fit, a rotatividade de alocações pequenas do QuickJS fazia cada `malloc` percorrer uma lista longa:
   compilar o `base.js` do YouTube (1,9 MB) levava 62 s sob TCG, agora 7,4 s (0,47 s nativo; `tls-browser.md` §16).
 * **Recursão.** O QuickJS para a recursão sem fim com `InternalError("stack overflow")` (como o SpiderMonkey); a cola
@@ -222,8 +225,10 @@ encaixe) não foi medido à parte; o QuickJS já agrupa os objetos pequenos em a
 **Modo página (`jsrun --page`).** O Navegador inicia um `jsrun` por aba cuja página tem scripts
 (`userproc::spawn_page`, com a `Cred` da sessão). Nesse modo o programa avalia primeiro o DOM em JavaScript
 (`src/bin/jsrun/dom.js`) e entra no laço de `src/page.c`: espera uma mensagem (chamada 56) ou o próximo timer, roda as
-tarefas vencidas com **3 s cada** (o interrupt handler do QuickJS interrompe a que passar disso; o processo e a página
-seguem), os jobs de promise, e devolve o documento pela chamada 57 quando mudou. O desenho, as mensagens e as APIs
+tarefas vencidas com **3 s de CPU cada** (chamada 67: o interrupt handler do QuickJS interrompe a que passar disso; o
+processo e a página seguem; antes era tempo de relógio, e uma tarefa que só esperava a CPU era interrompida), os jobs
+de promise, e devolve o documento pela chamada 57 quando mudou (um documento igual ao último não vai, e com um vídeo
+tocando sem entrada da pessoa vai no máximo um por segundo: `tls-browser.md` §17). O desenho, as mensagens e as APIs
 estão no [`tls-browser.md`](tls-browser.md) §12; prova no cenário `w52-browser-js.sh`.
 
 **Rede.** No modo página, `fetch` e `XMLHttpRequest` vão ao navegador por mensagens e o corpo volta em mensagens

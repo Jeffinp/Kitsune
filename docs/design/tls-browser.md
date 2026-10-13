@@ -536,7 +536,7 @@ chave do balão fica apagada. Esc, clique fora, troca de aba e página nova fech
 
 ## 11b. CPU e congelamentos
 
-Três causas, medidas com `perf-trace` (`path ...`, `cpu samples` por segundo) e `callgrind` sobre o exemplo `render_page`:
+Quatro causas, medidas com `perf-trace` (`path ...`, `cpu samples` por segundo) e `callgrind` sobre o exemplo `render_page`:
 
 1. **Espera ocupada na rede.** `netstack::Net::pause` (usada por `pump` e pelo `Read`/`Write` do TLS) gira alguns polls
    e depois dorme um tick de 4 ms com `sched::block` (só em thread de trabalho com interrupções ligadas).
@@ -545,6 +545,9 @@ Três causas, medidas com `perf-trace` (`path ...`, `cpu samples` por segundo) e
    ancestrais pelo caminho do elemento (`Stylesheet::path_bloom`).
 3. **Número de layouts.** `Relayout` (`browser/state.rs`) junta as chegadas de folhas e imagens; `Desktop::browser_flush_layout`
    (chamado por `bringup::pump_browser`) decide quando.
+4. **O alocador do kernel.** Uma lista ligada ordenada: com o heap fragmentado (quadros de vídeo, documentos de
+   centenas de KB) cada alloc e cada free percorriam centenas de nós (~55 mil ciclos sob TCG). Blocos de até 2 KiB
+   vêm de slabs por classe de tamanho (`allocator/slab.rs`, §17).
 
 Reproduzir: `tools/fetch-page-css.py URL /tmp/p` e `cargo run --release -p kitsune_core --example render_page -- /tmp/p/page.html 960 100 --real-font --css /tmp/p/css-*.css`
 (os tempos saem no stderr); no QEMU, `tools/perf/scen/w54-browser-idle.sh` com um build `--features perf-trace`.
@@ -1001,7 +1004,8 @@ Uma página com `<video>`/`<audio>` ganha o processo de script mesmo sem scripts
   fim). Uma margem menor que "suficiente" mas sem secar não derruba o `readyState` (sem `canplay`/`playing` repetidos).
 * **Orçamento e memória.** O decodificador manda no máximo 8 MiB de quadros e 512 KiB de som sem confirmação
   (`IN_FLOW`/`IN_ACK`): a memória do kernel por player fica limitada (o heap do kernel é de 64 MiB). Os quadros vêm
-  já no tamanho da caixa (o decodificador escala) e em B, G, R, A, copiados linha a linha. Os dados codificados
+  no tamanho da caixa mas nunca maiores que o vídeo (o decodificador reduz; o compositor amplia ao copiar, §17) e em
+  B, G, R, A, copiados linha a linha (também no framebuffer de 3 bytes por pixel). Os dados codificados
   ficam no decodificador (heap de até 128 MiB): o que já passou há mais de 10 s é esquecido acima de 24 MiB, e mais de
   48 MiB é recusado (`QuotaExceededError`).
 * **Seek, fim, loop.** `currentTime = t`, um clique na barra, `play()` depois do fim ou o `loop` mudam a época: o fluxo
@@ -1060,7 +1064,7 @@ download segue em ordem até lá), mais de 2 players por página, e o `sequence`
 | TimeRanges, track buffer (duração dos quadros, regravar o mesmo tempo, `remove` com dependentes, despejo, seek ao keyframe, cursor que pula buracos, duração de pacotes Opus), relógio, player (ordem dos eventos, sincronia pelo som com atraso do dispositivo, pausa, seek com época e `MARK`, `waiting`/`playing`, fim e `loop`, buracos e sobreposições do som, sem placa, volume e mudo, quadros vencidos em espera, sem oscilar), mensagens (página ↔ navegador e navegador ↔ decodificador, hostis recusadas), controles | `cargo test -p kitsune_core media` (41 testes) |
 | Layout de `<video>`/`<audio>` (300x150, tamanho do vídeo depois dos metadados, atributos e CSS, zoom, `display:block`, `<audio>` sem controles, pôster como imagem, fallback escondido, dentro de célula de tabela) e o processo de script para página só com mídia | `web::layout_tests::media` (6), `web::script::tests` |
 | O decodificador: arquivo inteiro, seek, orçamento, o `src` como o `fetcher` entrega, MSE com vídeo e som em fontes separadas e o init de novo | `tools/media/mediacheck V.webm --serve-test` e `--serve-mse VIDEO AUDIO` (§ [`midia.md`](midia.md)) |
-| A API em JavaScript com um navegador falso (tipos, `<source>`, `src` pelo navegador, `play()`/`pause()` e as promises, `currentTime`, seek, volume, eventos, `played`, MSE: `sourceopen`, dois buffers, pedaços de 1 MiB confirmados, `updating`, init de novo, `remove`, append quebrado, `endOfStream`, reabrir, `sourceclose`, `Blob` como `src`, `Audio()`, sem player livre) | `node tools/js-media-check.js user-apps/jsrun/src/bin/jsrun` (52 verificações) |
+| A API em JavaScript com um navegador falso (tipos, `<source>`, `src` pelo navegador, `play()`/`pause()` e as promises, `currentTime`, seek, volume, eventos, `played`, MSE: `sourceopen`, dois buffers, pedaços de 1 MiB confirmados, `updating`, init de novo, `remove`, append quebrado, `endOfStream`, reabrir, `sourceclose`, `Blob` como `src`, `Audio()`, sem player livre, `getVideoPlaybackQuality`, o orçamento de decodificação, o documento no máximo 1/s com vídeo tocando) | `node tools/js-media-check.js user-apps/jsrun/src/bin/jsrun` (57 verificações) |
 | Tudo junto no QEMU | `tools/perf/scen/w58-video.sh` (§14.5) |
 
 ### 15.5 Medidas no QEMU (TCG, sem KVM, BIOS, 256 MiB, AC'97 gravando em WAV)
@@ -1129,8 +1133,8 @@ sandbox em `EXTRA_PEM`) foi repetido com vários vídeos (`VIDEO=<id>`): **`dQw4
 `mediadec` decodificou, o título do vídeo aparece na aba, as imagens mudam na tela (286 938 pixels diferentes em 1 s) e
 o AC'97 gravou 65,4 s de som em 118,3 s (pico 16 526). `jNQXAC9IVRw`, `YE7VzlLtp-4` e `LXb3EKWsInQ` pararam no pedido da
 mídia, com "O conteúdo não está disponível" desenhado pelo player. Ou seja, o bloqueio do §16.4 é intermitente e depende
-do vídeo e do IP de saída daquele momento; o navegador cumpre o que a página do YouTube pede. Ainda sem medida: fps e
-CPU da reprodução do YouTube no QEMU.
+do vídeo e do IP de saída daquele momento; o navegador cumpre o que a página do YouTube pede. Medido e otimizado no §17:
+de 1–4 fps travando para 19–24 fps em 240p, sem `waiting`.
 
 ### 16.2 Método: a sonda no hospedeiro
 
@@ -1209,7 +1213,8 @@ sonda e no QEMU.
   5,6 MB no carregamento mais um módulo de 9,7 MB que o app insere (acima dos 4 MiB por script do navegador; na
   sonda ele estoura os 96 MiB de JS); o Polymer/webcomponents roda em parte. Sob TCG, compilar ~15 MB de JavaScript
   levaria mais de um minuto. Fica para depois: cache de bytecode, páginas maiores que 1 MiB, mais memória.
-* Teto de 480p pelo `isTypeSupported` (com KVM ou em hardware real o decodificador faria 720p, §15.5); o `Referer` de
+* Teto de 480p pelo `isTypeSupported` (com KVM ou em hardware real o decodificador faria 720p, §15.5), e abaixo dele o
+  orçamento medido do decodificador (`decodingInfo().smooth`, §17.3: 240p sob o TCG); o `Referer` de
   um redirecionamento entre origens não é recortado para a origem; a história (voltar/avançar) não guarda o
   `Referer`.
 
@@ -1225,3 +1230,119 @@ sonda e no QEMU.
 
 Para tentar no computador do dono (Windows, WHPX, IP residencial): `python tools/w24-site.py 8479` no Windows e, no
 Navegador do Kitsune, `http://10.0.2.2:8479/yt` (a rede padrão do QEMU), depois o link (ou `?go=1`).
+
+## 17. O YouTube fluido sob emulação: diário de otimização
+
+O dono assistiu à gravação do §16 e disse "está rodando, mas muito, muito travado". Medido no log do guest
+(`media: element N played ...`): **4 fps, depois 1 fps**, 36 quadros descartados em 12 s, a CPU emulada a 100 %
+(decodificador ~30–40 %, compositor ~20–33 %, página ~35–40 %), e o player **parado em `waiting` do segundo 13 até o
+fim da gravação**. Meta: ≥ 10–15 quadros/s mostrados, som sem `waiting` e a interface respondendo, **no QEMU TCG
+daqui** (sem KVM, ~20–50× mais lento que nativo; no WHPX do dono vai sobrar, mas o objetivo era reduzir o custo real).
+
+**Resultado** (W61, `dQw4w9WgXcQ`, BIOS, 256 MiB, janela do navegador 916x480, janelas de 10 s de reprodução):
+
+| | Antes | Depois (perf-trace) | Depois (imagem normal) |
+|---|---|---|---|
+| Quadros mostrados | 4 fps (2,4 s), depois 1 fps (10,7 s), depois parado | **19, 20, 22, 21 fps** | **21, 24, 24, 24 fps** |
+| Descartados por 10 s | 36 em 12 s (e nada mais andou) | 59, 37, 35, 37 | 39, 7, 8, 2 |
+| `waiting` | 2 (o segundo nunca saiu) | **0** | **0** |
+| Buracos no som gravado (≥ 100 ms, 45 s) | 5, o maior de 10 s | **0** | 0 |
+| CPU decodificador / compositor / página | 29–40 % / 18–33 % / 34–40 % | 44–49 % / 27–31 % / 19–23 % | 44–53 % / 24–28 % / 19–29 % |
+| Qualidade que o YouTube escolheu | 480p (`fmt=244`), que o decodificador não sustenta | 240p (`fmt=242`) | 240p |
+| Ponteiro andando sobre a barra durante o vídeo (`MOUSE=1`): IRQ → quadro na tela | média 661 ms, mediana 459 ms, máx. 1,75 s | média 58 ms, mediana 49 ms, máx. 0,54 s | — |
+| "a task ran for too long" | sim | **não** | não |
+
+O MP4 da gravação vem de `tools/media/make-demo-video.sh` (a captura do monitor do QEMU só faz ~4,6 quadros/s: a CPU
+emulada também paga o `screendump`; o log do guest é a medida confiável).
+
+### 17.1 Método
+
+* **Perfil por endereço** (`perf-trace`, `kernel/src/trace/pcs.rs`): a interrupção do timer anota o RIP da thread
+  interrompida (slot e anel) e a cada 4 s o relatório imprime, por thread, os endereços mais quentes
+  (`[trace] pc <slot> r<anel> 0xADDR n`). Mapeados às funções com `nm` no ELF do kernel (o kernel é PIE: tirar a base
+  `0x10000000000`) ou no do programa de anel 3 (o `jsrun`/`mediadec` embutidos são `strip`; o mesmo crate compilado
+  com `CARGO_PROFILE_RELEASE_STRIP=false` e as mesmas `RUSTFLAGS` do `kernel/build.rs` tem o `.text` idêntico).
+* **CPU em vez de relógio** nas notas do navegador (`[trace] browser layout: X us, cpu Y us`): sob carga o tempo de
+  parede conta as fatias das outras threads.
+* **A linha da mídia a cada 10 s tocando**, com a CPU da página e os quadros descartados pelo decodificador
+  separados (`... dropped (N by the decoder); CPU decoder X%, compositor Y%, page Z%`).
+* **A página no hospedeiro:** `node tools/yt-probe.js ... --save-docs` (cada documento que a página manda),
+  `--timers` (com `--engine node`: os timers por intervalo e função) e `node --cpu-prof` com `--engine node`;
+  `render_page --script --repeat N` faz layout de um documento como o processo da página o manda.
+
+### 17.2 Diário (um fator por vez, W61 depois de cada um)
+
+| # | Medido | Causa | Mudança | Efeito |
+|---|---|---|---|---|
+| 0 | o `perf-trace` entrava em pânico no meio do vídeo | `THREAD_CYC` tinha 8 posições e o escalonador 16 slots | uma por slot | o perfil funciona com página + workers + decodificadores |
+| 1 | o compositor dava **1 volta por segundo**; cada documento da página custava ~170 ms de parse e ~650 ms de layout (parede); `alloc` médio de **55 mil ciclos** (27 mil por segundo), `free` 36 mil | o heap do kernel é uma lista ligada ordenada: com os quadros de vídeo fragmentando, cada alloc e cada free percorriam centenas de nós | **slabs** de 64 KiB por classe para blocos de até 2 KiB (`allocator/slab.rs`, classes em `kitsune_core::heap`, testadas); um slab vazio volta à lista | alloc ~4–6 mil ciclos, parse do documento 170 → 45 ms; o vídeo ainda 2–5 fps com `waiting` |
+| 2 | `waiting` com `sink q=0`: o som acabava | o decodificador só adiantava o som 1,5 s à frente **das imagens**; com as imagens atrás do relógio, o som esperava por elas | o adiantamento conta do relógio quando as imagens estão atrás; imagem mais de 1 s atrás pula ao último keyframe vencido (`TrackBuffer::key_after`); os descartados vão no cabeçalho do quadro | **26,7 s seguidos sem `waiting`**, som contínuo; ainda 2 fps |
+| 3 | `Canvas::put` 45 % + `draw_browser` 18 % do compositor | o framebuffer do QEMU em BIOS tem **3 bytes por pixel** e o quadro de vídeo caía no caminho pixel a pixel (com uma divisão por pixel) — e esse caminho trocava R e B (rostos azulados) | cópia por linha para 3 e 4 bytes (tabela de colunas, linha repetida copiada); cores certas | amostras do compositor caíram à metade |
+| 4 | a página mandava o documento inteiro (**~385 KB**, 315 KB disso CSS em `<style>`) a cada lote de tarefas: o `timeupdate` (4/s) mexe na barra de progresso e no tempo | — | `jsrun`: documento igual ao último não vai; com vídeo tocando e sem entrada há 3 s, no máximo **1 por segundo** (`hooks.flushGap`) | a página passa a mandar ≤ 1/s (o que ela queria: 4/s) |
+| 5 | (com 2–4) o próprio YouTube baixou de 480p para 360p sozinho ~20 s depois | `getVideoPlaybackQuality` dizia 0 descartados; com os números reais o player aplica o seu corte por quadros perdidos (`html5_df_downgrade_thresh`) | `fs`/`fd` no estado: mostrados e descartados (do player e do decodificador) | prova de que o sinal honesto funciona; mas 20 s em 480p travando |
+| 6 | o YouTube escolhia 480p | `decodingInfo().smooth` respondia sim até 854x480 | **velocidade medida com o próprio decodificador** (§17.3) | `fmt=242` (240p) desde o começo |
+| 7 | a página sempre executável, dividindo a CPU por igual com o decodificador: `lre_exec` **43 %** do processo, o `malloc` grande 22 % | o escape do documento rodava 4 regex por texto e uma sobre os 315 KB de CSS (o QuickJS anda a regex um caractere por vez); blocos de 1–64 KiB no first-fit do SDK | `indexOf` antes da regex; classes médias no `malloc` do `jsrun` (§ `processos.md`) | 9 → 16 fps (240p) |
+| 8 | o decodificador ampliava 240p → 480p e mandava 4× os bytes | — | o quadro nunca é maior que o vídeo; o compositor amplia ao copiar | menos conversão e cópia |
+| 9 | a página com ~30–45 % mesmo sem nada urgente | rodízio igual para todos | **thread rebaixada** no escalonador (`sched::set_demoted`, `schedule::next_runnable_held`, testado): o processo da página espera enquanto outro pode rodar, e roda 1 tick em 7 ao disputar; o navegador rebaixa quando o vídeo toca com ≥ 5 s guardados (volta abaixo de 3 s) | página ~20 %; 14 → **18–22 fps** |
+| 10 | `vert`/`horiz` (convolução de 8 taps) ~50 % do decodificador | `vert` carregava e alargava 8 linhas por linha de saída | janela deslizante (bit a bit igual: MD5 do ffmpeg); `vpx_convolve_copy` em SSE2 | 360p nativo ~1200 → ~1400–1800 fps |
+| 11 | `memcpy` ~15 % do decodificador | o `compiler_builtins` copia com `rep movs`, que o TCG executa um elemento por passo | `memcpy`/`memset` em SSE2 na libc do `mediadec` (o símbolo do `compiler_builtins` é fraco) | 12–13 → 14 fps (antes do 9) |
+| 12 | 4–5 fps "estáveis" com o decodificador acompanhando o ritmo | uma imagem 40 ms atrasada não era convertida; um decodificador que começou um pouco atrás nunca mais mandava mais que 1 a cada 200 ms | só não converte acima de 250 ms de atraso; pulo ao keyframe acima de 750 ms | mostra o que decodifica |
+| 13 | "a task ran for too long" num job de promise de um módulo do ytembeds | o limite de 3 s era de **relógio**: com a página rebaixada (ou a CPU disputada) uma tarefa de 0,5 s de CPU levava 3 s | o limite conta a CPU do processo (chamada 67 `cpu_ms`) | sumiu |
+
+### 17.3 A qualidade honesta: o orçamento do decodificador
+
+O YouTube escolhe a maior qualidade cujo `navigator.mediaCapabilities.decodingInfo()` diz `smooth` (a função do
+`base.js` que corta pela primeira `videoInfo` com `smooth`), e depois corta mais se `getVideoPlaybackQuality()`
+mostrar muitos quadros perdidos em janelas de 5 s. Os dois sinais agora são medidos:
+
+* **Quanto este computador decodifica** (`kernel/src/desktop/apps/browser/media/speed.rs`): na primeira página com
+  scripts, um `mediadec` decodifica **duas vezes** o clipe embutido (o `small.webm` dos testes do demuxer, 320x180)
+  — a primeira passada aquece (sob o TCG ela também traduz o código e mede metade da velocidade) — e responde
+  `OUT_BENCH`; os ticks de CPU do processo (a página pode estar compilando ao mesmo tempo) dão pixels por segundo de
+  CPU. O orçamento de um vídeo tocando é **50 %** disso (`SHARE_PERCENT`: o resto é do compositor, da página e do som)
+  vezes **40 %** (`REAL_PERCENT`): o clipe é pequeno e simples, e sob o TCG o 360p real do YouTube decodificou a ~44 %
+  da taxa do clipe (nativo, um 240p real decodifica tão rápido por pixel quanto o clipe, e um 360p ~30 % mais devagar).
+  A página recebe o número (`wire::budget_message`) e `decodingInfo` responde `smooth` só se
+  `largura × altura × fps` couber nele (e no teto de 854x480 a 30 fps do `isTypeSupported`).
+* No QEMU TCG daqui o teste mede 14–20 Mpixels/s → orçamento ~3–4 Mpixels/s → **240p** (426x240 a 30 fps cabe; 360p
+  não). Num computador comum (KVM, WHPX, hardware real) o clipe decodifica a centenas de Mpixels/s e o teto de 480p
+  vale.
+* `getVideoPlaybackQuality()`: `totalVideoFrames` = mostrados + descartados, `droppedVideoFrames` = os que o player
+  jogou fora por atraso mais os que o decodificador não chegou a converter ou pulou (eram 0 sempre).
+
+### 17.4 O que não deu ganho (ou não foi feito)
+
+* **Medir a velocidade com um laço de inteiros no kernel**: 132 µs sob o TCG, quase a velocidade nativa — o TCG roda
+  laços de inteiros simples bem; o decodificador (SIMD e memória) sofre 20–30×. Trocado pelo decodificador de
+  verdade.
+* **A primeira passada do clipe** media metade (tradução do código pelo TCG) e mandou o YouTube para 144p (24 fps, mas
+  imagem pobre); daí as duas passadas.
+* **O clipe sozinho** superestimou o 360p real (o YouTube escolheu 360p e mostrou 4–5 fps com o decodificador a 53 %
+  da CPU); daí o `REAL_PERCENT`.
+* **Atrasar menos o descarte (40 → 250 ms) em 360p**: nada — o decodificador simplesmente não dá conta de 360p lá.
+* **Coalescer o documento** não diminuiu o número de documentos no começo: o sistema saturado já não passava de ~1 por
+  segundo; o ganho aparece depois que o resto ficou leve (a página queria 4 por segundo).
+* **Não feito**: mandar só o pedaço do DOM que mudou (o layout do documento do player, já sem o alocador lento, custa
+  ~4 ms de CPU, e o parse ~14 ms: não valia o risco agora); pular o filtro de laço do VP9 (~5 % do decodificador, com
+  artefatos que se acumulam até o próximo keyframe); converter I420 no compositor (o kernel não tem SSE); outras formas
+  da convolução horizontal; limitar `requestAnimationFrame` (o player usa timers: ~16 por segundo, de 0 a 1000 ms,
+  medido com `--timers`).
+
+### 17.5 O que ainda limita
+
+* Sob o TCG a CPU fica em 100 %: o decodificador precisa de ~45–50 % para o 240p a 25 fps (convolução, conversão de cor),
+  o compositor de ~25–30 % para ampliar 240p a 480 linhas em 3 bytes por pixel e enviar ao framebuffer (no
+  `perf-trace` ainda conta os bytes mudados de cada envio), e o JavaScript do player de ~20 %. 360p não cabe.
+* Com o ponteiro andando (o compositor redesenha a barra e a dica do Navegador), o vídeo cai para 7–18 fps.
+* 240p ampliado fica macio; é o que esta CPU emulada sustenta. Numa máquina rápida o mesmo código escolhe 480p.
+* O documento inteiro ainda vai uma vez por segundo durante o vídeo (385 KB).
+
+### 17.6 Provas
+
+| O quê | Evidência |
+|---|---|
+| Classes do slab, `key_after`, `next_runnable_held`, mensagens `OUT_BENCH`, `fs`/`fd`, `budget_message` | `cargo test -p kitsune_core` (`heap`, `media`, `schedule`) |
+| `getVideoPlaybackQuality`, o orçamento na página, o documento no máximo 1/s e igual não reenviado | `node tools/js-media-check.js user-apps/jsrun/src/bin/jsrun` (57) |
+| Convolução e cópia bit a bit iguais ao libvpx/ffmpeg | `tools/media/check-host.sh M` (90/90 MD5 nos três tamanhos) |
+| A reprodução | `tools/perf/scen/w61-youtube-record.sh` (§ `TESTING.md`), com e sem `perf-trace`, e `MOUSE=1` |
+| Nada quebrou | W52, W58, W59, W60 (`TESTING.md`) |

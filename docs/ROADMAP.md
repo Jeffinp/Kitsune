@@ -191,8 +191,13 @@ abaixo, e nenhuma existe ainda. Ordem proposta, cada etapa com aceite próprio:
    as imagens mudam na tela (286 938 pixels diferentes em 1 s) e a saída do AC'97 tem 65,4 s de som em 118,3 s de
    gravação. Três outros vídeos (`jNQXAC9IVRw`, `YE7VzlLtp-4`, `LXb3EKWsInQ`) deram "O conteúdo não está disponível" do
    próprio servidor do YouTube: a resposta depende do vídeo e do IP de saída da sandbox, que muda a cada conexão (as URLs de mídia são
-   amarradas ao IP). **Falta:** medir fps e CPU da reprodução do YouTube, a `/watch`, `<iframe>`, tela cheia,
-   legendas, e repetir no computador do dono (WHPX, IP residencial).
+   amarradas ao IP). **Fluido sob emulação (2026-10, `tls-browser.md` §17):** a primeira gravação travava (1–4 fps e
+   `waiting` para sempre aos 13 s); medido com amostras de PC por thread e corrigido fator a fator (alocador do kernel
+   em slabs, som que não espera imagens atrasadas, cópia do quadro no framebuffer de 3 bytes, documento da página
+   coalescido, qualidade escolhida pela velocidade medida do decodificador, JavaScript da página rebaixado no
+   escalonador enquanto o vídeo toca, convolução e `memcpy` do decodificador), o W61 mostra **19–24 fps em 240p**, sem
+   `waiting`, som sem buracos e o ponteiro respondendo em ~50 ms, no QEMU TCG. **Falta:** a `/watch`, `<iframe>`, tela
+   cheia, legendas, mandar só o que mudou no DOM, e repetir no computador do dono (WHPX, IP residencial).
    **Bring-up do player embutido (2026-10), até o pedido do vídeo; o vídeo não tocou na primeira rodada.** Com a página de
    embed real (`/embed/aqz-KE-bpKQ`, aberta por um link: sem `Referer` o YouTube dá "Error 153" em qualquer
    navegador), no QEMU (`w60-youtube.sh`): HTML, os 15 scripts (o `base.js` de 1,9 MB carrega em 7,4 s sob TCG depois

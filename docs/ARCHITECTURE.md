@@ -29,7 +29,9 @@ endereçamento**; o isolamento entre "app" e "kernel" vem do `#![forbid(unsafe_c
 - **Multitarefa preemptiva** a 250 Hz, com bloqueio. Threads: `compositor`, `fetcher`
   (rede), `appd` (apps WASM), duas `shelld` (comandos do terminal) e `logd` (grava o log em
   disco, dorme até ser chamada).
-- **Memória:** heap fixo de 64 MiB num BSS de ~91 MiB; sem alocador de frames. As page
+- **Memória:** heap fixo de 64 MiB num BSS de ~91 MiB (blocos de até 2 KiB em slabs de 64 KiB por
+  classe de tamanho, o resto numa lista ligada ordenada: `allocator.rs` e `allocator/slab.rs`); sem
+  alocador de frames. As page
   tables são do bootloader; o kernel só edita uma entrada de nível 1 por pilha de thread,
   para criar uma **guard page**.
 - **Falhas:** todas as exceções têm handler. Um panic ou exceção no `fetcher` ou no
@@ -346,7 +348,12 @@ slot morto continua contando em `thread_count`. O HUD mostra `thr 4` (3 sem NIC)
 
 ### 4.2 Política e estados
 
-Round-robin de quantum fixo (1 tick, 4 ms), sem prioridades. Uma thread é **executável**
+Round-robin de quantum fixo (1 tick, 4 ms), sem prioridades além de uma: uma thread **rebaixada**
+(`sched::set_demoted`) é passada adiante enquanto outra thread (que não a atual) pode rodar, e roda
+no máximo um tick a cada 7 quando disputa a CPU; quando ninguém mais quer a CPU ela roda
+(`kitsune_core::schedule::next_runnable_held`). O navegador rebaixa o processo de JavaScript de
+uma página enquanto um vídeo dela toca com 5 s ou mais guardados à frente
+(`tls-browser.md` §17). Uma thread é **executável**
 se não está morta **e** `WAKE[i] <= agora`: `0` é "pronta" e `FOREVER` (`u64::MAX`) é
 "estacionada até `wake`". A escolha é `kitsune_core::schedule::next_runnable(cur, n, pred)`
 (testada no host): tenta `cur+1, cur+2, ..., cur`, então a thread atual é a **última**
