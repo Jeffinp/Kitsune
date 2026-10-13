@@ -28,7 +28,7 @@ mod speed;
 mod stats;
 pub(crate) use direct::NetCtx;
 pub(crate) use paint::video_covers;
-pub(crate) use speed::{decode_budget, pump_speed_test, start_speed_test};
+pub(crate) use speed::{pump_speed, tell_budget};
 
 /// Players playing at once in a page (each is a decoder process with up to 128 MiB).
 pub(crate) const MAX_PLAYERS: usize = 2;

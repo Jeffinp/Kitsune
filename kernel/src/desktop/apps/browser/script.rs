@@ -166,15 +166,7 @@ impl Desktop {
         let mut media_redraw = false;
         let mut actions: Vec<(u32, JsAction)> = Vec::new();
         let mut title: Option<String> = None;
-        // The decoder's speed was just measured: every page hears it.
-        if let Some(budget) = super::media::pump_speed_test() {
-            for t in b.tabs.iter_mut() {
-                if let Some(js) = &t.js {
-                    let m = kitsune_core::media::wire::budget_message(budget);
-                    crate::userproc::page_post(js.pid, m);
-                }
-            }
-        }
+        super::media::pump_speed(b.tabs.iter().filter_map(|t| t.js.as_ref().map(|j| j.pid)));
         let BrowserState {
             tabs,
             images,
@@ -547,13 +539,7 @@ fn start_js(
     doc.set_track(true);
     let view = View::from_device(content.w, content.h, t.scroll, 0, t.zoom);
     crate::userproc::page_post(pid, view_message(&view));
-    // How fast this machine decodes video (measured once, `media/speed.rs`).
-    match super::media::decode_budget() {
-        Some(b) => {
-            crate::userproc::page_post(pid, kitsune_core::media::wire::budget_message(b));
-        }
-        None => super::media::start_speed_test(),
-    }
+    super::media::tell_budget(pid);
     crate::userproc::page_post(pid, webstore.message_for(&url));
     t.js = Some(JsProc {
         pid,

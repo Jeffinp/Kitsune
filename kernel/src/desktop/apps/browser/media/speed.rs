@@ -44,15 +44,35 @@ enum Bench {
 static BENCH: SpinLock<Bench> = SpinLock::new(Bench::Idle);
 
 /// The decoding budget for a playing video, in pixels a second, once measured.
-pub(crate) fn decode_budget() -> Option<u64> {
+fn decode_budget() -> Option<u64> {
     match *BENCH.lock() {
         Bench::Done(b) if b > 0 => Some(b),
         _ => None,
     }
 }
 
+/// A page's new script process `pid`: it hears the budget if it is known, else the measurement
+/// starts (and the page hears it from [`pump_speed`]).
+pub(crate) fn tell_budget(pid: u32) {
+    match decode_budget() {
+        Some(b) => {
+            crate::userproc::page_post(pid, wire::budget_message(b));
+        }
+        None => start_speed_test(),
+    }
+}
+
+/// Step the measurement; when it ends, the script processes `pids` (every page's) hear the budget.
+pub(crate) fn pump_speed(pids: impl Iterator<Item = u32>) {
+    if let Some(budget) = pump_speed_test() {
+        for pid in pids {
+            crate::userproc::page_post(pid, wire::budget_message(budget));
+        }
+    }
+}
+
 /// Start the measurement if it never ran.
-pub(crate) fn start_speed_test() {
+fn start_speed_test() {
     let mut b = BENCH.lock();
     if !matches!(*b, Bench::Idle) {
         return;
@@ -78,7 +98,7 @@ pub(crate) fn start_speed_test() {
 }
 
 /// Take the answer of a running measurement; returns the budget the moment it is known.
-pub(crate) fn pump_speed_test() -> Option<u64> {
+fn pump_speed_test() -> Option<u64> {
     let Bench::Running {
         pid,
         slot,
