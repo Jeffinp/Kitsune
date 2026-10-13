@@ -7,6 +7,7 @@
 #   NAME.vmd5        `ffmpeg -c:v libvpx-vp9 -f framemd5`: the MD5 of every decoded frame (I420)
 #   NAME.ref.raw     the audio decoded by ffmpeg (s16le, stereo, 48 kHz), the SNR reference
 #   NAME.libopus.raw the same decoded by libopus (float build) through ffmpeg
+#   NAME.rgba        the first picture converted to RGBA by ffmpeg (swscale), to check the colours
 # Also `small.webm` (320x180, 1 s, low rates, mono audio), the fixture of kitsune_core's webm
 # tests, and its packet list `small.packets.txt` (stream, pts in ms, keyframe flag, size).
 # Used by tools/media/check-host.sh and tools/perf/scen/w57-mediadec.sh. See docs/design/midia.md.
@@ -20,6 +21,8 @@ gen() { # gen SIZE VIDEO_RATE SECS NAME
   ffmpeg -v error -y -c:v libvpx-vp9 -i "$out/$4.webm" -map 0:v -f framemd5 "$out/$4.vmd5"
   ffmpeg -v error -y -i "$out/$4.webm" -map 0:a -f s16le -ac 2 -ar 48000 "$out/$4.ref.raw"
   ffmpeg -v error -y -c:a libopus -i "$out/$4.webm" -map 0:a -f s16le -ac 2 -ar 48000 "$out/$4.libopus.raw"
+  ffmpeg -v error -y -c:v libvpx-vp9 -i "$out/$4.webm" -map 0:v -frames:v 1 -sws_flags +accurate_rnd+bitexact \
+    -pix_fmt rgba -f rawvideo "$out/$4.rgba"
 }
 gen 320x180 100k 3 v180
 gen 640x360 300k 3 v360

@@ -21,7 +21,7 @@ for n in v180 v360 v720; do
   [ -f "$media/$n.webm" ] || continue
   echo "== $n"
   "$target/release/mediacheck" "$media/$n.webm" --vmd5 "$media/$n.vmd5" --aref "$media/$n.ref.raw" \
-    --pcm "$media/$n.pcm" "$@" || fail=1
+    --pcm "$media/$n.pcm" --rgbref "$media/$n.rgba" "$@" || fail=1
   md5sum < "$media/$n.pcm" | cut -d' ' -f1 > "$media/$n.pcm.md5"
   rm -f "$media/$n.pcm"
   "$target/release/mediacheck" "$media/$n.webm" --serve-test || fail=1

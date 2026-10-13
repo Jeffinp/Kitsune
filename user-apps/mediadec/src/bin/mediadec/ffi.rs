@@ -150,6 +150,11 @@ impl Picture<'_> {
         self.raw.height as u32
     }
 
+    /// `(vpx_color_space_t, vpx_color_range_t)`: 2 is BT.709, range 1 is full.
+    pub fn color(&self) -> (i32, i32) {
+        (self.raw.color_space, self.raw.color_range)
+    }
+
     /// Row `y` of plane `p` (0 Y, 1 U, 2 V), cropped to the visible width of that plane.
     pub fn row(&self, p: usize, y: u32) -> &[u8] {
         let (w, h) = self.plane_size(p);

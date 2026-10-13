@@ -124,8 +124,9 @@ const OPUS: &[&str] = &[
     "src/opus_decoder.c",
 ];
 
-/// The project's own C: the decoder wrappers and the colour conversion.
-const OWN: &[&str] = &["csrc/media.c", "csrc/yuv.c"];
+/// The project's own C: the decoder wrappers, the colour conversion and VP9's 8-tap convolutions
+/// in SSE2 (libvpx's are assembly).
+const OWN: &[&str] = &["csrc/media.c", "csrc/yuv.c", "csrc/convolve_sse2.c"];
 
 /// The small C library of the ring 3 build (the host uses its own).
 const LIBC: &[&str] = &["csrc/libc/libc.c"];
