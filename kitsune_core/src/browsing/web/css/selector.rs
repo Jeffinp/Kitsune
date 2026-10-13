@@ -38,7 +38,7 @@ impl AttrSel {
             AttrOp::Equals => eq(v, want),
             AttrOp::Word => v.split_ascii_whitespace().any(|w| eq(w, want)),
             AttrOp::Prefix => {
-                !want.is_empty() && v.len() >= want.len() && eq(&v[..want.len()], want)
+                !want.is_empty() && v.get(..want.len()).is_some_and(|h| eq(h, want))
             }
             AttrOp::Suffix => {
                 !want.is_empty()
