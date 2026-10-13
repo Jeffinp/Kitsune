@@ -42,6 +42,8 @@ const DOM_JS: &str = concat!(
     "\n",
     include_str!("jsrun/net.js"),
     "\n",
+    include_str!("jsrun/forms.js"),
+    "\n",
     include_str!("jsrun/events.js"),
     "\n",
     include_str!("jsrun/layoutapi.js"),
