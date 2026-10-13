@@ -799,3 +799,150 @@ pausas maiores que os 15 s de ociosidade (o layout da página leva segundos no T
 | Tudo junto no QEMU (BIOS, 256 MiB), página `/net` de `tools/w24-site.py` (rotas em `tools/w24net.py`) | `tools/perf/scen/w55-net-js.sh`: **23/23** verificações do script e 8 do log (cookies guardados e salvos em `~/.cookies`, CORS recusado e pré-voo no log, o escudo contou o `fetch`, conexões reutilizadas), repetido três vezes; `docs/img/browser-net-js.png` |
 | Nada quebrou com o keep-alive no servidor de teste e no navegador | `w52-browser-js.sh` 19/19 e `w53-shields.sh` 21/21 com o mesmo build |
 | Página real (Wikipédia) com cookies e conexões reutilizadas; um pânico do CSS achado e corrigido | `w50-real-site.sh` (§13.6) |
+
+## 14. Vídeo e áudio nas páginas: `<video>`, `<audio>` e Media Source Extensions
+
+Etapa 4 do item 11 do [`ROADMAP`](../ROADMAP.md) (o player): o que liga o JavaScript das páginas (§12–13), os
+decodificadores de anel 3 ([`midia.md`](midia.md)) e o mixer do kernel ([`audio.md`](audio.md)). Um WebM (VP9 + Opus)
+toca na página, com som e sincronia, por `src` ou por Media Source Extensions (o que o YouTube usa).
+
+### 14.1 Desenho
+
+```text
+página (jsrun --page, media.js)           navegador (compositor, kernel)                 decodificador (mediadec --serve)
+HTMLMediaElement, MediaSource, ─M/m──►    MediaPlayer por elemento:          ──proto──►   track buffers por fonte,
+SourceBuffer, TimeRanges        ◄─JSON─   Player (estado, eventos, relógio)  ◄─────────   VP9 + Opus, decodifica à frente
+                                          fluxo do mixer (crate::audio)                   dentro do orçamento
+                                          quadro na tela (Cmd::Video)        fetcher ───►  (src por endereço: direto aqui)
+```
+
+| Peça | Onde | O quê |
+|---|---|---|
+| Lógica pura (testada no host) | `kitsune_core::media` (`browsing/media.rs` + `media/`) | `ranges` (TimeRanges), `track` (track buffer: intervalos, `remove`, despejo, de onde decodificar), `proto` (navegador ↔ decodificador), `clock` (relógio e o `AudioSink`), `player` (o player e a máquina de estados com os eventos), `wire` (página ↔ navegador), `controls` (geometria dos controles) |
+| Layout | `web::layout` (`flow.rs`, `objects.rs`, `table/measure.rs`) | `<video>` e `<audio controls>` são objetos substituídos: caixa pelo `width`/`height` (atributo ou CSS), a outra medida pela proporção do vídeo (conhecida quando os metadados chegam: `Doc::set_media_size`) ou do pôster, 300x150 sem nada; `<audio controls>` 300x40; os filhos (`<source>`, texto de fallback) não aparecem. `Cmd::Video { uid, controls, audio, poster }` e `Page::videos` |
+| Pintor | `kernel/src/desktop/apps/browser/media/paint.rs` | o quadro atual (ou o pôster antes de tocar) em `object-fit: contain`, fundo preto, e os controles: play/pausa, tempo, barra de tempo com o botão, mudo, volume, e um play grande no meio do vídeo parado |
+| Players | `kernel/src/desktop/apps/browser/media.rs` + `media/` | um `MediaPlayer` por elemento que toca (no máximo 2 por página): processo `mediadec` (`userproc::spawn_media`), fluxo do mixer (dono: o pid do decodificador, então fecha com ele), o `Player`, o download de um `src` (`direct.rs`), os cliques nos controles (`controls.rs`), as linhas do log (`stats.rs`) |
+| JavaScript | `user-apps/jsrun/src/bin/jsrun/media.js` (depois do `net.js`) | ver §14.3; o `dom.js` só ganhou o registro de classes por tag (`elementClasses`) |
+| Mensagens | `web::script::parse_message` (`M`, `m`), `media::wire` | página → navegador: `M` + `op id args` (`open`, `close`, `src`, `play`, `pause`, `seek`, `vol`, `loop`, `eos`, `dur`, `rm`, `reset`, `tso`, `cue`) e `m` + `id fonte seq\n` + bytes; navegador → página: JSON `{"t":"media","id":...}` com o estado e os eventos, o que cada fonte guarda (`buf`), erros (`fail`) |
+
+Uma página com `<video>`/`<audio>` ganha o processo de script mesmo sem scripts (é ele que tem os elementos):
+`ScriptSet::ready` olha `Doc::has_media`.
+
+### 14.2 Reprodução e sincronia
+
+* **O som é o relógio.** Cada player abre um fluxo no mixer (48 kHz estéreo, `crate::audio` direto, sem chamada de
+  sistema) e escreve o PCM que o decodificador manda, em ordem de tempo; um buraco no som vira silêncio e uma
+  sobreposição é cortada, então a posição de cada amostra no fluxo é o seu tempo. O tempo da mídia é o tempo da
+  primeira amostra escrita depois do último seek mais o contador "tocado" do fluxo (o que **saiu** do dispositivo, não o
+  que entrou no DMA). Pausar o player pausa o fluxo; o mudo zera o volume e o relógio segue.
+* **Os quadros seguem o relógio.** A cada volta do compositor (até 250 Hz) o player mostra o último quadro com
+  `pts ≤ relógio` e descarta os anteriores (atrasados); sem quadro vencido, o da tela fica. Depois de um seek o
+  primeiro quadro da posição nova vai para a tela na hora (mesmo pausado).
+* **Sem placa de som** (`audio: no device`), ou num vídeo sem trilha de som, o relógio do sistema corre enquanto o
+  player toca, e para se as imagens acabam (com 1 s de tolerância para um decodificador lento).
+* **Esperar e retomar.** Tocando, se o som acaba sem o fim do stream (ou, sem som, as imagens), o player vai a
+  `waiting` (`readyState` 2, o fluxo pausado) e volta a `playing` com 300 ms de som à frente (ou o orçamento cheio, ou o
+  fim). Uma margem menor que "suficiente" mas sem secar não derruba o `readyState` (sem `canplay`/`playing` repetidos).
+* **Orçamento e memória.** O decodificador manda no máximo 8 MiB de quadros e 512 KiB de som sem confirmação
+  (`IN_FLOW`/`IN_ACK`): a memória do kernel por player fica limitada (o heap do kernel é de 64 MiB). Os quadros vêm
+  já no tamanho da caixa (o decodificador escala) e em B, G, R, A, copiados linha a linha. Os dados codificados
+  ficam no decodificador (heap de até 128 MiB): o que já passou há mais de 10 s é esquecido acima de 24 MiB, e mais de
+  48 MiB é recusado (`QuotaExceededError`).
+* **Seek, fim, loop.** `currentTime = t`, um clique na barra, `play()` depois do fim ou o `loop` mudam a época: o fluxo
+  é esvaziado, o decodificador recomeça do keyframe anterior a `t` (dentro do que está guardado; o áudio com 80 ms de
+  pré-rolagem) e só a saída marcada com a época nova vale. O fim (`ended`, e antes `pause`) chega quando o stream
+  terminou (`endOfStream`, ou o `src` baixado inteiro), o decodificador mandou tudo e o som tocou até a última amostra.
+* **Aba em segundo plano pausa** os seus players; outra página, a aba fechada ou o processo da página morto encerram
+  os players e os decodificadores.
+* **Só o vídeo é repintado.** Um quadro novo marca só a caixa do vídeo como suja (`mark_dirty`; o compositor trata essa
+  região sozinha como trabalho do quadro), e o pintor da página pula o resto quando a região está dentro de um vídeo.
+
+### 14.3 O que os scripts encontram
+
+`HTMLMediaElement`, `HTMLVideoElement`, `HTMLAudioElement`, `Audio()`: `src`, `currentSrc`, `srcObject` (só guarda),
+`<source>` escolhido por `type` (`canPlayType`), `load()`, `play()` (Promise: resolve no `playing`, rejeita com
+`AbortError` num `pause()`/`load()` antes, `NotSupportedError` sem fonte que toque), `pause()`, `paused`, `ended`,
+`seeking`, `currentTime` (lê e escreve; antes dos metadados guarda a posição de início; entre duas mensagens do
+navegador corre sozinho, sem voltar), `fastSeek`, `duration` (`NaN` sem metadados, `Infinity` desconhecida; com MSE, a
+do `MediaSource`), `volume` (`IndexSizeError` fora de 0–1), `muted`, `defaultMuted`, `playbackRate`/
+`defaultPlaybackRate` (guardados; só 1× toca), `readyState`, `networkState`, `buffered`, `seekable`, `played`
+(`TimeRanges` com `IndexSizeError`), `videoWidth`/`videoHeight`, `error` (`MediaError` com os códigos 1–4),
+`autoplay`, `loop`, `controls`, `preload`, `poster`, `playsInline`, `crossOrigin`, `width`/`height`,
+`getVideoPlaybackQuality`, `textTracks`/`audioTracks`/`videoTracks` (vazios), as constantes `NETWORK_*`/`HAVE_*`, e
+os eventos `loadstart`, `progress`, `suspend`, `abort`, `error`, `emptied`, `loadedmetadata`, `loadeddata`,
+`canplay`, `canplaythrough`, `playing`, `waiting`, `seeking`, `seeked`, `ended`, `durationchange`, `timeupdate`
+(a cada 250 ms tocando), `play`, `pause`, `ratechange`, `resize`, `volumechange` (com `on<evento>`).
+`canPlayType('video/webm; codecs="vp9, opus"')` = `probably` (VP9 perfil 0 só: `vp09.00.*.08`), `video/webm` = `maybe`,
+o resto `''`.
+
+**Media Source Extensions:** `MediaSource` (`readyState` `closed`/`open`/`ended`, `duration`, `addSourceBuffer`
+(até 4), `removeSourceBuffer`, `endOfStream()` (a duração passa a ser o fim do que está guardado) e
+`endOfStream('decode'|'network')`, `sourceBuffers`/`activeSourceBuffers`, `setLiveSeekableRange`,
+`isTypeSupported` (só WebM VP9/Opus), `sourceopen`/`sourceended`/`sourceclose`), `SourceBuffer` (`appendBuffer`
+assíncrono com `updating`, `updatestart`/`update`/`updateend`/`error`/`abort`, em pedaços de 1 MiB, cada um
+confirmado pelo decodificador com o que a fonte guarda; `appendBufferAsync`; `buffered` por fonte (o do elemento é a
+interseção); `remove`; `abort`; `timestampOffset`; `mode` (`segments`; `sequence` aceito sem efeito);
+`appendWindowStart/End` (guardados); `changeType`), `SourceBufferList`, `URL.createObjectURL(mediaSource)` →
+`blob:` que o `src` aceita. Um segundo segmento de inicialização num `SourceBuffer` recomeça o demuxer da fonte (troca
+de qualidade); um append quebrado dispara `error` no buffer e `MEDIA_ERR_DECODE` no elemento.
+
+**`src` por endereço** (`http`/`https`): o navegador baixa o arquivo direto no decodificador (`Range` de 1 MiB, no
+máximo 30 s à frente da posição, pela fila de pedidos de scripts do `fetcher`, com cookies, o bloqueador e as regras
+de conteúdo misto), sem CORS (como em todo navegador) e sem que o script veja os bytes. Um servidor sem `Range` manda
+o arquivo inteiro de uma vez. `blob:` (de um `Blob`) e `data:` são lidos pelo script e apendados como no MSE.
+
+**Ainda não:** velocidade diferente de 1×, legendas (`<track>`, `TextTrack`), `srcObject` com `MediaStream`,
+tela cheia, Picture-in-Picture, `requestVideoFrameCallback`, `captureStream`, WebAudio (`AudioContext`,
+`decodeAudioData`), EME/DRM (`requestMediaKeySystemAccess`: não existe, o que faz o YouTube servir os formatos sem
+DRM), H.264/AAC/AV1/MP4 (`canPlayType` diz `''`), seek num `src` por endereço para além do que já foi baixado (o
+download segue em ordem até lá), mais de 2 players por página, e o `sequence` do MSE.
+
+### 14.4 Provas
+
+| O quê | Evidência |
+|---|---|
+| TimeRanges, track buffer (duração dos quadros, regravar o mesmo tempo, `remove` com dependentes, despejo, seek ao keyframe, cursor que pula buracos, duração de pacotes Opus), relógio, player (ordem dos eventos, sincronia pelo som com atraso do dispositivo, pausa, seek com época e `MARK`, `waiting`/`playing`, fim e `loop`, buracos e sobreposições do som, sem placa, volume e mudo, quadros vencidos em espera, sem oscilar), mensagens (página ↔ navegador e navegador ↔ decodificador, hostis recusadas), controles | `cargo test -p kitsune_core media` (41 testes) |
+| Layout de `<video>`/`<audio>` (300x150, tamanho do vídeo depois dos metadados, atributos e CSS, zoom, `display:block`, `<audio>` sem controles, pôster como imagem, fallback escondido, dentro de célula de tabela) e o processo de script para página só com mídia | `web::layout_tests::media` (6), `web::script::tests` |
+| O decodificador: arquivo inteiro, seek, orçamento, o `src` como o `fetcher` entrega, MSE com vídeo e som em fontes separadas e o init de novo | `tools/media/mediacheck V.webm --serve-test` e `--serve-mse VIDEO AUDIO` (§ [`midia.md`](midia.md)) |
+| A API em JavaScript com um navegador falso (tipos, `<source>`, `src` pelo navegador, `play()`/`pause()` e as promises, `currentTime`, seek, volume, eventos, `played`, MSE: `sourceopen`, dois buffers, pedaços de 1 MiB confirmados, `updating`, init de novo, `remove`, append quebrado, `endOfStream`, reabrir, `sourceclose`, `Blob` como `src`, `Audio()`, sem player livre) | `node tools/js-media-check.js user-apps/jsrun/src/bin/jsrun` (52 verificações) |
+| Tudo junto no QEMU | `tools/perf/scen/w58-video.sh` (§14.5) |
+
+### 14.5 Medidas no QEMU (TCG, sem KVM, BIOS, 256 MiB, AC'97 gravando em WAV)
+
+`w58-video.sh` com `tools/w24-site.py` (páginas `/video` e `/mse` de `tools/w24media.py`; o vídeo é o do pedido:
+`testsrc2` 640x360 30 fps VP9 300 kb/s + seno de 440 Hz em Opus, 3 s). **VERDICT: PASS**, 24 verificações:
+
+* `/video`: o player nasce (processo `mediadec`), `canPlayType` = `probably`, `loadedmetadata` com 3,008 s, 640x360,
+  `play()` resolve, toca até o fim (`ended` em 3 s), volta a 1 s (`seeked`) e toca até o fim de novo; um clique no
+  play dos controles toca outra vez desde o começo. Duas capturas com 1 s de intervalo diferem em ~80 000 pixels (a
+  imagem e a barra de tempo andam; `docs/img/browser-video.png`).
+* `/mse`: dois `SourceBuffer`s (vídeo e som em arquivos WebM DASH separados, init + clusters de 1 s buscados com
+  `Range`), `buffered` crescendo a cada segmento, `endOfStream` (duração 3,028 s), `sourceended`, toca, volta a 1 s,
+  termina de novo.
+* **O som que saiu** (gravado pelo QEMU, medido por `tools/perf/audio-check.py`): cinco sons de **440,00 Hz**, com
+  **3000,0 ms**, **2001,0 ms** (depois do seek para 1 s), **3000,0 ms** (o play dos controles), **3000,0 ms** e
+  **2008,0 ms** (MSE), cada um seguido de silêncio exato, 100 % da energia no tom, os dois canais iguais. Nenhuma
+  falha de buffer do dispositivo.
+* **O relógio**: tempo de mídia contra tempo real 1,001–1,008 (som) e 1,000 (sistema).
+* **Velocidade**: o som é perfeito, mas a imagem não acompanha os 30 fps sob TCG: **11–13 quadros/s mostrados** no
+  360p (os atrasados são descartados para manter a sincronia), com a CPU emulada em 100 %: decodificador **63–67 %**,
+  compositor **31–35 %**. A decodificação VP9 sozinha a 360p faz ~46 fps sob TCG ([`midia.md`](midia.md)), então o
+  decodificador já gasta ~2/3 da CPU só para acompanhar o vídeo. Em hardware real ou com KVM o VP9 360p decodifica a
+  ~1100 fps (nativo, no hospedeiro), então sobra.
+* **Sem placa de som** (`QEMU_EXTRA` vazio): `VERDICT: PASS` com o relógio do sistema; a imagem vai em trechos de
+  ~15–22 fps entre esperas curtas (sem som não há o que manter em tempo, então o relógio espera as imagens).
+* **Download**: 128 KiB do `src` em 76 ms pelo `fetcher` (1,6 MB/s, NE2000, um pedido `Range`).
+
+**Um WebM real da internet** (`tools/perf/scen/w58-real.sh`, virtio-net, página `/real?src=...`):
+
+* `https://test-videos.co.uk/.../Big_Buck_Bunny_360_10s_1MB.webm` (VP9 640x360, 10 s, sem som) direto: o proxy desta
+  sandbox reassina o HTTPS e o certificado é recusado (`untrusted chain`); o elemento recebe `error` com
+  `MEDIA_ERR_NETWORK` (2) e a página segue. Num computador com acesso direto à internet o mesmo pedido verifica a
+  cadeia normalmente. (O Wikimedia Commons respondeu `429 Too Many Requests` ao IP desta sandbox, então não pôde ser
+  usado.)
+* O mesmo arquivo pelo servidor de teste (`/relay?u=...`: baixado uma vez pelo hospedeiro e servido com `Range`):
+  1 052 940 bytes em 320–400 ms (2,6–3,2 MB/s), metadados 640x360/10 s, **tocou até o fim, voltou a 1 s e terminou
+  de novo**. Sem som, com o relógio do sistema, o Big Buck Bunny (mais pesado de decodificar que o padrão de teste)
+  decodifica mais devagar que o tempo real sob TCG (~5–7 quadros/s mostrados): 10 s de vídeo tocaram em ~30 s, com
+  esperas.
+* `flower.webm` do MDN (VP8 + Vorbis): `no VP9 or Opus track`, o elemento recebe `MEDIA_ERR_SRC_NOT_SUPPORTED` (4).
