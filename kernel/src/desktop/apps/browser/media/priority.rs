@@ -1,7 +1,7 @@
 //! Who gets the CPU while a video plays: the decoder (the pictures), the compositor (the screen) and
 //! the sound come before the page's scripts once the page has fetched enough ahead. Then the page's
 //! script process is demoted (`sched::set_demoted`): it still gets every tick nobody else wants and
-//! at least one in four when the CPU is busy, which is plenty for a player that updates its
+//! at least one in seven when the CPU is busy, which is plenty for a player that updates its
 //! controls and fetches the next segment every few seconds. When what is buffered ahead runs low (the
 //! page must fetch), the video pauses or ends, it is a normal thread again.
 

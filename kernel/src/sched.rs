@@ -155,7 +155,7 @@ static DEMOTED: [AtomicBool; MAX_THREADS] = [const { AtomicBool::new(false) }; M
 static NEXT_TURN: [AtomicU64; MAX_THREADS] = [const { AtomicU64::new(0) }; MAX_THREADS];
 /// Ticks a demoted thread waits after it ran while others want the CPU (it gets at most one tick
 /// in `DEMOTED_GAP + 1` when it competes; all the CPU nobody else wants).
-const DEMOTED_GAP: u64 = 3;
+const DEMOTED_GAP: u64 = 6;
 
 /// Demote slot `slot` (or stop): while other threads can run, it gets at most one timer tick in
 /// [`DEMOTED_GAP`] + 1. The browser demotes a page's script process while its video plays with
