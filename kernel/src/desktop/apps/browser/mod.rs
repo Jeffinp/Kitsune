@@ -15,7 +15,7 @@
 //! - `fetch`, `page`, `tabs`, `layout` loading, scrolling, tabs and page layout
 //! - `script` the page's JavaScript (a ring 3 process per tab with scripts); `jsnet` its network
 //!   requests (`fetch`, XHR) and cookies; `jsinput` keys, focus, mouse and the layout snapshot for it;
-//!   `jsstore` its `localStorage`
+//!   `jsstore` its `localStorage`; `jsworker` its Web Workers
 //! - `shield` the ad blocker's side of it: the per-site list on disk, the toggle, the popover's geometry
 //! - `keys`, `mouse`, `hover` input
 //! - `ui` the chrome (toolbar, tab strip, start and error pages, popups); `paint` the page
@@ -25,6 +25,7 @@ mod hover;
 mod jsinput;
 mod jsnet;
 mod jsstore;
+mod jsworker;
 mod keys;
 mod layout;
 mod model;

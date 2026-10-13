@@ -47,6 +47,8 @@ pub(crate) struct JsProc {
     pub pending_move: Option<(i32, i32)>,
     /// The page was last told its tab is shown.
     pub visible: bool,
+    /// The page's Web Workers (`jsworker.rs`); dropped (killed) with the page.
+    pub workers: Vec<super::jsworker::WorkerProc>,
 }
 
 impl Drop for JsProc {
@@ -216,9 +218,16 @@ impl Desktop {
                         let url = String::from_utf8_lossy(t.browser.nav_url()).into_owned();
                         webstore.apply(&url, op);
                     }
+                    FromScript::Worker(op) => super::jsworker::on_op(js, op),
+                    // What only a worker sends.
+                    FromScript::ToPage(_)
+                    | FromScript::WorkerFailed(_)
+                    | FromScript::WorkerClose => {}
                     FromScript::Unknown => {}
                 }
             }
+            super::jsworker::pump(t);
+            let Some(js) = t.js.as_mut() else { continue };
             if let Some(a) = js.session.expire(now_ms()) {
                 crate::klog!(Info, "browser: the page did not answer a click in time");
                 actions.push((t.id, a));
@@ -438,6 +447,7 @@ fn start_js(
         view,
         pending_move: None,
         visible: true,
+        workers: Vec::new(),
     });
     super::jsinput::after_init(t);
     // The element boxes (and the controls outside forms) appear: lay out as for a new page.

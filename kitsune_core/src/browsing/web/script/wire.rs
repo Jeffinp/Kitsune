@@ -22,6 +22,7 @@
 //! | `N` | URL | go to this address (`location.href = ...`, `location.reload()`) |
 //! | `F`, `X`, `C` | see [`super::net`] | network requests and `document.cookie` |
 //! | `Q`, `G`, `W`, `S`, `H`, `B`, `O`, `L` | see [`super::input`] | inputs handled, focus, the events wanted, scroll, history, new tab, `localStorage` |
+//! | `K` (page), `M`, `E`, `Z` (worker) | see [`super::worker`] | Web Workers |
 
 use super::*;
 
@@ -182,6 +183,14 @@ pub enum FromScript<'a> {
     Open(&'a str),
     /// A change to the origin's `localStorage` (`L`).
     Storage(StorageOp),
+    /// About the page's workers (`K`, [`super::worker`]).
+    Worker(WorkerOp<'a>),
+    /// From a worker: `postMessage(data)` for its page (`M`).
+    ToPage(&'a str),
+    /// From a worker: its script failed (`E`).
+    WorkerFailed(&'a str),
+    /// From a worker: `close()` (`Z`).
+    WorkerClose,
     /// Anything else (ignored).
     Unknown,
 }
@@ -253,6 +262,13 @@ pub fn parse_message(m: &[u8]) -> FromScript<'_> {
         b'L' if rest.len() <= 2 * ORIGIN_BYTES => {
             parse_storage_op(rest).map_or(FromScript::Unknown, FromScript::Storage)
         }
+        b'K' => parse_worker_op(rest).map_or(FromScript::Unknown, FromScript::Worker),
+        b'M' => core::str::from_utf8(rest).map_or(FromScript::Unknown, FromScript::ToPage),
+        b'E' => match core::str::from_utf8(rest) {
+            Ok(text) if text.len() <= 4096 => FromScript::WorkerFailed(text),
+            _ => FromScript::Unknown,
+        },
+        b'Z' if rest.is_empty() => FromScript::WorkerClose,
         _ => FromScript::Unknown,
     }
 }

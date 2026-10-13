@@ -6,6 +6,7 @@
 //! run jsrun --selftest       the built-in test of the engine, with a small benchmark
 //! echo 'CODE' | run jsrun    standard input
 //! jsrun --page               the script process of a browser page (started by the browser)
+//! jsrun --worker             a page's Web Worker (started by the browser)
 //! ```
 //!
 //! `console.log` (and `print`) write to the output; an uncaught exception prints its message and stack
@@ -56,6 +57,24 @@ const DOM_JS: &str = concat!(
     include_str!("jsrun/intl.js"),
     "\n",
     include_str!("jsrun/webapis.js"),
+    "\n",
+    include_str!("jsrun/msgcodec.js"),
+    "\n",
+    include_str!("jsrun/workers.js"),
+    "\0"
+);
+/// A worker's prelude: the timers and the task loop of dom.js (its document stays empty and is
+/// hidden), the network, `Intl`, the message codec and the worker's global scope.
+const WORKER_JS: &str = concat!(
+    include_str!("jsrun/dom.js"),
+    "\n",
+    include_str!("jsrun/net.js"),
+    "\n",
+    include_str!("jsrun/intl.js"),
+    "\n",
+    include_str!("jsrun/msgcodec.js"),
+    "\n",
+    include_str!("jsrun/workerscope.js"),
     "\0"
 );
 
@@ -77,6 +96,10 @@ fn main() -> i32 {
         Some("--page") => {
             // SAFETY: `DOM_JS` is static, `len` bytes followed by a NUL.
             return unsafe { kjs_page(DOM_JS.as_ptr(), DOM_JS.len() - 1) };
+        }
+        Some("--worker") => {
+            // SAFETY: `WORKER_JS` is static, `len` bytes followed by a NUL.
+            return unsafe { kjs_page(WORKER_JS.as_ptr(), WORKER_JS.len() - 1) };
         }
         Some("--selftest") => {
             return run(SELFTEST.as_bytes(), SELFTEST.len() - 1, "selftest.js");

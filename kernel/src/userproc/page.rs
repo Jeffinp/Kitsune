@@ -40,6 +40,24 @@ pub fn spawn_page(cred: Option<Cred>) -> Result<u32, SpawnError> {
     )
 }
 
+/// Start a page's Web Worker (`jsrun --worker`), acting as `cred`: the same two queues as a page's
+/// script process (the browser hands it the script and the page's messages).
+pub fn spawn_worker(cred: Option<Cred>) -> Result<u32, SpawnError> {
+    let image = embedded("jsrun").ok_or(SpawnError::NoHost)?;
+    let args = abi::pack_args("/", &[String::from("--worker")]).unwrap_or_default();
+    spawn_elf(
+        "jsrun",
+        image,
+        Launch {
+            args,
+            cwd: String::from("/"),
+            cred,
+            page: true,
+            ..Launch::default()
+        },
+    )
+}
+
 /// Start the media decoder as a message server (`mediadec --serve`), acting as `cred`: the same two
 /// queues as a page's script process, so a player talks to it with [`page_post`] and [`page_take`]
 /// (WebM bytes in, RGBA pictures and PCM out; the protocol is in `docs/design/midia.md`). Returns

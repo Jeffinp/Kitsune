@@ -281,3 +281,55 @@ fn boxes_snapshot_has_boxes_and_styles() {
     let s = rec(uid_of("s")).expect("the span");
     assert_eq!((s[7] as u32 >> 11) & 31, 2, "inline");
 }
+
+#[test]
+fn worker_messages() {
+    assert_eq!(
+        parse_message(b"Knew\n3\nhttp://a.test/w.js\nnome\npostMessage(1)\n// x"),
+        FromScript::Worker(WorkerOp::New {
+            id: 3,
+            url: "http://a.test/w.js",
+            name: "nome",
+            code: "postMessage(1)\n// x"
+        })
+    );
+    assert_eq!(
+        parse_message(b"Kmsg\n3\n{\"$\":\"u\"}"),
+        FromScript::Worker(WorkerOp::Post {
+            id: 3,
+            data: "{\"$\":\"u\"}"
+        })
+    );
+    assert_eq!(
+        parse_message(b"Kend\n3"),
+        FromScript::Worker(WorkerOp::End(3))
+    );
+    for bad in [
+        &b"Kend\n0"[..],
+        b"Knew\n1\nurl",
+        b"Kjump\n1",
+        b"Kend\nx",
+        b"Zz",
+    ] {
+        assert_eq!(parse_message(bad), FromScript::Unknown, "{bad:?}");
+    }
+    assert_eq!(parse_message(b"M[1]"), FromScript::ToPage("[1]"));
+    assert_eq!(parse_message(b"Eboom"), FromScript::WorkerFailed("boom"));
+    assert_eq!(parse_message(b"Z"), FromScript::WorkerClose);
+    assert_eq!(
+        text(&worker_init_message("u", "n", "a\"b")),
+        r#"{"t":"winit","url":"u","name":"n","code":"a\"b"}"#
+    );
+    assert_eq!(
+        text(&worker_post_message("[1]")),
+        r#"{"t":"wmsg","data":"[1]"}"#
+    );
+    assert_eq!(
+        text(&worker_event_message(2, WorkerEvent::Message("\"x\""))),
+        r#"{"t":"worker","id":2,"ev":"message","data":"\"x\""}"#
+    );
+    assert_eq!(
+        text(&worker_event_message(2, WorkerEvent::End)),
+        r#"{"t":"worker","id":2,"ev":"end"}"#
+    );
+}

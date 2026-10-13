@@ -17,6 +17,9 @@ const rs = fs.readFileSync(path.join(dir, '..', 'jsrun.rs'), 'utf8');
 const block = rs.slice(rs.indexOf('const DOM_JS'));
 const files = [...block.slice(0, block.indexOf(';')).matchAll(/include_str!\("jsrun\/([\w.]+\.js)"\)/g)].map((m) => m[1]);
 const prelude = files.map((f) => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
+const wblock = rs.slice(rs.indexOf('const WORKER_JS'));
+const workerFiles = [...wblock.slice(0, wblock.indexOf(';')).matchAll(/include_str!\("jsrun\/([\w.]+\.js)"\)/g)].map((m) => m[1]);
+const workerPrelude = workerFiles.map((f) => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
 
 let failures = 0;
 const check = (ok, what) => { console.log((ok ? 'ok   ' : 'FAIL ') + what); if (!ok) failures++; };
@@ -96,6 +99,7 @@ class Page {
         case 'Q': this.ack = +rest; break;
         case 'N': this.navigated = rest; break;
         case 'O': this.opened = rest; break;
+        case 'K': this.onWorkerOp(rest); break;
         default: break;
       }
     }
@@ -301,6 +305,77 @@ async function vueApp() {
   if (failures) for (const l of p.logs.slice(-12)) console.log('   | ' + l);
 }
 
+// A worker's process, as the browser starts it for a page (`K new`), with the messages carried both ways.
+class WorkerProc {
+  constructor(page, id, url, name, code) {
+    this.page = page;
+    this.id = id;
+    this.logs = [];
+    const t0 = Date.now();
+    const log = (...a) => this.logs.push(a.map(String).join(' '));
+    const ctx = { console: { log, error: log, warn: log, info: log, debug: log }, performance: { now: () => Date.now() - t0 } };
+    ctx.globalThis = ctx;
+    vm.createContext(ctx);
+    vm.runInContext('delete globalThis.Intl;', ctx);
+    ctx.__kjs_native = {
+      send: (m) => this.fromWorker(String(m)),
+      sendBytes: () => 0,
+      random: (n) => { const b = nodeCrypto.randomBytes(n); return b.buffer.slice(b.byteOffset, b.byteOffset + n); },
+      evalScript: (c, n) => { try { vm.runInContext(c, ctx, { filename: n }); return true; } catch (e) { log('Uncaught ' + e); return false; } },
+    };
+    vm.runInContext(workerPrelude, ctx, { filename: 'worker-prelude' });
+    this.ctx = ctx;
+    this.kjs = ctx.__kjs;
+    this.kjs.onMessage(JSON.stringify({ t: 'winit', url, name, code }));
+  }
+  fromWorker(m) {
+    const kind = m[0], rest = m.slice(1);
+    if (kind === 'M') this.page.kjs.onMessage(JSON.stringify({ t: 'worker', id: this.id, ev: 'message', data: rest }));
+    else if (kind === 'E') this.page.kjs.onMessage(JSON.stringify({ t: 'worker', id: this.id, ev: 'error', message: rest }));
+    else if (kind === 'Z') { this.closed = true; this.page.kjs.onMessage(JSON.stringify({ t: 'worker', id: this.id, ev: 'end' })); }
+  }
+  async pump() { for (let i = 0; i < 50; i++) { if (!this.kjs.runOne()) break; await new Promise((r) => setImmediate(r)); } }
+}
+Page.prototype.onWorkerOp = function (rest) {
+  this.workers = this.workers || new Map();
+  const [op, id, ...more] = rest.split('\n');
+  if (op === 'new') {
+    const [url, name, ...code] = more;
+    this.workers.set(+id, new WorkerProc(this, +id, url, name, code.join('\n')));
+  } else if (op === 'msg') {
+    const w = this.workers.get(+id);
+    if (w) w.kjs.onMessage(JSON.stringify({ t: 'wmsg', data: more.join('\n') }));
+  } else if (op === 'end') this.workers.delete(+id);
+};
+
+async function workers() {
+  console.log('-- Workers');
+  const p = new Page('<!doctype html><html><head><title>w</title></head><body><p id="o"></p></body></html>', 'http://h:8279/w');
+  await p.pump(30);
+  p.eval(`globalThis.wlog = [];
+    const code = "onmessage = (e) => { postMessage({ got: e.data.n, sq: e.data.n * e.data.n, d: e.data.d instanceof Date, u8: Array.from(e.data.u8), m: new Map([[1, 'a']]) }); }; " +
+      "postMessage('ready ' + typeof document + ' ' + typeof window + ' ' + typeof self.postMessage + ' ' + (self instanceof WorkerGlobalScope) + ' ' + location.protocol + ' ' + typeof fetch + ' ' + typeof setTimeout);";
+    const w = new Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
+    w.onmessage = (e) => wlog.push(e.data);
+    w.postMessage({ n: 7, d: new Date(0), u8: new Uint8Array([1, 2]) });
+    globalThis.w1 = w;`);
+  for (let i = 0; i < 10; i++) {
+    await p.pump(10);
+    for (const w of (p.workers || new Map()).values()) await w.pump();
+  }
+  const got = p.eval('wlog');
+  check(got.length === 2 && got[0] === 'ready undefined undefined function true blob: function function', 'a worker runs its script without document or window: ' + JSON.stringify(got[0]));
+  check(got[1] && got[1].got === 7 && got[1].sq === 49 && got[1].d === true && got[1].u8.join() === '1,2' && got[1].m instanceof p.eval('Map') && got[1].m.get(1) === 'a', 'postMessage both ways with structured clone (Date, Uint8Array, Map)');
+  p.eval(`globalThis.w2 = new Worker(URL.createObjectURL(new Blob(['setTimeout(() => close(), 1)']))); globalThis.werr = 0; globalThis.w3 = new Worker('data:text/javascript,1'); w3.onerror = () => werr++;`);
+  for (let i = 0; i < 10; i++) { await p.pump(10); for (const w of (p.workers || new Map()).values()) await w.pump(); }
+  check(p.eval('werr') === 1 && p.workers.size === 2, 'a third worker is refused with an error event');
+  check(p.workers.get(2).closed === true && p.eval('w2._state') === 'ended', 'close() in the worker ends it');
+  check(p.eval(`(() => { try { new Worker('http://other.test/w.js'); return 'no'; } catch (e) { return e.name; } })()`) === 'SecurityError', 'another origin is refused');
+  p.eval('w1.terminate()');
+  p.take();
+  check(!p.workers.has(1), 'terminate() ends the worker');
+}
+
 async function apis() {
   console.log('-- APIs');
   const p = new Page('<!doctype html><html><head><title>t</title></head><body><div id="a" style="color: red"><p id="b">x</p><span id="c">y</span></div><form id="f" action="/go"><input name="q" value="1"><input type="checkbox" name="c" checked><select name="s"><option>a</option><option selected>b</option></select><textarea name="t">tx</textarea></form><template id="t"><li class="row">r</li></template></body></html>', 'http://h:8279/api');
@@ -399,6 +474,7 @@ async function apis() {
     if (!only || only === 'apis') await apis();
     if (!only || only === 'preact') await preactTodo();
     if (!only || only === 'vue') await vueApp();
+    if (!only || only === 'workers') await workers();
   } catch (e) {
     console.log('FAIL exception ' + e.stack);
     failures++;

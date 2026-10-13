@@ -21,7 +21,7 @@ not be asked for). With the blocker on the server sees only /ads and /g.png; wit
 Every request is printed on stderr, so `tools/w24-site.py 2> requests.log` is the record to check.
 
 /preact and /vue are the acceptance pages of the DOM for frameworks (W59): a TodoMVC with Preact + htm
-and a small Vue 3 app (the in-DOM template compiled by vue.global.prod.js). The libraries and the
+and a small Vue 3 app (the in-DOM template compiled by vue.global.prod.js); /worker runs a Web Worker. The libraries and the
 pages are files of tools/site-assets/, served under /assets/ (see THIRD-PARTY.md for their licences).
 
 /net is the page for the network of scripts (W55: fetch, XMLHttpRequest, cookies, CORS, streaming,
@@ -49,7 +49,8 @@ import w24net
 
 PORT = 8079
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "site-assets")
-ASSET_TYPES = {".js": "text/javascript; charset=utf-8", ".html": "text/html; charset=utf-8", ".css": "text/css"}
+ASSET_TYPES = {".js": "text/javascript; charset=utf-8", ".html": "text/html; charset=utf-8", ".css": "text/css",
+               ".json": "application/json"}
 
 
 def png(w, h, fn):
@@ -455,7 +456,7 @@ main{max-width:min(100%, 760px);margin:0 auto;padding:20px}
             return self.reply(200, "text/css; charset=utf-8", css.encode())
         if u.path == "/js/app.js":
             return self.reply(200, "text/javascript; charset=utf-8", JS_APP.encode())
-        if u.path in ("/preact", "/vue") or u.path.startswith("/assets/"):
+        if u.path in ("/preact", "/vue", "/worker") or u.path.startswith("/assets/"):
             name = os.path.basename(u.path[len("/assets/"):] if u.path.startswith("/assets/") else u.path + ".html")
             path = os.path.join(ASSETS, name)
             if name and os.path.isfile(path):

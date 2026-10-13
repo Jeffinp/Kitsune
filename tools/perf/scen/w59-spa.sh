@@ -6,7 +6,8 @@
 # a <select> and a form with @submit.prevent. The pages print their state on the console after every
 # change ("todo: ...", "vue: ...": the serial log) and where their controls are on screen ("... at
 # name=x,y", from getBoundingClientRect after each layout, through a ResizeObserver); the scenario
-# clicks there. The verdict is in $OUT/verdict.txt.
+# clicks there. Then /worker: a Web Worker (a process of its own) counts primes, fetches a file and
+# answers the page. The verdict is in $OUT/verdict.txt.
 #   tools/w24-site.py 8279 &
 #   PORT=8279 QEMU_MEM=256M QEMU_NETDEV="user,id=n0,net=203.0.113.0/24,host=203.0.113.5,dhcpstart=203.0.113.15,dns=203.0.113.3" \
 #     tools/perf/run.sh <img> bios <out> 900 tools/perf/scen/w59-spa.sh
@@ -118,6 +119,14 @@ wait_for 'vue: sent .*sent="oi"' 60
 sleep 3
 shot g-vue-done
 fi
+
+# ---- a Web Worker ----
+if [ "${ONLY:-}" = "" ] || [ "${ONLY:-}" = worker ]; then
+open_url "$SITE/worker"
+wait_for "worker: page got" 180
+sleep 2
+shot h-worker
+fi
 flush_snaps
 
 {
@@ -156,6 +165,8 @@ flush_snaps
     echo "PASS no errors on the pages"
   fi
   if grep -aq "fetch: GET $SITE/vue?" "$OUT/serial.log"; then echo "MISS the prevented form was sent"; ok=0; else echo "PASS the prevented form was not sent"; fi
+  needlog "browser: worker 1 of pid [0-9]+ is pid [0-9]+ \($SITE/assets/worker-job.js\)" "the worker runs in a process of its own"
+  need '^worker: page got \{"n":20000,"count":2262,"name":"primos","fetched":true,"doc":"undefined","date":true\}' "the worker counts, fetches and answers (postMessage both ways)"
   [ $ok = 1 ] && echo "VERDICT: PASS" || echo "VERDICT: FAIL"
 } > "$OUT/verdict.txt" 2>&1
 finish

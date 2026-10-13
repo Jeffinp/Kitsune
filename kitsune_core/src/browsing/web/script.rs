@@ -25,6 +25,7 @@ mod net;
 mod session;
 mod storage;
 mod wire;
+mod worker;
 pub use boxes::*;
 pub use collect::*;
 pub use input::*;
@@ -32,6 +33,7 @@ pub use net::*;
 pub use session::*;
 pub use storage::*;
 pub use wire::*;
+pub use worker::*;
 
 /// What scripts see as `navigator.userAgent`.
 pub const USER_AGENT: &str = concat!(
