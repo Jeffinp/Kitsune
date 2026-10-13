@@ -345,7 +345,8 @@ pub fn selftest(file: &[u8]) -> Report {
                     }
                 }
                 Some(&OUT_AUDIO) if m.len() >= 13 && !seen_end => {
-                    r.samples += u64::from(u32::from_le_bytes(m[9..13].try_into().unwrap_or([0; 4])));
+                    r.samples +=
+                        u64::from(u32::from_le_bytes(m[9..13].try_into().unwrap_or([0; 4])));
                 }
                 Some(&OUT_END) if m.len() >= 9 && !seen_end => {
                     r.end_pictures = u32::from_le_bytes(m[1..5].try_into().unwrap_or([0; 4]));

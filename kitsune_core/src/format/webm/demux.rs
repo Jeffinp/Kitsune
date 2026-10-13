@@ -98,7 +98,9 @@ impl Demuxer {
     /// before it (the first one if `time_ns` comes before all). `None` without cues.
     pub fn cluster_for(&self, time_ns: u64) -> Option<u64> {
         let after = self.cues.partition_point(|c| c.time_ns <= time_ns);
-        self.cues.get(after.saturating_sub(1)).map(|c| c.cluster_pos)
+        self.cues
+            .get(after.saturating_sub(1))
+            .map(|c| c.cluster_pos)
     }
 
     /// Drop what is buffered and read the bytes pushed next as starting at file offset `offset`,
@@ -281,7 +283,9 @@ impl Demuxer {
             }
             _ => {
                 if h.size == UNKNOWN {
-                    return self.fail(Error::Invalid("element of unknown size that cannot be skipped"));
+                    return self.fail(Error::Invalid(
+                        "element of unknown size that cannot be skipped",
+                    ));
                 }
                 self.pos += h.len;
                 self.skip = h.size;
@@ -307,7 +311,9 @@ impl Demuxer {
     /// when it is larger than `limit` or of unknown size.
     fn whole(&self, h: ebml::Header, limit: u64) -> Result<Option<Range<usize>>, Error> {
         if h.size == UNKNOWN {
-            return Err(Error::Invalid("element of unknown size where one is needed"));
+            return Err(Error::Invalid(
+                "element of unknown size where one is needed",
+            ));
         }
         if h.size > limit {
             return Err(Error::TooLarge);
@@ -372,8 +378,7 @@ impl Demuxer {
             None => (flags & 0x80 != 0, None, 0),
             Some(g) => (
                 !g.referenced,
-                g.duration
-                    .map(|d| d.saturating_mul(self.info.timescale_ns)),
+                g.duration.map(|d| d.saturating_mul(self.info.timescale_ns)),
                 g.discard_padding,
             ),
         };

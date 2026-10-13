@@ -45,9 +45,11 @@ fn vint_lengths_and_unknown_size() {
     assert_eq!(ebml::vint(&[0x40]).unwrap(), None);
     assert_eq!(ebml::vint(&[]).unwrap(), None);
     assert!(ebml::vint(&[0x00, 1, 2, 3, 4, 5, 6, 7, 8]).is_err());
-    let h = ebml::header(&[0x1A, 0x45, 0xDF, 0xA3, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])
-        .unwrap()
-        .unwrap();
+    let h = ebml::header(&[
+        0x1A, 0x45, 0xDF, 0xA3, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    ])
+    .unwrap()
+    .unwrap();
     assert_eq!((h.id, h.size, h.len), (0x1A45_DFA3, ebml::UNKNOWN, 12));
     let h = ebml::header(&[0xA3, 0xFF]).unwrap().unwrap();
     assert_eq!(h.size, ebml::UNKNOWN);
@@ -77,14 +79,28 @@ fn small_file_header() {
     assert_eq!(d.info().timescale_ns, 1_000_000);
     let dur = d.info().duration_ns.unwrap();
     assert!((990_000_000..=1_010_000_000).contains(&dur), "{dur}");
-    let v = d.tracks().iter().find(|t| t.kind == TrackKind::Video).unwrap();
+    let v = d
+        .tracks()
+        .iter()
+        .find(|t| t.kind == TrackKind::Video)
+        .unwrap();
     assert_eq!((v.codec, v.codec_id.as_str()), (Codec::Vp9, "V_VP9"));
     assert_eq!((v.width, v.height), (320, 180));
     assert!(!v.encoded);
-    let a = d.tracks().iter().find(|t| t.kind == TrackKind::Audio).unwrap();
-    assert_eq!((a.codec, a.sample_rate, a.channels), (Codec::Opus, 48_000, 1));
+    let a = d
+        .tracks()
+        .iter()
+        .find(|t| t.kind == TrackKind::Audio)
+        .unwrap();
+    assert_eq!(
+        (a.codec, a.sample_rate, a.channels),
+        (Codec::Opus, 48_000, 1)
+    );
     let head = OpusHead::parse(&a.codec_private).unwrap();
-    assert_eq!((head.channels, head.pre_skip, head.mapping_family), (1, 312, 0));
+    assert_eq!(
+        (head.channels, head.pre_skip, head.mapping_family),
+        (1, 312, 0)
+    );
     // Pre-skip in nanoseconds: 312 samples at 48 kHz.
     assert_eq!(a.codec_delay_ns, 6_500_000);
     assert_eq!(a.seek_preroll_ns, 80_000_000);
@@ -103,10 +119,23 @@ fn small_file_packets_match_ffprobe() {
         })
         .collect();
     assert_eq!(got.len(), want.len());
-    let video = d.tracks().iter().find(|t| t.kind == TrackKind::Video).unwrap().number;
-    let audio = d.tracks().iter().find(|t| t.kind == TrackKind::Audio).unwrap();
+    let video = d
+        .tracks()
+        .iter()
+        .find(|t| t.kind == TrackKind::Video)
+        .unwrap()
+        .number;
+    let audio = d
+        .tracks()
+        .iter()
+        .find(|t| t.kind == TrackKind::Audio)
+        .unwrap();
     for (p, &(stream, ms, key, size)) in got.iter().zip(&want) {
-        let (number, shift) = if stream == 0 { (video, 0) } else { (audio.number, audio.codec_delay_ns as i64) };
+        let (number, shift) = if stream == 0 {
+            (video, 0)
+        } else {
+            (audio.number, audio.codec_delay_ns as i64)
+        };
         assert_eq!(p.track, number);
         assert_eq!(p.data.len(), size);
         assert_eq!(p.keyframe, key, "packet at {ms} ms");
@@ -123,7 +152,12 @@ fn small_file_packets_match_ffprobe() {
 #[test]
 fn any_chunking_gives_the_same_packets() {
     let (_, whole) = run(SMALL, &[SMALL.len()]).unwrap();
-    for chunks in [&[1usize][..], &[2, 3, 5, 7], &[4096], &[1000, 1, 17, 30_000]] {
+    for chunks in [
+        &[1usize][..],
+        &[2, 3, 5, 7],
+        &[4096],
+        &[1000, 1, 17, 30_000],
+    ] {
         let (_, ev) = run(SMALL, chunks).unwrap();
         assert_eq!(ev, whole, "chunks {chunks:?}");
     }
@@ -146,7 +180,8 @@ fn seek_to_a_cue_restarts_at_a_keyframe() {
     assert_eq!(d0.cluster_for(target.time_ns + 1), Some(target.cluster_pos));
     assert_eq!(d0.cluster_for(0), Some(cues[0].cluster_pos));
     d.seek(target.cluster_pos);
-    d.push(&SMALL[usize::try_from(target.cluster_pos).unwrap()..]).unwrap();
+    d.push(&SMALL[usize::try_from(target.cluster_pos).unwrap()..])
+        .unwrap();
     let mut first = None;
     let mut n = 0;
     while let Some(e) = d.poll().unwrap() {
@@ -215,7 +250,10 @@ fn tracks_el() -> Vec<u8> {
         uint_el(0xD7, 2),
         uint_el(0x83, 2),
         el(0x86, b"A_OPUS"),
-        el(0xE1, &cat(&[el(0xB5, &48000f64.to_be_bytes()), uint_el(0x9F, 2)])),
+        el(
+            0xE1,
+            &cat(&[el(0xB5, &48000f64.to_be_bytes()), uint_el(0x9F, 2)]),
+        ),
     ]);
     el(0x1654_AE6B, &cat(&[el(0xAE, &video), el(0xAE, &audio)]))
 }
@@ -260,7 +298,13 @@ fn unknown_sizes_block_groups_and_lacing() {
     let info = el(0x1549_A966, &uint_el(0x2A_D7B1, 1_000_000));
     let segment = el_unknown(
         0x1853_8067,
-        &cat(&[info, tracks_el(), el(0x1254_C367, &[1, 2, 3]), cluster1, cluster2]),
+        &cat(&[
+            info,
+            tracks_el(),
+            el(0x1254_C367, &[1, 2, 3]),
+            cluster1,
+            cluster2,
+        ]),
     );
     let file = cat(&[ebml_head(b"webm"), segment]);
     for chunks in [&[file.len()][..], &[1], &[3, 11]] {
@@ -298,7 +342,10 @@ fn a_new_segment_brings_a_new_header() {
         0x1853_8067,
         &cat(&[
             tracks_el(),
-            el_unknown(0x1F43_B675, &cat(&[uint_el(0xE7, 0), simple(1, 0, 0x80, b"a")])),
+            el_unknown(
+                0x1F43_B675,
+                &cat(&[uint_el(0xE7, 0), simple(1, 0, 0x80, b"a")]),
+            ),
         ]),
     );
     let file = cat(&[ebml_head(b"webm"), seg.clone(), ebml_head(b"webm"), seg]);
@@ -326,11 +373,17 @@ fn hostile_sizes_are_errors_not_panics() {
     big.push(0x01);
     big.extend_from_slice(&(MAX_BLOCK + 1).to_be_bytes()[1..]);
     let cluster = el_unknown(0x1F43_B675, &big);
-    let file = cat(&[ebml_head(b"webm"), el_unknown(0x1853_8067, &cat(&[tracks_el(), cluster]))]);
+    let file = cat(&[
+        ebml_head(b"webm"),
+        el_unknown(0x1853_8067, &cat(&[tracks_el(), cluster])),
+    ]);
     assert_eq!(run(&file, &[64]).unwrap_err(), Error::TooLarge);
     // A child that runs past its parent (and the same file with honest sizes, which is fine).
     let outer = el(0x1F43_B675, &simple(1, 0, 0x80, b"xyz"));
-    let ok = cat(&[ebml_head(b"webm"), el(0x1853_8067, &cat(&[tracks_el(), outer]))]);
+    let ok = cat(&[
+        ebml_head(b"webm"),
+        el(0x1853_8067, &cat(&[tracks_el(), outer])),
+    ]);
     assert!(run(&ok, &[5]).is_ok());
     let short_cluster = {
         let mut c = id_bytes(0x1F43_B675);
@@ -338,10 +391,16 @@ fn hostile_sizes_are_errors_not_panics() {
         c.extend_from_slice(&simple(1, 0, 0x80, b"xyz")); // ...but holds a whole block
         c
     };
-    let bad = cat(&[ebml_head(b"webm"), el_unknown(0x1853_8067, &cat(&[tracks_el(), short_cluster]))]);
+    let bad = cat(&[
+        ebml_head(b"webm"),
+        el_unknown(0x1853_8067, &cat(&[tracks_el(), short_cluster])),
+    ]);
     assert!(matches!(run(&bad, &[5]).unwrap_err(), Error::Invalid(_)));
     // Unknown size where a whole element is needed.
-    let bad = cat(&[ebml_head(b"webm"), el_unknown(0x1853_8067, &el_unknown(0x1654_AE6B, &[]))]);
+    let bad = cat(&[
+        ebml_head(b"webm"),
+        el_unknown(0x1853_8067, &el_unknown(0x1654_AE6B, &[])),
+    ]);
     assert!(matches!(run(&bad, &[9]).unwrap_err(), Error::Invalid(_)));
 }
 
@@ -402,7 +461,16 @@ fn opus_head_parse() {
     let mut h = b"OpusHead".to_vec();
     h.extend_from_slice(&[1, 2, 0x38, 0x01, 0x80, 0xBB, 0, 0, 0, 0, 0]);
     let o = OpusHead::parse(&h).unwrap();
-    assert_eq!((o.channels, o.pre_skip, o.input_rate, o.gain, o.mapping_family), (2, 312, 48000, 0, 0));
+    assert_eq!(
+        (
+            o.channels,
+            o.pre_skip,
+            o.input_rate,
+            o.gain,
+            o.mapping_family
+        ),
+        (2, 312, 48000, 0, 0)
+    );
     assert!(OpusHead::parse(&h[..18]).is_none());
     h[8] = 0x10;
     assert!(OpusHead::parse(&h).is_none(), "major version 1");

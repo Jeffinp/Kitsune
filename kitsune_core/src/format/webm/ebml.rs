@@ -23,7 +23,9 @@ pub(super) fn vint(b: &[u8]) -> Result<Option<(u64, usize)>, Error> {
         return Ok(None);
     };
     if first == 0 {
-        return Err(Error::Invalid("variable-length integer longer than 8 bytes"));
+        return Err(Error::Invalid(
+            "variable-length integer longer than 8 bytes",
+        ));
     }
     let len = first.leading_zeros() as usize + 1;
     if b.len() < len {

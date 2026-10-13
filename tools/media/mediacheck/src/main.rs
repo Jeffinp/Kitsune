@@ -71,14 +71,18 @@ fn main() {
     let (mut t_video, mut t_audio, mut t_rgb) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
     let mut errors = 0;
     let started = Instant::now();
-    for piece in data.chunks(chunk.max(1)) {
+    'file: for piece in data.chunks(chunk.max(1)) {
         media.push(piece).expect("push");
         loop {
             let t0 = Instant::now();
             let out = match media.poll() {
                 Ok(Some(o)) => o,
                 Ok(None) => break,
-                Err(e) => panic!("{e:?}"),
+                Err(e) => {
+                    println!("stream error: {e:?}");
+                    errors += 1;
+                    break 'file;
+                }
             };
             let spent = t0.elapsed();
             match out {
@@ -146,7 +150,9 @@ fn main() {
             "md5: {same}/{} pictures identical to ffmpeg (we decoded {}){}",
             want.len(),
             frames.len(),
-            first_bad.map_or(String::new(), |i| format!(", first difference at picture {i}"))
+            first_bad.map_or(String::new(), |i| format!(
+                ", first difference at picture {i}"
+            ))
         );
         ok &= pass;
     }

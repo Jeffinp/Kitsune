@@ -146,7 +146,9 @@ impl Media {
                     }));
                 }
             } else if Some(p.track) == self.summary.audio_track {
-                let Some(a) = self.audio.as_mut() else { continue };
+                let Some(a) = self.audio.as_mut() else {
+                    continue;
+                };
                 let n = match a.dec.decode(&p.data, &mut self.pcm) {
                     Ok(n) => n,
                     Err(code) => return Ok(Some(Out::DecodeError { audio: true, code })),

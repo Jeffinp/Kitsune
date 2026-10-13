@@ -110,7 +110,13 @@ fn serve_test(path: &str) -> i32 {
     let ms = uptime_ms() - t0;
     println!(
         "serve-test: header {}, {} pictures {}x{}, {} samples per channel, end says {}, errors {}",
-        r.header, r.pictures, r.picture_size.0, r.picture_size.1, r.samples, r.end_pictures, r.errors
+        r.header,
+        r.pictures,
+        r.picture_size.0,
+        r.picture_size.1,
+        r.samples,
+        r.end_pictures,
+        r.errors
     );
     println!(
         "serve-test: seek to 1 s -> offset {}, {} pictures after it, the first at {} ms ({ms} ms)",
