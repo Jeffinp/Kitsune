@@ -42,7 +42,7 @@ O JavaScript das páginas ganhou o que React/Preact/Vue e, depois, o player do Y
   Enter, marcar, filtrar por `#/active` com a barra mostrando o endereço, remover, a lista de volta depois de
   recarregar) e um app de **Vue 3.5** com o template no DOM (`@click`, `v-model`, `v-if`, `v-for`,
   `@keyup.enter`, caixa, `<select>`, `@submit.prevent`), sem erros, e um Worker que conta primos, busca um arquivo e
-  responde. Sem regressão: `w52-browser-js.sh` 19/19, `w55-net-js.sh` 31/31. No hospedeiro: `tools/js-dom-check.js`
+  responde. Sem regressão: `w52-browser-js.sh` 19/19, `w53-shields.sh` 21/21, `w55-net-js.sh` 31/31. No hospedeiro: `tools/js-dom-check.js`
   (o DOM no Node com o navegador simulado: APIs, os dois apps e os workers) e 13 testes novos no `kitsune_core`.
   Preact e Vue (MIT) e htm (Apache 2.0) ficam só no site de teste (`tools/site-assets`, `THIRD-PARTY.md`).
 

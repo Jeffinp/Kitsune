@@ -928,7 +928,9 @@ workers recusam, `navigator.clipboard` recusa (a área de transferência do sist
 Sem `contenteditable` editável, sem seleção de texto da página visível ao script (`getSelection` é um objeto que o
 script pode preencher), sem `:hover`/`:focus` nos seletores do script. O documento continua indo inteiro ao
 navegador a cada lote de mudanças (§12.2). Os botões continuam sendo desenhados como controles do navegador (sem o
-fundo e a borda do CSS da página).
+fundo e a borda do CSS da página). `mousedown`/`mouseup` chegam juntos com o `click` (o navegador manda o clique ao
+apertar o botão: não há arrastar com o mouse para a página), e só o botão esquerdo clica (o direito é o
+`contextmenu`). `document.referrer` é vazio.
 
 ### 14.7 Provas
 
@@ -940,4 +942,4 @@ fundo e a borda do CSS da página).
 | Mensagens dos workers | `web::script::tests_input::worker_messages` |
 | O DOM inteiro em JavaScript no hospedeiro, com o navegador simulado (inclusive com a árvore do parser do navegador: `KITSUNE_INIT=script_init`): 34 verificações de API (MutationObserver, template, classes, formulários, valores no documento, custom elements com slots, shadow DOM, retrato, `getComputedStyle`, `matchMedia`, observers, `once`/`signal`, mouse, teclas, `localStorage`, `pushState`, `Intl`, `Range`, `TreeWalker`, `postMessage`, `window.open`), o TodoMVC de Preact + htm (24), o app Vue 3 (15) e os workers num segundo contexto (6: escopo sem `document`, clone estruturado nos dois sentidos, `fetch` no worker, limite de 2, `close()`, outra origem) | `node tools/js-dom-check.js user-apps/jsrun/src/bin/jsrun tools/site-assets` |
 | **Preact, Vue e um Worker no QEMU** (BIOS, 256 MiB, TCG, sem KVM), digitando e clicando de verdade pelo monitor nas páginas `/preact`, `/vue` e `/worker` de `tools/w24-site.py` | `tools/perf/scen/w59-spa.sh`: **24/24**. Preact + htm: carrega, `input.focus()` num efeito põe o cursor no campo, `getBoundingClientRect` depois do layout (num `ResizeObserver`), o texto digitado chega (`input`, `value`), Enter (`keydown`) acrescenta e o campo é limpo (`value = ''` aparece na tela), três itens, a caixa marca um (`click`, `change`), o link `#/active` filtra (`hashchange`) e a barra mostra `.../preact#/active` (`pushState`), remover, `localStorage` gravado em `~/.webstorage` e a lista de volta depois de Ctrl+R. Vue 3.5 (template no DOM compilado pelo `vue.global.prod.js`): monta, `@click` conta, `v-model` + `v-if` com o nome digitado, `@keyup.enter` + `v-for`, caixa com `v-model`, `<select>` com `v-model`, formulário com `@submit.prevent` (não navega), nenhum erro nem aviso do Vue. Worker: processo próprio, conta 2262 primos até 20000, busca um arquivo e responde (~0,7 s no TCG). Capturas: `docs/img/browser-preact-todomvc.png`, `docs/img/browser-vue.png` |
-| Nada quebrou | com o mesmo build: `w52-browser-js.sh` 19/19 e `w55-net-js.sh` 31/31 (23 do script e 8 do log) |
+| Nada quebrou | com o build final: `w52-browser-js.sh` 19/19 e `w53-shields.sh` 21/21; `w55-net-js.sh` 31/31 (23 do script e 8 do log) com o build dos workers (`f5faa4d`, antes só da separação do `forms.js` e do texto mantido por controle) |
