@@ -62,6 +62,8 @@ pub(crate) struct MediaSet {
     pub players: Vec<MediaPlayer>,
     /// The page's script process is demoted (`priority.rs`).
     demoted: bool,
+    /// A document of the page held back while a video plays (`pace.rs`), and since when (ms).
+    held_doc: Option<(Vec<u8>, u64)>,
 }
 
 /// One element's player.

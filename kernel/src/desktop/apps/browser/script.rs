@@ -286,6 +286,7 @@ impl Desktop {
                 actions.push((t.id, a));
             }
             let alive = crate::userproc::end(js.pid) == crate::userproc::End::Running;
+            let doc_msg = js.media.hold_document(doc_msg);
             if let (Some(m), Some(doc)) = (doc_msg, t.doc.as_mut()) {
                 let t0 = crate::trace::tc();
                 let wall0 = crate::netd::now_us();

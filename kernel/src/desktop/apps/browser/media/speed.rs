@@ -23,9 +23,15 @@ const SHARE_PERCENT: u64 = 50;
 /// (320x180, low bit rate): natively a real 240p decodes about as fast per pixel and a 360p about 30 %
 /// slower, but under QEMU TCG, where every memory access of a bigger picture costs more, YouTube's
 /// 360p decoded at ~44 % of the clip's rate (W61: the decoder at 53 % of the CPU only just kept 25
-/// fps of 480x360 while the clip measured 18.6 Mpixels/s). The worse figure is used: on a fast
-/// machine the budget is far above the 480p ceiling anyway.
+/// fps of 480x360 while the clip measured 18.6 Mpixels/s). That figure is for an emulator.
 const REAL_PERCENT: u64 = 40;
+/// The same natively (a clip decoded faster than [`NATIVE_RATE`]: no emulator decodes it that fast;
+/// QEMU's TCG does 13-21 Mpixels/s): measured on the host with `tools/media/host-speed.sh`, real
+/// 360p-1080p VP9 decodes at 60-100 % of the clip's pixels a second (2026-10: clip 230-320
+/// Mpixels/s, Mandelbrot-with-grain 720p60 236, testsrc2 720p60 397).
+const REAL_PERCENT_NATIVE: u64 = 70;
+/// Pixels a second of the clip above which the machine is taken as native (KVM, WHPX, hardware).
+const NATIVE_RATE: u64 = 100_000_000;
 /// Decoder CPU (ticks) a stretch of playback must have used for its live measure to count.
 const LIVE_MIN_TICKS: u64 = 25;
 
@@ -169,7 +175,12 @@ fn pump_speed_test() -> Option<u64> {
                 ms
             };
             let rate = pixels.saturating_mul(1000) / took.max(1);
-            let budget = rate / 100 * SHARE_PERCENT / 100 * REAL_PERCENT;
+            let real = if rate >= NATIVE_RATE {
+                REAL_PERCENT_NATIVE
+            } else {
+                REAL_PERCENT
+            };
+            let budget = rate / 100 * SHARE_PERCENT / 100 * real;
             crate::klog!(
                 Info,
                 "media: decoder speed test: {pictures} pictures, {} kpixels in {ms} ms (CPU {cpu_ms} ms): \

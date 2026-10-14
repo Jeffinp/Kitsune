@@ -833,9 +833,10 @@
   }
 
   // While a video plays and the person has not used the page for a while, the document goes to the
-  // browser at most once a second (dom.js `flush`): a player updates its progress bar and its time
-  // several times a second, and each document is laid out again by the browser.
-  const QUIET_MS = 3000, DOC_GAP_MS = 1000;
+  // browser at most once every 3 s (dom.js `flush`): a player updates its progress bar and its time
+  // several times a second (hidden controls included), and each document is parsed and laid out
+  // again by the browser, tens of milliseconds under emulation that the pictures wait for.
+  const QUIET_MS = 3000, DOC_GAP_MS = 3000;
   kjs.dom.hooks.flushGap = function () {
     if (now() - (kjs.dom.inputAt || -Infinity) < QUIET_MS) return 0;
     for (const el of players.values()) {

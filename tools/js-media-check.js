@@ -293,12 +293,12 @@ const S = 1e9;
   kjs.flush();
   const second = docs();
   const wait = kjs.nextDelay();
-  check(first === 1 && second === 0 && wait > 0 && wait <= 1000, 'while a video plays the document goes at most once a second');
-  await new Promise((r) => setTimeout(r, 1050));
+  check(first === 1 && second === 0 && wait > 0 && wait <= 3000, 'while a video plays the document goes at most once every 3 s');
+  await new Promise((r) => setTimeout(r, 3050));
   kjs.flush();
-  check(docs() === 1, 'the held document goes once the second is over');
+  check(docs() === 1, 'the held document goes once the 3 s are over');
   run(`document.body.setAttribute('data-a', '2')`);
-  await new Promise((r) => setTimeout(r, 1050));
+  await new Promise((r) => setTimeout(r, 3050));
   kjs.flush();
   check(docs() === 0, 'a document equal to the last one sent is not sent again');
 

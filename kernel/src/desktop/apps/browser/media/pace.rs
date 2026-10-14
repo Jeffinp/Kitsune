@@ -10,6 +10,10 @@ use kitsune_core::media::pacing::{FrameTimes, Shown};
 
 /// A new picture of a video was marked for the next frame.
 static VIDEO_DIRTY: AtomicBool = AtomicBool::new(false);
+/// The last frame carried a new picture (the next loop has the most time before the next one).
+static JUST_PRESENTED: AtomicBool = AtomicBool::new(false);
+/// The longest a page's document waits for that while a video plays (ms).
+const DOC_HOLD_MS: u64 = 500;
 /// Frames that uploaded a new picture, and the system time (µs) of the last one.
 static PRESENTS: AtomicU64 = AtomicU64::new(0);
 static PRESENT_US: AtomicU64 = AtomicU64::new(0);
@@ -20,12 +24,14 @@ static PRESENT_US: AtomicU64 = AtomicU64::new(0);
 /// that work does not delay one).
 pub(crate) fn note_present() -> bool {
     let shown = VIDEO_DIRTY.swap(false, Ordering::Relaxed);
+    JUST_PRESENTED.store(shown, Ordering::Relaxed);
     if shown {
         PRESENT_US.store(crate::netd::now_us(), Ordering::Relaxed);
         PRESENTS.fetch_add(1, Ordering::Release);
         crate::sched::present::set_deadline(
             NEXT_DEADLINE.load(Ordering::Relaxed),
             crate::netd::tsc_khz(),
+            crate::sched::present::DUE_MS,
         );
     }
     shown
@@ -86,8 +92,15 @@ pub(crate) fn schedule_next() {
     };
     NEXT_DEADLINE.store(deadline, Ordering::Relaxed);
     let hold = BOOST && VIDEO_DIRTY.load(Ordering::Relaxed);
-    let at = if hold { crate::io::rdtsc() } else { deadline };
-    crate::sched::present::set_deadline(at, khz);
+    if hold {
+        crate::sched::present::set_deadline(
+            crate::io::rdtsc(),
+            khz,
+            crate::sched::present::HOLD_MS,
+        );
+    } else {
+        crate::sched::present::set_deadline(deadline, khz, crate::sched::present::DUE_MS);
+    }
     crate::interrupts::set_fast(FAST_TIMER && playing);
 }
 
@@ -148,11 +161,17 @@ impl Pace {
         if late > 15_000 {
             // Where the time went (serial only): the scheduler (deadline to the loop's start), the
             // loop before the pick, the frame after it.
+            // No deadline at the pick: the picture came from the decoder after its time.
             let (lp, due) = self.picked_loop;
+            let sched = if due == 0 {
+                alloc::string::String::from("none (the decoder was late)")
+            } else {
+                alloc::format!("{} ms", lp as i64 / 1000 - due as i64 / 1000)
+            };
             crate::serial::write_str_raw(&alloc::format!(
-                "media: late picture by {} ms: deadline->loop {} ms, loop->pick {} ms, pick->screen {} ms\n",
+                "media: late picture by {} ms: deadline->loop {}, loop->pick {} ms, pick->screen {} ms\n",
                 late / 1000,
-                lp as i64 / 1000 - due as i64 / 1000,
+                sched,
                 picked.saturating_sub(lp) / 1000,
                 at.saturating_sub(picked) / 1000
             ));
@@ -185,6 +204,26 @@ impl Pace {
 }
 
 impl MediaSet {
+    /// A document of the page (`doc`, if one came this loop) goes to parse and layout now, or waits:
+    /// while a video plays it waits (the newest replaces an older one) until a picture has just
+    /// gone to the screen and none is waiting for the frame, [`DOC_HOLD_MS`] at most, so its tens of
+    /// milliseconds under emulation fill the gap before the next picture instead of delaying one.
+    pub(crate) fn hold_document(&mut self, doc: Option<Vec<u8>>) -> Option<Vec<u8>> {
+        let now = now_us() / 1000;
+        if let Some(d) = doc {
+            let since = self.held_doc.as_ref().map_or(now, |h| h.1);
+            self.held_doc = Some((d, since));
+        }
+        let since = self.held_doc.as_ref()?.1;
+        let playing = self.players.iter().any(|p| p.player.state().running());
+        let calm = JUST_PRESENTED.load(Ordering::Relaxed)
+            && !self.players.iter().any(|p| p.pace.waiting());
+        if !playing || calm || now.saturating_sub(since) >= DOC_HOLD_MS {
+            return self.held_doc.take().map(|(d, _)| d);
+        }
+        None
+    }
+
     /// The page's script sent a document (`bytes`), parsed from `parse_us` and laid out until now:
     /// while a video plays, what it cost the compositor goes to the serial log (the pictures wait
     /// for it).

@@ -6,24 +6,31 @@
 //! scheduler switches to it whoever's turn it was, or keeps it running, so the picture reaches the
 //! screen within a millisecond of its time instead of waiting for its round-robin turn behind the
 //! decoder and the page (up to several ticks under load). The compositor sets the next deadline
-//! (or none) every loop, and the favour lasts [`HOLD_MS`] at most: a compositor busy with something
-//! long (a page's document) goes back to its turns, so the sound thread and the decoder are never
-//! kept off the CPU for long.
+//! (or none) every loop, and the favour lasts a bounded time ([`DUE_MS`] past a deadline,
+//! [`HOLD_MS`] while a picked picture is being painted): a compositor busy with something long goes
+//! back to its turns, so the sound thread (128 ms of sound queued in the device) and the decoder
+//! are never kept off the CPU for long.
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-/// How long past the deadline the compositor is favoured.
-pub const HOLD_MS: u64 = 12;
+/// How long past a picture's deadline the compositor is favoured (it may be finishing a page's
+/// document before it can pick the picture).
+pub const DUE_MS: u64 = 25;
+/// How long the compositor keeps the CPU to paint and upload a picture it picked (a page painted
+/// over the video can take tens of ms under emulation; cut into round-robin slices it took 30-40 ms
+/// of wall time where 10 of CPU were needed).
+pub const HOLD_MS: u64 = 40;
 
 /// TSC value at which the next picture is due (0: none), and when the favour ends.
 static DEADLINE: AtomicU64 = AtomicU64::new(0);
 static UNTIL: AtomicU64 = AtomicU64::new(0);
 
-/// The next picture is due at TSC `tsc` (0: no picture is waiting); `khz` is the TSC rate.
-pub fn set_deadline(tsc: u64, khz: u64) {
+/// The next picture is due at TSC `tsc` (0: no picture is waiting), favoured for `ms` from then;
+/// `khz` is the TSC rate.
+pub fn set_deadline(tsc: u64, khz: u64, ms: u64) {
     // The timer interrupt may come between the stores: never a new deadline with an old end.
     DEADLINE.store(0, Ordering::Relaxed);
-    UNTIL.store(tsc.saturating_add(HOLD_MS * khz), Ordering::Relaxed);
+    UNTIL.store(tsc.saturating_add(ms * khz), Ordering::Relaxed);
     DEADLINE.store(tsc, Ordering::Relaxed);
 }
 
