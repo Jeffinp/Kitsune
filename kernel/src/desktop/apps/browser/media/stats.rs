@@ -111,6 +111,15 @@ impl MediaPlayer {
         let media_ms = (self.player.position() - m.position).max(0) / 1_000_000;
         let iv = Spread::of(&mut self.pace.window);
         self.pace.window.clear();
+        // The decoder's speed on the real video (`speed::refine`).
+        let area = self
+            .player
+            .state()
+            .meta
+            .map_or(0, |m| u64::from(m.width) * u64::from(m.height));
+        if let Some(b) = speed::refine(u64::from(shown + dropped) * area, decoder) {
+            crate::userproc::page_post(self.js, wire::budget_message(b));
+        }
         crate::klog!(
             Info,
             "media: element {} played {} ms of media in {} ms ({}): {} pictures shown ({} fps), {} dropped ({} by the decoder); \

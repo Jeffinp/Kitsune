@@ -206,7 +206,7 @@ impl Desktop {
 }
 
 mod apps;
-pub(crate) use apps::browser::note_present;
+pub(crate) use apps::browser::{loop_start, note_present, schedule_next, video_active};
 mod compositor;
 mod frame;
 mod input;

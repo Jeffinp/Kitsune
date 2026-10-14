@@ -254,14 +254,16 @@ impl Desktop {
         };
         let t = b.tabs.active();
         let mut link = None;
+        let mut video = false;
         if let Some(page) = &t.page {
             let (qx, qy) = (px - ch.content.x, py - ch.content.y + t.scroll);
             link = page.link_at(qx, qy).map(String::from);
+            video = page.video_at(qx, qy).is_some_and(|v| !v.audio);
         }
         let has_sel = t.sel.is_some();
         let fav = t.browser.is_bookmarked();
         let can_mark = !t.browser.is_home();
-        let items = alloc::vec![
+        let mut items = alloc::vec![
             (PageCmd::Copy, t!("menu.edit.copy"), has_sel),
             (PageCmd::OpenLink, t!("web.menu.open_link"), link.is_some()),
             (PageCmd::CopyLink, t!("web.menu.copy_link"), link.is_some()),
@@ -277,6 +279,14 @@ impl Desktop {
                 can_mark,
             ),
         ];
+        if video {
+            let label = if super::media::stats_on() {
+                t!("web.menu.video_stats_hide")
+            } else {
+                t!("web.menu.video_stats")
+            };
+            items.push((PageCmd::VideoStats, label, true));
+        }
         b.glass[3].clear();
         b.ctx = Some(PageMenu {
             x: px,
@@ -312,6 +322,12 @@ impl Desktop {
             }
             PageCmd::Reload => self.browser_reload(id),
             PageCmd::Bookmark => self.browser_toggle_bookmark(id),
+            PageCmd::VideoStats => {
+                super::media::toggle_stats();
+                if let Some(b) = self.browser_state_mut(id) {
+                    b.touch();
+                }
+            }
         }
     }
 

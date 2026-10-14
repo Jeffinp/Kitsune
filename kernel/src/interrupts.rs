@@ -10,7 +10,7 @@
 use crate::io::{inb, outb};
 use crate::sync::RacyCell;
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use x86_64::VirtAddr;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
@@ -18,6 +18,14 @@ use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, Pag
 pub static TICKS: AtomicU64 = AtomicU64::new(0);
 /// Timer / scheduler quantum frequency. Higher = smoother time-slicing.
 pub const TIMER_HZ: u32 = 250;
+/// While a video plays the PIT fires this many times per tick ([`set_fast`]): the extra interrupts
+/// ("sub-ticks", 1 ms apart) do not count as ticks and do not end a thread's slice; they only let
+/// the compositor put a picture on screen within a millisecond of its time (`sched::present`).
+pub const SUB_PER_TICK: u32 = 4;
+/// The PIT runs at `TIMER_HZ * SUB_PER_TICK`.
+static FAST: AtomicBool = AtomicBool::new(false);
+/// Interrupts of the PIT since it went fast (a tick is every `SUB_PER_TICK`-th).
+static SUB: AtomicU32 = AtomicU32::new(0);
 
 /// Tags on bytes in the input ring (high byte of each entry).
 pub const SRC_KEYBOARD: u16 = 0;
@@ -200,6 +208,14 @@ unsafe extern "C" {
 /// Rust half of the timer ISR: advance the clock, round-robin to the next
 /// thread, and acknowledge the interrupt. Returns the next thread's `rsp`.
 extern "C" fn timer_schedule(rsp: u64) -> u64 {
+    if FAST.load(Ordering::Relaxed)
+        && !(SUB.fetch_add(1, Ordering::Relaxed) + 1).is_multiple_of(SUB_PER_TICK)
+    {
+        // A sub-tick: no tick, no time slice ends; only a picture that is due brings the compositor.
+        let next = crate::sched::sub_tick_switch(rsp);
+        outb(PIC1_CMD, PIC_EOI);
+        return next;
+    }
     // Entropy: one TSC read + one atomic store into a static ring (no allocation, no lock).
     crate::rng::sample(crate::rng::TIMER);
     let t0 = crate::trace::t();
@@ -472,6 +488,28 @@ fn remap_pic() {
 }
 
 // ---- 8253/8254 PIT ----
+
+/// Run the PIT `SUB_PER_TICK` times faster (a video plays: `sched::present`) or at the tick rate.
+/// The tick rate (`ticks()`) does not change; only the sub-ticks in between come and go.
+pub fn set_fast(on: bool) {
+    if FAST.load(Ordering::Relaxed) == on {
+        return;
+    }
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        SUB.store(0, Ordering::Relaxed);
+        FAST.store(on, Ordering::Relaxed);
+        init_pit(if on {
+            TIMER_HZ * SUB_PER_TICK
+        } else {
+            TIMER_HZ
+        });
+    });
+}
+
+/// Is the PIT running fast ([`set_fast`])?
+pub fn fast() -> bool {
+    FAST.load(Ordering::Relaxed)
+}
 
 fn init_pit(hz: u32) {
     let divisor = (1_193_182 / hz) as u16;

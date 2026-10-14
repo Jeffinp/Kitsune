@@ -42,7 +42,7 @@ impl Screen<'_> {
         }
         let t0 = trace::t();
         let n = self.n;
-        self.fb[..n].copy_from_slice(&self.back[..n]);
+        crate::fb::copy_bytes(&mut self.fb[..n], &self.back[..n]);
         trace::stage(trace::Stage::Blit, t0);
     }
 
@@ -107,7 +107,7 @@ fn copy_rect(dst: &mut [u8], src: &[u8], info: FrameBufferInfo, r: Rect) {
         let off = (row * info.stride + x) * bpp;
         let end = off + row_len;
         if end <= dst.len() && end <= src.len() {
-            dst[off..end].copy_from_slice(&src[off..end]);
+            crate::fb::copy_bytes(&mut dst[off..end], &src[off..end]);
         }
     }
 }

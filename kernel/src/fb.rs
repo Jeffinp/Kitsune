@@ -4,11 +4,15 @@ use bootloader_api::info::{FrameBufferInfo, PixelFormat};
 
 pub use kitsune_core::gfx::Color;
 
+#[path = "fb/copy.rs"]
+mod copy;
 #[path = "fb/scale.rs"] // explicit so the bench crate can `#[path]`-include this file
 mod scale;
 #[path = "fb/shapes.rs"]
 mod shapes;
 // The shape / shadow / surface toolkit (`Canvas` methods live in `shapes.rs`).
+#[allow(unused_imports)]
+pub use copy::copy_bytes;
 use kitsune_core::gfx::{
     alpha255_to_256, blend_lut, corner_inset, luma, mix256, split_span_around_hole,
 };

@@ -16,115 +16,64 @@ pub(super) fn fb_bgr() -> bool {
 }
 
 /// Copy an RGBA picture (`sw` x `sh`, bytes R, G, B, A, or B, G, R, A with `src_bgr`) into `dst`
-/// (screen coordinates), scaled by nearest neighbour, clipped to the canvas's clip.
-///
-/// This runs for every picture of a playing video, so the framebuffers QEMU gives (3 or 4 bytes a
-/// pixel, R, G, B or B, G, R) go a row at a time: a picture of the box's size in the framebuffer's
-/// own layout is one copy per row, anything else a table of source columns (no division per
-/// pixel), and a screen row showing the same source row as the one above is a copy of it. Only an
-/// odd framebuffer goes pixel by pixel. (The 3-byte framebuffer of QEMU's BIOS mode used to take
-/// the pixel-by-pixel path: most of the compositor's time while a video played.)
+/// (screen coordinates), scaled by nearest neighbour, clipped to the canvas's clip: row by row in
+/// the framebuffer's own layout (`kitsune_core::gfx::videoblit`, with the kernel's copier that
+/// avoids `rep movs`); only an odd framebuffer goes pixel by pixel.
 fn blit_rgba(c: &mut Canvas, src: &[u8], sw: u32, sh: u32, src_bgr: bool, dst: Rect) {
+    use kitsune_core::gfx::videoblit::{Area, Surface, blit_scaled};
     let (sw, sh) = (sw as usize, sh as usize);
     if sw == 0 || sh == 0 || src.len() < sw * sh * 4 || dst.w <= 0 || dst.h <= 0 {
         return;
     }
-    let Some(r) = dst.intersection(&c.clip_rect()) else {
-        return;
-    };
     let info = c.fb_info();
-    let (dw, dh) = (dst.w as usize, dst.h as usize);
     let bpp = info.bytes_per_pixel;
     let fb_bgr = match info.pixel_format {
-        bootloader_api::info::PixelFormat::Bgr if bpp == 3 || bpp == 4 => true,
-        bootloader_api::info::PixelFormat::Rgb if bpp == 3 || bpp == 4 => false,
-        _ => {
-            // An odd framebuffer: the slow path.
-            for y in r.y..r.bottom() {
-                let sy = ((y - dst.y) as usize * sh / dh).min(sh - 1);
-                for x in r.x..r.right() {
-                    let sx = ((x - dst.x) as usize * sw / dw).min(sw - 1);
-                    let i = (sy * sw + sx) * 4;
-                    let (red, blue) = if src_bgr {
-                        (src[i + 2], src[i])
-                    } else {
-                        (src[i], src[i + 2])
-                    };
-                    c.put(x as usize, y as usize, Color::rgb(red, src[i + 1], blue));
-                }
-            }
-            return;
-        }
+        bootloader_api::info::PixelFormat::Bgr if bpp == 3 || bpp == 4 => Some(true),
+        bootloader_api::info::PixelFormat::Rgb if bpp == 3 || bpp == 4 => Some(false),
+        _ => None,
     };
-    FB_BGR.store(fb_bgr, core::sync::atomic::Ordering::Relaxed);
-    // Swap R and B when the picture's order is not the framebuffer's.
-    let swap = fb_bgr != src_bgr;
-    let stride = info.stride;
-    // The source column of every screen column, once.
-    let cols: Vec<usize> = (r.x..r.right())
-        .map(|x| ((x - dst.x) as usize * sw / dw).min(sw - 1))
-        .collect();
-    let same_cols = sw == dw && r.x == dst.x && cols.len() == sw;
-    let len = cols.len() * bpp;
-    let buf = c.buffer_mut();
-    let mut above: Option<(usize, usize)> = None;
+    let clip = c.clip_rect();
+    if let Some(bgr) = fb_bgr {
+        FB_BGR.store(bgr, core::sync::atomic::Ordering::Relaxed);
+        let area = |r: Rect| Area {
+            x: r.x,
+            y: r.y,
+            w: r.w,
+            h: r.h,
+        };
+        let mut s = Surface {
+            buf: c.buffer_mut(),
+            stride: info.stride,
+            bpp,
+            bgr,
+        };
+        blit_scaled(
+            &mut s,
+            src,
+            (sw, sh),
+            src_bgr,
+            area(dst),
+            area(clip),
+            &crate::fb::copy_bytes,
+        );
+        return;
+    }
+    // An odd framebuffer: the slow path.
+    let Some(r) = dst.intersection(&clip) else {
+        return;
+    };
+    let (dw, dh) = (dst.w as usize, dst.h as usize);
     for y in r.y..r.bottom() {
         let sy = ((y - dst.y) as usize * sh / dh).min(sh - 1);
-        let start = (y as usize * stride + r.x as usize) * bpp;
-        if buf.len() < start + len {
-            continue;
-        }
-        if let Some((prev_sy, prev_start)) = above
-            && prev_sy == sy
-        {
-            buf.copy_within(prev_start..prev_start + len, start);
-            continue;
-        }
-        above = Some((sy, start));
-        let row = &src[sy * sw * 4..(sy + 1) * sw * 4];
-        let out = &mut buf[start..start + len];
-        if bpp == 4 && !swap && same_cols {
-            // The picture's size and order: the row as it is.
-            out.copy_from_slice(row);
-            continue;
-        }
-        // A pixel is one 4-byte load and one 4-byte store (under emulation every memory access
-        // counts): with 3 bytes a pixel the store's last byte is the next pixel's first, written
-        // over by it, so the row's last pixel goes byte by byte.
-        let n = cols.len();
-        let whole = if bpp == 4 { n } else { n.saturating_sub(1) };
-        let px = |sx: usize| {
-            let v = u32::from_le_bytes([
-                row[sx * 4],
-                row[sx * 4 + 1],
-                row[sx * 4 + 2],
-                row[sx * 4 + 3],
-            ]);
-            if swap {
-                (v & 0xFF00_FF00) | ((v >> 16) & 0xFF) | ((v & 0xFF) << 16)
+        for x in r.x..r.right() {
+            let sx = ((x - dst.x) as usize * sw / dw).min(sw - 1);
+            let i = (sy * sw + sx) * 4;
+            let (red, blue) = if src_bgr {
+                (src[i + 2], src[i])
             } else {
-                v
-            }
-        };
-        if same_cols {
-            for i in 0..whole {
-                out[i * bpp..i * bpp + 4].copy_from_slice(&px(i).to_le_bytes());
-            }
-        } else {
-            // Scaled up, neighbouring screen pixels show the same picture pixel: read it once.
-            let (mut last, mut v) = (usize::MAX, 0u32);
-            for (i, &sx) in cols[..whole].iter().enumerate() {
-                if sx != last {
-                    last = sx;
-                    v = px(sx);
-                }
-                out[i * bpp..i * bpp + 4].copy_from_slice(&v.to_le_bytes());
-            }
-        }
-        if whole < n {
-            let sx = if same_cols { whole } else { cols[whole] };
-            let v = px(sx).to_le_bytes();
-            out[whole * bpp..whole * bpp + 3].copy_from_slice(&v[..3]);
+                (src[i], src[i + 2])
+            };
+            c.put(x as usize, y as usize, Color::rgb(red, src[i + 1], blue));
         }
     }
 }
@@ -149,6 +98,34 @@ fn blit_image(c: &mut Canvas, img: &kitsune_core::image::Image, dst: Rect) {
                 y as usize,
                 Color::rgb((p >> 16) as u8, (p >> 8) as u8, p as u8),
             );
+        }
+    }
+}
+
+/// Black only around the picture (else the whole box under it, to measure the difference).
+const LETTERBOX_ONLY: bool = true;
+
+/// Paint `r` black except `inner` (the picture's rectangle inside it): the bars of a letterbox.
+fn black_around(c: &mut Canvas, r: Rect, inner: Option<Rect>) {
+    let black = Color::rgb(0, 0, 0);
+    let mut fill = |x: i32, y: i32, w: i32, h: i32| {
+        if w > 0 && h > 0 {
+            c.fill_rect(
+                x.max(0) as usize,
+                y.max(0) as usize,
+                w as usize,
+                h as usize,
+                black,
+            );
+        }
+    };
+    match inner.and_then(|i| i.intersection(&r)) {
+        None => fill(r.x, r.y, r.w, r.h),
+        Some(i) => {
+            fill(r.x, r.y, r.w, i.y - r.y);
+            fill(r.x, i.bottom(), r.w, r.bottom() - i.bottom());
+            fill(r.x, i.y, i.x - r.x, i.h);
+            fill(i.right(), i.y, r.right() - i.right(), i.h);
         }
     }
 }
@@ -217,6 +194,9 @@ impl Desktop {
             if v.controls {
                 paint_controls(c, r, v.audio, mp, zoom);
             }
+            if let Some(m) = mp.filter(|_| !v.audio && super::overlay::stats_on()) {
+                super::overlay::paint_stats(c, r, m);
+            }
         }
         c.restore_clip(saved);
     }
@@ -239,14 +219,17 @@ impl Desktop {
             );
             return;
         }
-        c.fill_rect(
-            r.x.max(0) as usize,
-            r.y.max(0) as usize,
-            r.w.max(0) as usize,
-            r.h.max(0) as usize,
-            Color::rgb(0, 0, 0),
-        );
         let frame = mp.and_then(|m| m.player.shown().map(|f| (m, f)));
+        // Black where the picture does not cover (all of it before there is one): painting the
+        // whole box black under every picture cost as much again as the picture.
+        let covered = frame
+            .filter(|(m, f)| (m.started || v.poster.is_none()) && f.len() >= proto::FRAME_HEAD)
+            .map(|(_, f)| {
+                let fw = u32::from_le_bytes([f[12], f[13], f[14], f[15]]);
+                let fh = u32::from_le_bytes([f[16], f[17], f[18], f[19]]);
+                at(r, controls::contain(r.w, r.h, fw, fh))
+            });
+        black_around(c, r, covered.filter(|_| LETTERBOX_ONLY));
         let poster = v
             .poster
             .and_then(|i| bs.img_keys.get(i))

@@ -106,6 +106,16 @@ pub extern "C" fn switch_current(rsp: u64) -> u64 {
     reschedule(rsp, true)
 }
 
+/// Called from the timer ISR on a sub-tick (`interrupts::set_fast`): the running thread keeps the
+/// CPU unless a picture is due and the compositor must put it on screen (`present`).
+pub fn sub_tick_switch(rsp: u64) -> u64 {
+    if present::due() && current() != 0 {
+        reschedule(rsp, false)
+    } else {
+        rsp
+    }
+}
+
 /// Called from the yield vector (`int 0x81`): same, but no tick is credited.
 pub extern "C" fn yield_switch(rsp: u64) -> u64 {
     reschedule(rsp, false)

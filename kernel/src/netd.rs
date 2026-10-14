@@ -74,6 +74,10 @@ static TSC_KHZ: AtomicU64 = AtomicU64::new(0);
 pub fn set_tsc_khz(khz: u64) {
     TSC_KHZ.store(khz, Ordering::Relaxed);
 }
+/// The calibrated TSC rate in kHz (0 before the calibration).
+pub fn tsc_khz() -> u64 {
+    TSC_KHZ.load(Ordering::Relaxed)
+}
 /// Monotonic milliseconds (timer ticks).
 pub fn now_ms() -> u64 {
     interrupts::ticks() * 1000 / u64::from(interrupts::TIMER_HZ)

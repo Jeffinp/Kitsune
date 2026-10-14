@@ -68,18 +68,32 @@ pub fn block(until: u64, still_idle: impl Fn() -> bool) {
 /// The compositor's idle step (replaces a bare `hlt`): if `has_work()` return
 /// at once; if another thread is runnable give it the CPU now instead of
 /// halting through our slice; otherwise `sti; hlt` until the next interrupt.
+///
+/// While the PIT runs fast (a video plays, `interrupts::set_fast`) a sub-tick that ends the `hlt`
+/// with nothing due (no tick, no picture, no input, nobody else runnable) halts again: the loop
+/// of the compositor runs at the tick rate plus once per picture, not at the sub-tick rate.
 pub fn idle(has_work: impl Fn() -> bool) {
     let me = current();
-    x86_64::instructions::interrupts::disable();
-    if has_work() {
-        x86_64::instructions::interrupts::enable();
-    } else if others_ready(me) {
-        x86_64::instructions::interrupts::enable();
-        yield_now();
-    } else {
-        let slot = me.min(MAX_THREADS - 1);
-        IDLE[slot].store(true, Ordering::Relaxed);
-        x86_64::instructions::interrupts::enable_and_hlt();
-        IDLE[slot].store(false, Ordering::Relaxed);
+    let tick0 = crate::interrupts::ticks();
+    loop {
+        x86_64::instructions::interrupts::disable();
+        if has_work() {
+            x86_64::instructions::interrupts::enable();
+        } else if others_ready(me) {
+            x86_64::instructions::interrupts::enable();
+            yield_now();
+        } else {
+            let slot = me.min(MAX_THREADS - 1);
+            IDLE[slot].store(true, Ordering::Relaxed);
+            x86_64::instructions::interrupts::enable_and_hlt();
+            IDLE[slot].store(false, Ordering::Relaxed);
+            if crate::interrupts::fast()
+                && crate::interrupts::ticks() == tick0
+                && !super::present::due()
+            {
+                continue;
+            }
+        }
+        return;
     }
 }

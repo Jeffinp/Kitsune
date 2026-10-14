@@ -43,6 +43,19 @@ impl Desktop {
             self.browser_ctrl_key(id, key, shift);
             return;
         }
+        // Shift+I on a page with a video (not while typing in a field): the statistics overlay.
+        if shift
+            && matches!(key, Key::Char(b'I' | b'i'))
+            && !b.find.is_open()
+            && b.forms.focus().is_none()
+            && !b.browser.bar_focus()
+            && b.page
+                .as_ref()
+                .is_some_and(|p| p.videos.iter().any(|v| !v.audio))
+        {
+            super::media::toggle_stats();
+            return;
+        }
         // The find bar takes the keys while it is open.
         if b.find.is_open() {
             use kitsune_core::web::find::FindOutcome;

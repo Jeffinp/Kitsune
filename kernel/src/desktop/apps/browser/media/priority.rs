@@ -26,7 +26,7 @@ impl MediaPlayer {
 
     /// How much media is buffered ahead of the position (the least over the sources that hold
     /// something), if known.
-    fn ahead(&self) -> Option<i64> {
+    pub(super) fn ahead(&self) -> Option<i64> {
         let pos = self.player.position();
         self.ranges
             .iter()

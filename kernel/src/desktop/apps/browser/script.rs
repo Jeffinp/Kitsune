@@ -288,6 +288,7 @@ impl Desktop {
             let alive = crate::userproc::end(js.pid) == crate::userproc::End::Running;
             if let (Some(m), Some(doc)) = (doc_msg, t.doc.as_mut()) {
                 let t0 = crate::trace::tc();
+                let wall0 = crate::netd::now_us();
                 doc.replace_from_script(&m[1..]);
                 crate::trace::note_cpu("js-dom", t0, m.len() as u64);
                 let tt = String::from(doc.title());
@@ -297,12 +298,16 @@ impl Desktop {
                         title = Some(tt);
                     }
                 }
+                let wall1 = crate::netd::now_us();
                 if t.id == active_id {
                     relayout_js(t, images, content);
                     media_relayout = false;
                 } else {
                     t.layout_w = 0;
                     t.page = None;
+                }
+                if let Some(js) = &t.js {
+                    js.media.note_document(m.len(), wall0, wall1);
                 }
                 redraw = true;
             } else if media_relayout && t.id == active_id {

@@ -402,8 +402,14 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // often the GUI thread is scheduled (the timer preempts round-robin across threads).
     const DT_PER_TICK: f32 = 1.0 / interrupts::TIMER_HZ as f32;
     let mut first_frame = true;
+    // While a video plays, the once-a-second work waits for a picture to have just gone to the
+    // screen (at most half a second), so it never delays one: `presented` says the last frame
+    // carried a picture, `second_seen` when the new second was first noticed.
+    let mut presented = false;
+    let mut second_seen: Option<u64> = None;
 
     loop {
+        desktop::loop_start();
         let rt = rtc::now();
         let time = Time {
             h: rt.h,
@@ -419,6 +425,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         if tick_changed {
             desk.animate(tick_delta as f32 * DT_PER_TICK);
         }
+
+        // The browser first (pages, scripts, the players of its videos), so a picture it picks goes
+        // to the screen in this very frame; then the scheduler hears when the next one is due.
+        bringup::pump_browser(&mut desk, &mut browser_redraw);
+        desktop::schedule_next();
 
         // Drain all pending PS/2 events.
         let external = core::mem::take(&mut browser_redraw);
@@ -451,7 +462,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         let client_dirty = desk.take_client_dirty();
         let input_irq_tsc = if got_input { trace::input_taken() } else { 0 };
         let mut report_due = false;
-        if rt.s != last_sec {
+        let second_now = rt.s != last_sec && {
+            let seen = *second_seen.get_or_insert(tick);
+            presented || !desktop::video_active() || tick.saturating_sub(seen) >= 125
+        };
+        if second_now {
+            second_seen = None;
             last_sec = rt.s;
             report_due = true;
             desk.tick_processes();
@@ -513,7 +529,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             },
         );
         // A video picture in this frame reached the screen now.
-        desktop::note_present();
+        presented = desktop::note_present();
         if out.worked {
             trace::input_done(input_irq_tsc);
             if first_frame {
@@ -524,8 +540,6 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         if report_due {
             trace::report(tsc_khz, tick);
         }
-
-        bringup::pump_browser(&mut desk, &mut browser_redraw);
 
         // Idle until the next interrupt instead of busy-spinning. The timer
         // (250 Hz) wakes us to step animations and the per-second clock; the

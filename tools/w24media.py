@@ -9,6 +9,10 @@
            Range request and appended to two SourceBuffers (/media/mse.json lists the byte ranges).
 /audio     <audio controls src=/media/a440.webm>: the tone alone.
 /media/*   the files, with Range (206) support.
+/pace?fps=F&size=WxH&secs=S&box=WxH  a `<video>` of a generated clip (testsrc2 with a 440 Hz tone,
+           VP9 + Opus, F frames a second, made once with ffmpeg) in a box of the given size (853x480,
+           YouTube's embed in the browser window), played once it can: the frame pacing test (W63),
+           without a page that does anything else.
 /real?src=URL  a page with `<video controls src=URL>` and the same script (plays it once, logs the
            events): for a video from the internet, or /relay?u=URL, the same file downloaded once by
            this server (with the host's curl, through its proxy) and served with Range, for a
@@ -192,6 +196,34 @@ ms.addEventListener('sourceended', () => log('sourceended'));
 </script>""")
 
 
+def pace_file(fps, w, h, secs):
+    """The clip of /pace (made once): testsrc2 and a tone, VP9 at a YouTube-like bit rate."""
+    os.makedirs(MEDIA, exist_ok=True)
+    name = "pace-%d-%dx%d-%d.webm" % (fps, w, h, secs)
+    p = os.path.join(MEDIA, name)
+    if not os.path.exists(p):
+        rate = max(100, w * h * fps * 8 // 100 // 1000)  # kb/s: ~200 for 240p25, ~4400 for 720p60
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                        "testsrc2=size=%dx%d:rate=%d" % (w, h, fps), "-f", "lavfi", "-i",
+                        "sine=frequency=440:sample_rate=48000", "-t", str(secs), "-c:v", "libvpx-vp9",
+                        "-b:v", "%dk" % rate, "-g", str(fps * 2), "-deadline", "good", "-cpu-used", "4",
+                        "-row-mt", "1", "-c:a", "libopus", p + ".part.webm"], check=True)
+        os.rename(p + ".part.webm", p)
+    return name
+
+
+def pace_page(q):
+    num = lambda k, d: int(q.get(k, [d])[0])
+    size = lambda k, d: [int(x) for x in q.get(k, [d])[0].split("x")]
+    fps, secs = num("fps", "25"), num("secs", "40")
+    w, h = size("size", "426x240")
+    bw, bh = size("box", "853x480")
+    name = pace_file(fps, w, h, secs)
+    return page("Ritmo %d fps" % fps, "<video id=v controls width=%d height=%d src=/media/%s></video>"
+                "<p id=s>carregando</p><script>" % (bw, bh, name) + LOG_JS +
+                "v.addEventListener('canplaythrough', start);</script>")
+
+
 REAL_JS = r"""
 v.addEventListener('canplaythrough', start);
 v.addEventListener('loadedmetadata', () => log('metadata ' + v.videoWidth + 'x' + v.videoHeight + ' duration ' + v.duration));
@@ -239,6 +271,9 @@ def handle(h, method, u, q):
     """Serve a media route; False if the path is not one."""
     if method not in ("GET", "HEAD"):
         return False
+    if u.path == "/pace":
+        h.reply(200, "text/html; charset=utf-8", pace_page(q))
+        return True
     if u.path == "/real":
         h.reply(200, "text/html; charset=utf-8", real_page(q.get("src", [""])[0]))
         return True

@@ -85,6 +85,9 @@ pub struct Player<F> {
     show_next: bool,
     /// Time between the last two pictures (how long the last one lasts).
     frame_dur: i64,
+    /// How long a picture takes from being picked to being on screen (ns): pictures are picked that
+    /// much before their time, so they reach the screen on it ([`Player::set_lead`]).
+    lead: i64,
     held_video: u32,
     pcm: VecDeque<Pcm>,
     /// Bytes of the front piece already in the device queue.
@@ -126,6 +129,7 @@ impl<F> Player<F> {
             shown: None,
             show_next: true,
             frame_dur: 33_333_333,
+            lead: 0,
             held_video: 0,
             pcm: VecDeque::new(),
             pcm_off: 0,
@@ -180,12 +184,25 @@ impl<F> Player<F> {
         self.frames.len()
     }
 
-    /// How long until the next queued picture is due (ns, 0 = now), while the clock runs.
+    /// The time between the video's last two pictures (ns): its frame duration.
+    pub fn frame_duration(&self) -> i64 {
+        self.frame_dur
+    }
+
+    /// How long until the next queued picture is to be picked (ns, 0 = now), while the clock runs.
     pub fn next_due_ns(&self) -> Option<i64> {
         if !self.st.running() {
             return None;
         }
-        self.frames.front().map(|q| (q.pts - self.position).max(0))
+        self.frames
+            .front()
+            .map(|q| (q.pts - self.lead - self.position).max(0))
+    }
+
+    /// The time from picking a picture to its being on screen, as the browser measured it (ns,
+    /// at most half a frame or 30 ms): the next pictures are picked that much early.
+    pub fn set_lead(&mut self, ns: i64) {
+        self.lead = ns.clamp(0, (self.frame_dur / 2).min(30_000_000));
     }
 
     /// Does the clock follow the sound?
@@ -415,6 +432,8 @@ impl<F> Player<F> {
     /// go, so the decoder's budget is not held by them). Returns whether the picture changed.
     fn pick(&mut self, t: i64) -> bool {
         let mut changed = false;
+        // Picked `lead` early, a picture reaches the screen on its time.
+        let t = t + if self.st.running() { self.lead } else { 0 };
         if self.show_next
             && self.st.marked()
             && let Some(q) = self.frames.pop_front()

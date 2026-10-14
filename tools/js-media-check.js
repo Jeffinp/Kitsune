@@ -1,5 +1,5 @@
 // Host check of <video>/<audio> and Media Source Extensions in JavaScript
-// (user-apps/jsrun/src/bin/jsrun/{dom,net,media}.js) with Node:
+// (user-apps/jsrun/src/bin/jsrun/{dom,net,media,compat}.js) with Node:
 //   node tools/js-media-check.js user-apps/jsrun/src/bin/jsrun
 // A fake browser answers the M/m messages (the player's state, what a source buffer holds) and the
 // fetches of a `src`; prints ok/FAIL per check and exits 1 on a failure.
@@ -7,7 +7,7 @@ const vm = require('vm');
 const fs = require('fs');
 const nodeCrypto = require('crypto');
 const dir = process.argv[2];
-const src = ['dom.js', 'net.js', 'media.js'].map((f) => fs.readFileSync(dir + '/' + f, 'utf8')).join('\n');
+const src = ['dom.js', 'net.js', 'media.js', 'compat.js'].map((f) => fs.readFileSync(dir + '/' + f, 'utf8')).join('\n');
 const sent = [];
 const t0 = Date.now();
 const ctx = { console, performance: { now: () => Date.now() - t0 } };
@@ -272,6 +272,18 @@ const S = 1e9;
     'getVideoPlaybackQuality: the pictures due (shown + dropped) and the dropped ones');
   media({ id: 0, cap: 2500000 });
   check(kjs.dom.decodeBudget === 2500000, 'the decoding budget (pixels a second) reaches the page');
+  // What this machine plays smoothly: the parameters YouTube probes, then the measured budget.
+  const vp9 = 'video/webm; codecs="vp9"';
+  check(run(`MediaSource.isTypeSupported('${vp9}; width=1280; height=720; framerate=60') && MediaSource.isTypeSupported('${vp9}; width=1920; height=1080; framerate=60') && !MediaSource.isTypeSupported('${vp9}; width=3840; height=2160; framerate=30') && !MediaSource.isTypeSupported('${vp9}; width=1280; height=720; framerate=120')`),
+    'isTypeSupported: up to 1920x1080 at 60 fps (what the decoder decodes at all)');
+  const smooth = async (w, h, fps) => (await ctx.navigator.mediaCapabilities.decodingInfo({ type: 'media-source', video: { contentType: vp9, width: w, height: h, framerate: fps, bitrate: 1e6 } })).smooth;
+  kjs.dom.decodeBudget = 3000000;
+  check(await smooth(426, 240, 25) && !(await smooth(640, 360, 30)), 'decodingInfo: smooth within the budget (3 Mpixels/s, the emulator: 240p25 yes, 360p30 no)');
+  kjs.dom.decodeBudget = 60000000;
+  check(await smooth(1280, 720, 60) && !(await smooth(1920, 1080, 60)), 'decodingInfo: a fast machine (60 Mpixels/s) plays 720p60, not 1080p60');
+  kjs.dom.decodeBudget = 0;
+  check(await smooth(854, 480, 30) && !(await smooth(1280, 720, 30)) && !(await smooth(854, 480, 60)), 'decodingInfo before the first measure: up to 480p30');
+  kjs.dom.decodeBudget = 2500000;
   const docs = () => take().filter((o) => o.other && o.other[0] === 'D').length;
   take();
   run(`document.body.setAttribute('data-a', '1')`);

@@ -97,9 +97,10 @@
       if (v && (Number(v[1]) !== 0 || (v[2] !== undefined && Number(v[2]) !== 8))) return '';
     }
     // `width`, `height` and `framerate` (the parameters YouTube's player probes, as TV browsers
-    // honour them): what the software decoder keeps up with in real time even under emulation
-    // (VP9 480p30: ~25 fps decoded under QEMU without KVM, docs/design/midia.md), so a player that
-    // asks picks a stream that plays. Other parameters are ignored (as Chrome does).
+    // honour them): what the decoder can decode at all (libvpx is built for pictures up to
+    // 1920x1088; YouTube's VP9 has 60 fps from 720p up). Whether this machine keeps up in real time
+    // is `navigator.mediaCapabilities.decodingInfo().smooth`, from the measured budget (compat.js).
+    // Other parameters are ignored (as Chrome does).
     const num = (k) => { const m = new RegExp(';\\s*' + k + '\\s*=\\s*"?(\\d+(?:\\.\\d+)?)', 'i').exec(String(type)); return m ? Number(m[1]) : 0; };
     if (t.major === 'video') {
       const w = num('width'), h = num('height'), fps = num('framerate');
@@ -108,7 +109,7 @@
     }
     return 'probably';
   }
-  const MAX_VIDEO_W = 854, MAX_VIDEO_H = 480, MAX_VIDEO_FPS = 30;
+  const MAX_VIDEO_W = 1920, MAX_VIDEO_H = 1080, MAX_VIDEO_FPS = 60;
 
   // ---- event targets with on<type> properties ----
 

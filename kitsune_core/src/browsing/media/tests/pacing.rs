@@ -187,3 +187,84 @@ fn player_shows_30fps_evenly_on_a_sound_clock_that_moves_in_10ms_steps() {
         "{sp:?}"
     );
 }
+
+#[test]
+fn the_statistics_overlay_in_both_languages() {
+    use crate::browsing::media::nerd::{NerdStats, quality_name};
+    use crate::i18n::Lang;
+    use crate::i18n::testlang::LangGuard;
+    let mut iv = alloc::vec![40_000u32, 40_100, 39_900, 44_000];
+    let n = NerdStats {
+        video_w: 426,
+        video_h: 240,
+        video_milli_fps: 25_000,
+        picture_w: 426,
+        picture_h: 240,
+        box_w: 853,
+        box_h: 480,
+        shown_milli_fps: 24_900,
+        spread: Spread::of(&mut iv),
+        shown: 1000,
+        dropped: 12,
+        decoder_dropped: 3,
+        late_us: 5_300,
+        cpu_decoder: 45,
+        cpu_compositor: 25,
+        cpu_page: 20,
+        budget: 2_600_000,
+        ahead_ms: 12_300,
+        frames_ready: 6,
+        sound_clock: true,
+    };
+    assert_eq!(quality_name(426, 240), "240p");
+    assert_eq!(quality_name(1280, 720), "720p");
+    let mut g = LangGuard::new(Lang::Pt);
+    let pt = n.lines();
+    assert_eq!(pt.len(), 11);
+    assert_eq!(pt[1], "Vídeo: 426x240 a 25,0 fps");
+    assert_eq!(pt[3], "Na tela: 24,9 fps (últimos 2 s)");
+    assert!(
+        pt[4].starts_with("Intervalo entre quadros: 41,0 ms ± 1,7 ms"),
+        "{}",
+        pt[4]
+    );
+    assert_eq!(pt[5], "Descartados: 12 de 1.012 (3 pelo decodificador)");
+    assert_eq!(pt[6], "Atraso da imagem sobre o som: 5,3 ms");
+    assert_eq!(
+        pt[8],
+        "Qualidade: 240p (orçamento do decodificador 2,6 Mpx/s)"
+    );
+    assert_eq!(pt[9], "Fila: 12,3 s à frente, 6 quadros prontos");
+    g.set(Lang::En);
+    let en = n.lines();
+    assert_eq!(en[5], "Dropped: 12 of 1,012 (3 by the decoder)");
+    assert_eq!(en[7], "CPU: decoder 45%, compositor 25%, page 20%");
+    let unmeasured = NerdStats { budget: 0, ..n };
+    assert!(unmeasured.lines()[8].contains("not measured"));
+}
+
+#[test]
+fn a_lead_picks_the_pictures_early_by_the_time_they_take_to_reach_the_screen() {
+    let mut p: Player<u32> = Player::new(Flow::default(), true);
+    let mut s = Sink::new();
+    p.header(header(true, true));
+    feed(&mut p, 0, 1000);
+    p.step_us(0, Some(&mut s));
+    p.play();
+    p.step_us(1000, Some(&mut s));
+    // Frame 3 is at 100 ms; with a 10 ms lead it goes when the clock reaches 90 ms.
+    p.set_lead(10 * MS);
+    s.run(89 * 48);
+    p.step_us(2000, Some(&mut s));
+    assert_eq!(p.shown(), Some(&2));
+    s.run(48);
+    p.step_us(3000, Some(&mut s));
+    assert_eq!(p.shown(), Some(&3));
+    // The next one (133 ms) is to be picked at 123 ms: ~33 ms from the clock at 90 ms.
+    let d = p.next_due_ns().unwrap();
+    assert!(d > 30 * MS && d < 35 * MS, "{d}");
+    // Never more than half a frame.
+    p.set_lead(100 * MS);
+    let d2 = p.next_due_ns().unwrap();
+    assert!(d2 >= d - 7 * MS, "{d2}");
+}

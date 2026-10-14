@@ -48,6 +48,7 @@ use x86_64::registers::segmentation::{CS, SS, Segment};
 mod blocking;
 mod death;
 mod introspect;
+pub mod present;
 mod spawn;
 mod user;
 pub use blocking::*;
@@ -308,9 +309,13 @@ fn reschedule(rsp: u64, timer_tick: bool) -> u64 {
     // candidate, so it keeps the CPU when nobody else can run (unless it died).
     let n = s.threads.len();
     let now = crate::interrupts::ticks();
-    let hint = HANDOFF.swap(usize::MAX, Ordering::Relaxed);
-    let hinted = (!timer_tick && hint < n && hint != cur && runnable(hint, now)).then_some(hint);
-    let next = match hinted.or_else(|| {
+    // A picture is due: the compositor runs now (or keeps running), whoever's turn it was.
+    let boost = (present::due() && runnable(0, now)).then_some(0);
+    let hinted = || {
+        let hint = HANDOFF.swap(usize::MAX, Ordering::Relaxed);
+        (!timer_tick && hint < n && hint != cur && runnable(hint, now)).then_some(hint)
+    };
+    let next = match boost.or_else(hinted).or_else(|| {
         kitsune_core::schedule::next_runnable_held(cur, n, |i| runnable(i, now), |i| held(i, now))
     }) {
         Some(next) => next,

@@ -22,13 +22,15 @@ use kitsune_core::media::wire::{self, Command, Control};
 
 mod controls;
 mod direct;
+mod overlay;
 mod pace;
 mod paint;
 mod priority;
 mod speed;
 mod stats;
 pub(crate) use direct::NetCtx;
-pub(crate) use pace::note_present;
+pub(crate) use overlay::{stats_on, toggle_stats};
+pub(crate) use pace::{loop_start, note_present, schedule_next, video_active};
 pub(crate) use paint::video_covers;
 pub(crate) use speed::{pump_speed, tell_budget};
 
@@ -41,6 +43,8 @@ const MAX_TAKE: usize = 48;
 const TIME_EVERY_MS: u64 = 250;
 /// How often the log hears how a playing player goes.
 const LOG_EVERY_MS: u64 = 1000;
+/// Pick the pictures early by the measured time it takes them to reach the screen.
+const LEAD: bool = true;
 /// The budget of a player: pictures (a few frames of a 720p box) and sound (~2.7 s).
 const FLOW: Flow = Flow {
     video: 8 << 20,
@@ -91,6 +95,8 @@ pub(crate) struct MediaPlayer {
     ranges: Vec<Vec<(i64, i64)>>,
     /// When its pictures reached the screen (`pace.rs`).
     pace: pace::Pace,
+    /// The CPU of its parts over the last second (`overlay.rs`).
+    cpu: overlay::CpuShare,
 }
 
 impl Drop for MediaPlayer {
@@ -319,6 +325,7 @@ impl MediaSet {
             ranges: Vec::new(),
             dec_dropped: 0,
             pace: pace::Pace::default(),
+            cpu: overlay::CpuShare::default(),
         };
         p.post(proto::msg(
             proto::IN_FLOW,
@@ -351,7 +358,8 @@ impl MediaSet {
         doc: Option<&mut kitsune_core::web::Doc>,
     ) -> Pumped {
         let mut out = Pumped::default();
-        let now = now_ms();
+        let now_us = pace::now_us();
+        let now = now_us / 1000;
         let mut doc = doc;
         // A decoder that died ends its player; the page hears it as a decode error.
         self.players.retain(|p| {
@@ -369,6 +377,9 @@ impl MediaSet {
         });
         for p in &mut self.players {
             p.pace.collect();
+            if LEAD {
+                p.player.set_lead(p.pace.delay_us as i64 * 1000);
+            }
             p.flush_backlog();
             p.pump_direct(net);
             for _ in 0..MAX_TAKE {
@@ -382,10 +393,13 @@ impl MediaSet {
             let mut sink = p.sink();
             let changed = p
                 .player
-                .step(now, sink.as_mut().map(|s| s as &mut dyn AudioSink));
+                .step_us(now_us, sink.as_mut().map(|s| s as &mut dyn AudioSink));
             out.redraw |= changed;
             if changed && let Some(pts) = p.player.shown_pts() {
-                p.pace.picked(pts, p.player.position(), pace::now_us());
+                p.pace.picked(pts, p.player.position(), now_us);
+            }
+            if p.player.state().running() && p.player.state().meta.is_some_and(|m| m.video) {
+                pace::offer_due(p.player.next_due_ns());
             }
             // A seek (the page's, the controls', play() after the end, `loop`) goes to the decoder.
             if let Some((epoch, t)) = p.player.take_seek() {
@@ -408,7 +422,8 @@ impl MediaSet {
                     &[Field::I64(t), Field::U8(u8::from(running))],
                 ));
             }
-            if now.saturating_sub(p.last_log_ms) >= LOG_EVERY_MS {
+            // (Not while a picture waits for the frame: the line would delay it.)
+            if now.saturating_sub(p.last_log_ms) >= LOG_EVERY_MS && !p.pace.waiting() {
                 p.last_log_ms = now;
                 // While it is supposed to play, how it goes (once a second).
                 if !p.player.state().paused {
@@ -424,6 +439,7 @@ impl MediaSet {
                     );
                 }
                 p.log_frames();
+                p.sample_cpu();
                 p.window();
             }
             // The picture size: the element's box, the video's shape kept.

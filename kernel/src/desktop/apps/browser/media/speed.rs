@@ -26,6 +26,9 @@ const SHARE_PERCENT: u64 = 50;
 /// fps of 480x360 while the clip measured 18.6 Mpixels/s). The worse figure is used: on a fast
 /// machine the budget is far above the 480p ceiling anyway.
 const REAL_PERCENT: u64 = 40;
+/// Decoder CPU (ticks) a stretch of playback must have used for its live measure to count.
+const LIVE_MIN_TICKS: u64 = 25;
+
 /// A measurement that takes longer than this is given up (the budget stays unknown).
 const GIVE_UP_MS: u64 = 20_000;
 
@@ -44,11 +47,48 @@ enum Bench {
 static BENCH: SpinLock<Bench> = SpinLock::new(Bench::Idle);
 
 /// The decoding budget for a playing video, in pixels a second, once measured.
+pub(super) fn budget() -> Option<u64> {
+    decode_budget()
+}
+
 fn decode_budget() -> Option<u64> {
     match *BENCH.lock() {
         Bench::Done(b) if b > 0 => Some(b),
         _ => None,
     }
+}
+
+/// The live measure of a stretch of playback: the decoder decoded `pixels` (pictures shown and
+/// dropped times the video's size) with `busy_ticks` of CPU. The real video on this machine is the
+/// honest measure (the clip and [`REAL_PERCENT`] are a guess made before anything plays: under an
+/// emulator a bigger picture costs more per pixel, natively less), so a budget it shows to be
+/// higher replaces the clip's (it is never lowered here: a player that drops pictures lowers its
+/// quality by itself, from `getVideoPlaybackQuality`). Returns the new budget when it rose by more
+/// than a quarter (the pages are told; the next choice of quality uses it).
+pub(super) fn refine(pixels: u64, busy_ticks: u64) -> Option<u64> {
+    if busy_ticks < LIVE_MIN_TICKS || pixels == 0 {
+        return None;
+    }
+    let cpu_ms = busy_ticks * 1000 / u64::from(crate::interrupts::TIMER_HZ);
+    let rate = pixels.saturating_mul(1000) / cpu_ms.max(1);
+    let live = rate / 100 * SHARE_PERCENT;
+    let mut b = BENCH.lock();
+    let old = match *b {
+        Bench::Done(old) => old,
+        _ => return None,
+    };
+    crate::klog!(
+        Info,
+        "media: decoder live: {} kpixels/s per CPU second, budget {} kpixels/s (was {})",
+        rate / 1000,
+        live / 1000,
+        old / 1000
+    );
+    if live > old + old / 4 {
+        *b = Bench::Done(live);
+        return Some(live);
+    }
+    None
 }
 
 /// A page's new script process `pid`: it hears the budget if it is known, else the measurement

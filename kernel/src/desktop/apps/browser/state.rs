@@ -211,6 +211,8 @@ pub(crate) enum PageCmd {
     Back,
     Reload,
     Bookmark,
+    /// The statistics overlay of the videos (the menu opened over a video).
+    VideoStats,
 }
 
 impl core::ops::Deref for BrowserState {

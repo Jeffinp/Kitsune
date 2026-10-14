@@ -127,3 +127,4 @@ pub fn split_span_around_hole(
 
 #[cfg(test)]
 mod tests;
+pub mod videoblit;

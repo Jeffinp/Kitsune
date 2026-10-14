@@ -14,6 +14,7 @@
 //! * [`clock`] the player's clock and the sound device as the player sees it ([`clock::AudioSink`])
 //! * [`player`] the player and the page-visible state machine with its events
 //! * [`wire`] the messages between the page's script and the browser
+//! * [`nerd`] the statistics overlay of a playing video (its lines, in the interface's language)
 //! * [`pacing`] when the pictures reach the screen (a smooth clock) and how evenly (statistics)
 //! * [`controls`] where the browser-drawn controls sit and what a click on them means
 //!
@@ -21,6 +22,7 @@
 
 pub mod clock;
 pub mod controls;
+pub mod nerd;
 pub mod pacing;
 pub mod player;
 pub mod proto;
