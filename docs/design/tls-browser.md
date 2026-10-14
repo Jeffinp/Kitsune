@@ -994,9 +994,11 @@ Uma página com `<video>`/`<audio>` ganha o processo de script mesmo sem scripts
   sobreposição é cortada, então a posição de cada amostra no fluxo é o seu tempo. O tempo da mídia é o tempo da
   primeira amostra escrita depois do último seek mais o contador "tocado" do fluxo (o que **saiu** do dispositivo, não o
   que entrou no DMA). Pausar o player pausa o fluxo; o mudo zera o volume e o relógio segue.
-* **Os quadros seguem o relógio.** A cada volta do compositor (até 250 Hz) o player mostra o último quadro com
+* **Os quadros seguem o relógio.** A cada volta do compositor o player mostra o último quadro com
   `pts ≤ relógio` e descarta os anteriores (atrasados); sem quadro vencido, o da tela fica. Depois de um seek o
-  primeiro quadro da posição nova vai para a tela na hora (mesmo pausado).
+  primeiro quadro da posição nova vai para a tela na hora (mesmo pausado). Desde o §18 o relógio dos quadros é o do
+  som alisado no TSC, cada quadro é escolhido adiantado pelo tempo que leva até a tela, e o escalonador traz o
+  compositor no prazo de cada quadro (com o PIT a 1 kHz enquanto o vídeo toca).
 * **Sem placa de som** (`audio: no device`), ou num vídeo sem trilha de som, o relógio do sistema corre enquanto o
   player toca, e para se as imagens acabam (com 1 s de tolerância para um decodificador lento).
 * **Esperar e retomar.** Tocando, se o som acaba sem o fim do stream (ou, sem som, as imagens), o player vai a
@@ -1038,7 +1040,7 @@ o resto `''`.
 **Media Source Extensions:** `MediaSource` (`readyState` `closed`/`open`/`ended`, `duration`, `addSourceBuffer`
 (até 4), `removeSourceBuffer`, `endOfStream()` (a duração passa a ser o fim do que está guardado) e
 `endOfStream('decode'|'network')`, `sourceBuffers`/`activeSourceBuffers`, `setLiveSeekableRange`,
-`isTypeSupported` (só WebM VP9/Opus; com `width`/`height`/`framerate`, como o YouTube sonda, até 854x480 a 30 fps: §16), `sourceopen`/`sourceended`/`sourceclose`), `SourceBuffer` (`appendBuffer`
+`isTypeSupported` (só WebM VP9/Opus; com `width`/`height`/`framerate`, como o YouTube sonda, até 1920x1080 a 60 fps: §16, §18), `sourceopen`/`sourceended`/`sourceclose`), `SourceBuffer` (`appendBuffer`
 assíncrono com `updating`, `updatestart`/`update`/`updateend`/`error`/`abort`, em pedaços de 1 MiB, cada um
 confirmado pelo decodificador com o que a fonte guarda; `appendBufferAsync`; `buffered` por fonte (o do elemento é a
 interseção); `remove`; `abort`; `timestampOffset`; `mode` (`segments`; `sequence` aceito sem efeito);
@@ -1213,8 +1215,8 @@ sonda e no QEMU.
   5,6 MB no carregamento mais um módulo de 9,7 MB que o app insere (acima dos 4 MiB por script do navegador; na
   sonda ele estoura os 96 MiB de JS); o Polymer/webcomponents roda em parte. Sob TCG, compilar ~15 MB de JavaScript
   levaria mais de um minuto. Fica para depois: cache de bytecode, páginas maiores que 1 MiB, mais memória.
-* Teto de 480p pelo `isTypeSupported` (com KVM ou em hardware real o decodificador faria 720p, §15.5), e abaixo dele o
-  orçamento medido do decodificador (`decodingInfo().smooth`, §17.3: 240p sob o TCG); o `Referer` de
+* Teto de 1080p60 pelo `isTypeSupported` (era 480p30 até o §18), e abaixo dele o orçamento medido do decodificador
+  (`decodingInfo().smooth`, §17.3 e §18.5: 240p sob o TCG, ~720p60 num computador rápido); o `Referer` de
   um redirecionamento entre origens não é recortado para a origem; a história (voltar/avançar) não guarda o
   `Referer`.
 
@@ -1347,3 +1349,171 @@ mostrar muitos quadros perdidos em janelas de 5 s. Os dois sinais agora são med
 | Convolução e cópia bit a bit iguais ao libvpx/ffmpeg | `tools/media/check-host.sh M` (90/90 MD5 nos três tamanhos) |
 | A reprodução | `tools/perf/scen/w61-youtube-record.sh` (§ `TESTING.md`), com e sem `perf-trace`, e `MOUSE=1` |
 | Nada quebrou (imagem sem `perf-trace`, com a raiz do gateway) | `w52-browser-js.sh` 19/19, `w58-video.sh` 48/48 (o vídeo de teste 640x360 agora a **29–30 fps** mostrados, eram 11–13, com o som conferido), `w59-spa.sh` 24/24, `w60-youtube.sh` PASS 12/12 (e o vídeo a 19–24 fps) |
+
+## 18. O vídeo no ritmo do vídeo: intervalos uniformes, 60 fps e como provar
+
+O dono viu o MP4 do §17 e disse "ainda travado; o certo seria 60 fps, ou o mesmo fps do vídeo, sem travamentos". Eram
+dois problemas. **A gravação** era montada de capturas `screendump` do monitor do QEMU (~4,6 por segundo): parecia
+travada qualquer que fosse a taxa do guest. **A reprodução** mostrava ~24 quadros/s de um vídeo de 25, mas fora de
+ritmo: o compositor só olhava o relógio a cada tick de 4 ms (e só quando chegava a sua vez no rodízio, atrás do
+decodificador e da página), o relógio do som anda aos degraus de 10 ms (o AC'97 do QEMU) e cada quadro chegava à tela
+~25–30 ms depois da sua hora; 30 fps saíam com intervalos de 28/32/36/40 ms misturados. Meta: o fps do vídeo,
+intervalos uniformes, sem travamentos, e uma forma confiável de ver e provar isso.
+
+### 18.1 Como medir (e ver)
+
+* **O log do guest é a verdade.** O compositor carimba o TSC logo depois de enviar ao framebuffer um quadro que levou
+  uma imagem de vídeo (`media/pace.rs`, `note_present`); o player guarda os instantes
+  (`kitsune_core::media::pacing::FrameTimes`) e escreve no serial, uma vez por segundo, `media: element N frames at T pts
+  P: dt/dpts/atraso ...` (intervalo desde a imagem anterior em ms, passo do tempo do vídeo, atraso contra o relógio).
+  A linha de 10 s ganhou `on screen every X ms (sd, p95, max)`. `tools/media/frame-intervals.py serial.log` dá, por
+  elemento, fps mostrado, média, desvio padrão, mínimo, percentis 50/95/99, máximo, soluços (> 1,5 quadro), os passos
+  do tempo do vídeo (quadros pulados) e o atraso, no todo e por janela de 10 s. Uma imagem atrasada mais de 15 ms
+  imprime onde o tempo foi (`media: late picture by X ms: deadline->loop, loop->pick, pick->screen`), e cada documento
+  da página durante o vídeo, o seu custo (`media: page document of N KB while playing: parse, layout`).
+* **W63 (`tools/perf/scen/w63-pace.sh`)**: a mesma carga a cada rodada, sem YouTube: um clipe gerado (`/pace` de
+  `tools/w24-site.py`: testsrc2 + tom, VP9 + Opus, `FPS` 25/30/60, `SIZE` 426x240) numa caixa de 853x480 como a do
+  embed. A rodada do YouTube varia muito com o que o JavaScript do player faz naquela hora (a página tomou de 17 a 44 %
+  da CPU em janelas de rodadas iguais); o W63 isola o ritmo.
+* **W62 (`tools/perf/scen/w62-youtube-vnc.sh`)**: o YouTube como no W61, gravado **em taxa real** pelo servidor VNC do
+  próprio QEMU (`-vnc 127.0.0.1:7`): `tools/media/vnc-record.py` é um cliente RFB 3.8 mínimo (sem autenticação, 32 bits,
+  Raw e CopyRect, um pedido incremental sempre pendente) que aplica cada atualização a uma cópia da tela e a escreve no
+  ffmpeg por pipe a taxa constante (`FPS`, 30 por padrão; uma saída repete a última tela quando nada mudou), anotando o
+  instante de cada atualização; `tools/media/vnc-mux.py` junta o som que o QEMU gravou (`-audiodev wav`) alinhado pelo
+  crescimento do arquivo WAV, amostrado com o relógio do hospedeiro durante a gravação (uma reta ajustada diz qual
+  amostra tocava quando a gravação começou; o resíduo máximo do ajuste sai no log: 9–53 ms nas rodadas daqui, a média
+  bem menor; o erro de sincronia que sobra é de 1–2 quadros de 25 fps no pior ponto). Resultado: `OUT/w62.mp4`,
+  `OUT/vnc.summary.txt` (atualizações por segundo e os seus intervalos) e `OUT/intervals.txt` (o log do guest). Sem
+  `-vnc` o mesmo cenário só mede. Na gravação final: 975 atualizações do VNC em 40 s, 807 delas do vídeo (**20,2/s**),
+  ~19 imagens diferentes por segundo no MP4 (eram 4,6), com o guest a 22,3 quadros/s durante a gravação.
+* **O placar** (§18.6): Shift+I sobre o vídeo, para o dono medir no WHPX.
+
+**Limites da gravação.** O servidor VNC do QEMU procura mudanças a cada 30 ms no mínimo (`GUI_REFRESH_INTERVAL_DEFAULT`):
+a gravação não passa de ~33 telas por segundo e os instantes caem nessa grade, então um vídeo de 25 fps aparece com
+intervalos de 30/30/60 ms na gravação mesmo quando o guest é exato (o log do guest é a medida). E sob o TCG o VNC custa
+CPU ao QEMU (a varredura das páginas sujas segura o lock global do QEMU): a mesma imagem gravando caiu de 24 para 20
+quadros/s (o decodificador perdeu quadros), então as medidas de ritmo abaixo são sem VNC e a gravação é a demonstração.
+A janela SDL do QEMU também redesenha a cada 30 ms; a GTK (a que o `run.ps1` prefere) segue a taxa do monitor.
+
+### 18.2 Antes e depois (QEMU TCG daqui, BIOS, 256 MiB; log do guest)
+
+W63, clipe 426x240 em 853x480, 30 s depois de 3 s de partida (intervalos em ms):
+
+| | fps | média | desvio | p50 | p95 | máx. | atraso médio |
+|---|---|---|---|---|---|---|---|
+| 25 fps antes | 25,0 | 40,0 | 4,1 | 40,0 | 46,2 | 62 | 24,5 |
+| 25 fps depois | 25,0 | 39,9 | **3,2** | 40,0 | 45,1 | 54 | **0,5** |
+| 30 fps antes | 30,0 | 33,3 | 6,4 | **32,0** | 43,6 | 67 | 25,0 |
+| 30 fps depois | 30,0 | 33,3 | **2,6** | **33,2** | 36,7 | 56 | **0,5** |
+| 60 fps antes | 40,3 | 25,3 | 10,8 | 21,2 | 41,3 | 126 | 305 |
+| 60 fps depois (sem os passos 6–8) | 37,2 | 27,6 | 10,5 | 24,0 | 44,7 | 138 | 291 |
+
+Antes, 30 fps saíam em degraus de 4 ms: 191 intervalos de 28 ms, 235 de 32, 158 de 40 (de 835); depois, 704 entre 32 e
+34 ms. 60 fps a 240p não cabe nesta CPU emulada: o decodificador sozinho toma 65–70 % e descarta ~210 de cada 600
+quadros (por isso o orçamento, §18.5, nunca escolhe 60 fps aqui); o ritmo de 60 fps vale num computador rápido.
+
+YouTube (W62 sem VNC, `dQw4w9WgXcQ` 240p a 25 fps, janelas de 10 s depois dos primeiros 10 s de carga):
+
+| | fps | desvio do intervalo | p95 | atraso médio | `waiting` |
+|---|---|---|---|---|---|
+| Antes | 24,7–24,8 | 9,8 / 9,7 / 8,1 ms | 55–57 ms | 30,8 ms | 0 |
+| Depois | 24,9–25,0 | **5,5 / 5,7 / 5,9 ms** | 42–45 ms | **1,4 ms** | 0 |
+
+Nos primeiros 10 s a página ainda carrega (documentos com layout de 200–340 ms: o compositor faz o layout; ver §18.4) e
+há soluços nas duas versões. A CPU fica igual (decodificador ~50 %, compositor ~24 %, página ~22 %).
+
+### 18.3 Diário (um fator por vez)
+
+| # | Medido | Mudança | Efeito |
+|---|---|---|---|
+| 1 | o quadro escolhido no fim de uma volta do compositor só ia à tela na volta seguinte, depois da sua vez no rodízio | o navegador (páginas, scripts, players) é bombeado **antes** do quadro do compositor | com 2: atraso 31 → 23 ms no YouTube |
+| 2 | o relógio do som anda aos degraus (o AC'97 do QEMU informa a posição a cada 10 ms; o kernel a lê uma vez por tick, quando a thread do som roda) | `SmoothClock`: o relógio do som alisado no TSC (puxado para ele com constante de 250 ms, nunca mais de 40 ms à frente, salto acima de 50 ms), testado no host | teste: 30 fps num relógio de degraus de 10 ms passa de desvio > 4 ms a < 1 ms |
+| 3 | sob carga o compositor espera 1–3 ticks pela vez | **favor do escalonador** (`sched::present`): no prazo do próximo quadro o compositor roda, de quem quer que fosse a vez, e fica com a CPU enquanto pinta o quadro escolhido | atraso 23 → 22 ms no YouTube; o decodificador não perde nada (tem ~19 quadros prontos) |
+| 4 | o tick de 4 ms quantiza | **PIT a 1 kHz só enquanto um vídeo toca** (`interrupts::set_fast`): as interrupções extras não contam como tick (`ticks()`, `TIMER_HZ`, o rodízio, os sleeps, `Net::deadline` e as amostras de CPU não mudam) e só trazem o compositor se um quadro venceu; o compositor ocioso dorme de novo num subtick sem nada a fazer | W63 25 fps: atraso 24,5 → 10,2 ms; 30 fps: mediana 32 → 33,3 |
+| 5 | o quadro chegava ~10 ms depois da hora (pintar e enviar) | **escolher adiantado** pelo tempo medido até a tela (média móvel, no máximo meio quadro ou 30 ms; `Player::set_lead`) | atraso 10 → 0,6 ms |
+| 6 | um soluço por segundo, no segundo do relógio | o trabalho de uma vez por segundo do compositor (relógio do painel, amostras do sistema) e a linha de log do player esperam um quadro acabar de ir à tela (no máximo meio segundo) | some o soluço periódico |
+| 7 | documentos da página (355 KB, 1/s) custavam 15–90 ms de parse + layout no meio dos quadros | o documento espera um quadro acabar de ir à tela (no máximo 500 ms) e vai no intervalo antes do próximo; com vídeo tocando e sem entrada, a página manda no máximo um a cada **3 s** (era 1) | YouTube: desvio 12–21 → 8–11 ms |
+| 8 | pintar o quadro levava 25–43 ms de parede (~10 de CPU) quando a página pinta camadas sobre o vídeo: o favor de 12 ms acabava e o rodízio fatiava a pintura | favor de 25 ms depois do prazo e de 40 ms para pintar o quadro escolhido (o som tem 128 ms no dispositivo; nenhuma falta de som nas rodadas) | YouTube: desvio **5,5–5,9 ms**, atraso 1,4 ms |
+| 9 | a pintura do vídeo enchia a caixa toda de preto e pintava a imagem por cima | preto só nas barras | compositor 24 → 22–23 % no W63, desvio 5,2 → 4,1 |
+| 10 | (a cópia do quadro) | o quadro passa por `kitsune_core::gfx::videoblit` (o mesmo algoritmo, agora testado contra a cópia pixel a pixel em 3 e 4 bytes, ampliação, redução, recorte e troca de R/B) com cópias de linha sem `rep movs` (`fb::copy_bytes`, 32 bytes por passo em registradores) | sem ganho mensurável no QEMU 8.2 daqui (desvio 4,7 → 5,2: ruído); fica (não piora; no TCG o `rep movs` era o gargalo do `memcpy` do `mediadec`) |
+
+O ponteiro andando sobre o vídeo (W63 `MOUSE=1`, 25 fps): antes desvio 7,0 ms e atraso 28 ms; depois 5,3 ms e 1,0 ms
+(o compositor gasta ~32 % com o cursor). O placar ligado custa ~3 pontos de CPU do compositor (desvio 4,8 ms).
+
+### 18.4 O que não deu ganho (ou não foi feito)
+
+* **O timer a 1 kHz e o favor sem segurar o compositor enquanto pinta**: pior no YouTube (o favor valia só até a
+  escolha; o rodízio cortava a pintura) e a thread do som atrasou 3 vezes; resolvido por 3 + 8, com o favor sempre
+  limitado (25/40 ms).
+* **Subir `TIMER_HZ` para 1000 de vez**: não feito; o tick muda o rodízio (fatias de 1 ms), os ~35 usos de `TIMER_HZ`
+  e acorda o desktop ocioso 4× mais. O PIT rápido só durante o vídeo dá a mesma resolução sem nada disso (ocioso: nada
+  muda).
+* **Temporizador de uma tacada (LAPIC/HPET)**: não feito; o kernel usa o 8259 e o PIT, e 1 ms basta (a tela do QEMU
+  redesenha a cada 16–30 ms).
+* **Espera ocupada no último milissegundo**: descartada; sob o TCG cada milissegundo de CPU falta ao decodificador.
+* **Pular o filtro de laço do VP9** (`VP9_SET_SKIP_LOOP_FILTER`): no hospedeiro, +10–17 % de quadros por segundo no
+  conteúdo difícil (Mandelbrot com grão, 360p/720p) e +25–40 % no fácil; sob o TCG não leva o 360p a caber (precisaria
+  de ~2×) e deixa blocos visíveis até o próximo keyframe. Não adotado.
+* **SSE2 na cópia/ampliação do quadro no kernel**: não feito. O kernel é compilado sem SSE (soft-float) e uma
+  interrupção pode rodar em qualquer ponto; no hospedeiro a versão em inteiros já custa 0,3–1,6 ms por quadro de
+  720p (§18.5), longe de ser o limite a 60 fps.
+* **Layout do documento fora do compositor**: o que resta de soluço no YouTube é o documento da página no começo (layout
+  de 200–340 ms enquanto a página carrega). Tirar o parse e o layout da thread do compositor é o próximo passo.
+
+### 18.5 60 fps numa máquina real: medidas no hospedeiro e a conta
+
+`tools/media/host-speed.sh DIR` (o mesmo C do `mediadec`, `tools/media/mediacheck`, um fio, clang -O2 -msse2; clipes de
+10 s do ffmpeg a taxas de bits do YouTube; "fácil" = testsrc2, "difícil" = Mandelbrot em zoom com grão) e
+`cargo test --release -p kitsune_core videoblit_speed -- --ignored --nocapture` (a cópia do quadro para o framebuffer),
+neste hospedeiro (compartilhado; ±20 %):
+
+| Clipe | Decodificação | ms/quadro | Conversão RGBA | Cópia para a tela (3 B / 4 B por pixel) | Sobra num quadro |
+|---|---|---|---|---|---|
+| 360p30 difícil | 775 fps | 1,3 | 0,32 | 0,65 / 0,66 (em 853x480) | 31 ms de 33 |
+| 360p60 difícil | 791 fps | 1,3 | 0,33 | 0,83 / 0,80 (ampliado a 1280x720) | **14,2 ms de 16,7** |
+| 480p60 difícil | 472 fps | 2,1 | 0,62 | — | 13,9 ms de 16,7 |
+| 720p60 fácil | 431 fps | 2,3 | 1,32 | 1,57 / 0,26 (1:1) | 11,5 ms de 16,7 |
+| 720p60 difícil | 256 fps | 3,9 | 1,30 | 1,57 / 0,26 (1:1) | **9,9 ms de 16,7** |
+| 1080p60 difícil | 101 fps | 9,9 | 3,11 | 2,42 / 2,47 (reduzido a 1280x720) | ~1 ms: não cabe |
+
+Com o envio ao framebuffer (uma cópia de 2,7 MB a 720p em 3 bytes: ~0,3–0,5 ms a 5–10 GB/s) e ~1 ms de composição,
+**720p60 usa ~8 ms de 16,7 (~50 % do núcleo; o kernel usa um núcleo só) e 360p60 ~3 ms (~18 %)**. No WHPX (perto do
+nativo; o acesso à memória um pouco mais caro) sobra para o JavaScript da página. 1080p60 não cabe num núcleo, e o
+orçamento não o escolhe. O ritmo (§18.3) vale igual: o favor e o PIT de 1 kHz não dependem da velocidade, e numa
+máquina rápida o compositor está quase sempre dormindo quando o quadro vence. (Provado por medida no hospedeiro e por
+aritmética; o WHPX do dono não foi testado daqui: o placar existe para isso.)
+
+**A escolha da qualidade** (`decodingInfo().smooth`, §17.3) agora sobe com a máquina: `isTypeSupported` aceita até
+1920x1080 a 60 fps (o que o decodificador decodifica; era 854x480 a 30); antes de qualquer medida, `smooth` só até 480p30;
+o orçamento é 50 % da velocidade do clipe embutido vezes 40 % sob emulação (o TCG cobra mais por pixel de uma imagem
+maior) ou **70 % numa máquina nativa** (o clipe acima de 100 Mpixels/s: o TCG faz 13–21; no hospedeiro o clipe dá
+230–320 Mpixels/s e o vídeo real 180–400); e **a medida ao vivo** (`speed::refine`): a cada janela de 10 s tocando, os
+pixels decodificados (mostrados + descartados) pela CPU do decodificador dão a velocidade no vídeo de verdade, e um
+orçamento 25 % maior que o atual substitui o do clipe e vai às páginas (nunca baixa: quem perde quadros baixa a
+qualidade pelo `getVideoPlaybackQuality`). Pelo hospedeiro, no WHPX o clipe deve dar ~200 Mpixels/s → orçamento ~70
+Mpixels/s → 720p60 (55 Mpixels/s) `smooth`, 1080p60 (124) não. Aqui (TCG): o clipe dá 13–21 Mpixels/s → orçamento
+2,6–4,2 → 240p25; a medida ao vivo no YouTube dá 4,6–5,1 Mpixels/s por segundo de CPU → 2,3–2,6 (não sobe).
+
+### 18.6 O placar ("Estatísticas do vídeo")
+
+**Shift+I** numa página com vídeo (fora de um campo de texto), ou o item **Estatísticas do vídeo** do menu de contexto
+sobre o vídeo, liga e desliga (desligado por padrão; vale para todos os vídeos). O navegador desenha no canto do vídeo,
+a cada quadro: tamanho e fps do vídeo, tamanho decodificado e da caixa, fps na tela (últimos 2 s), intervalo entre
+quadros (média ± desvio, p95, máximo), descartados (e quantos pelo decodificador) do total, atraso da imagem sobre o som,
+CPU do decodificador, do compositor e da página (último segundo), qualidade com o orçamento do decodificador, fila à
+frente (s) e quadros prontos, e o relógio (som ou sistema). Textos em pt/en (`media.stats.*`, `kitsune_core::media::nerd`,
+testado nas duas línguas). Captura: `docs/img/browser-video-stats.png`. **Para o dono**: no WHPX, abra o vídeo, Shift+I
+sobre ele e anote "Na tela", "Intervalo" e "Qualidade" (um vídeo a 60 fps deve mostrar ~60 fps e intervalo 16,7 ms com
+desvio de 1–2 ms). Lembrete: a janela do QEMU mostra no máximo a taxa do monitor (GTK) ou ~33 telas/s (SDL).
+
+### 18.7 Provas
+
+| O quê | Evidência |
+|---|---|
+| Relógio suave (degraus, parada do som, saltos, monotonia), adiantamento, `next_due_ns`, estatísticas (`Spread`, percentis, `isqrt`), `FrameTimes` e a linha de log, o placar em pt/en | `cargo test -p kitsune_core media` (`tests/pacing.rs`, 10 testes, entre eles "30 fps num relógio de som de degraus de 10 ms sai com desvio < 1 ms") |
+| A cópia do quadro igual à cópia pixel a pixel | `cargo test -p kitsune_core videoblit` |
+| `isTypeSupported` até 1080p60, `smooth` pelo orçamento (emulador, máquina rápida, antes da medida), o documento no máximo a cada 3 s | `node tools/js-media-check.js user-apps/jsrun/src/bin/jsrun` (61) |
+| O ritmo | `w63-pace.sh` (25/30/60 fps, `MOUSE=1`, `STATS=1`) e `w62-youtube-vnc.sh`, com `tools/media/frame-intervals.py` |
+| A gravação em taxa real | `w62-youtube-vnc.sh` com `-vnc` (§18.1) |
+| Velocidade nativa | `tools/media/host-speed.sh`, `videoblit_speed` |
+| Nada quebrou (imagem final, com a raiz do gateway) | `w52-browser-js.sh` 19/19, `w58-video.sh` 48/48 (o vídeo de teste a 29–30 fps, som conferido), `w59-spa.sh` 24/24, `w60-youtube.sh` PASS 12/12 (240p, 24–25 fps, desvio 4,9–5,9 ms depois da carga) |

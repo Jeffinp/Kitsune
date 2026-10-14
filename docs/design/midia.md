@@ -233,10 +233,28 @@ teste de 3 s (90 quadros, keyframe por segundo). "Nativo" é o mesmo C no hosped
 * O `total` impresso pelo `mediadec --md5` inclui o MD5 de cada quadro em Rust (sem SIMD), que sob TCG custa mais que
   a decodificação; sem `--md5` o total fica perto da soma de vídeo e áudio.
 
+**Nas taxas do YouTube, até 60 fps** (2026-10, `tools/media/host-speed.sh DIR`: clipes de 10 s do ffmpeg a taxas de bits
+do YouTube, "fácil" = testsrc2, "difícil" = Mandelbrot em zoom com grão; decodificação + conversão RGBA no tamanho do
+vídeo, nativo, um fio):
+
+| Clipe | Decodificação | Conversão | Sobra a 60 fps (16,7 ms) |
+|---|---|---|---|
+| 360p difícil | ~780 fps (1,3 ms) | 0,33 ms | 15 ms |
+| 480p difícil | ~470 fps (2,1 ms) | 0,62 ms | 14 ms |
+| 720p fácil / difícil | ~430 / ~255 fps (2,3 / 3,9 ms) | 1,3 ms | 13 / 11,5 ms |
+| 1080p difícil | ~100 fps (9,9 ms) | 3,1 ms | 3,7 ms (sem a cópia para a tela: não cabe) |
+
+O clipe embutido do teste de velocidade (320x180) decodifica a ~3900–5600 fps (230–320 Mpixels/s); o vídeo real, a
+180–400 Mpixels/s: nativo o clipe é uma boa estimativa (o orçamento usa 70 % dele; sob o TCG, 40 %). Pular o filtro de
+laço (`VP9_SET_SKIP_LOOP_FILTER`) daria +10–17 % no conteúdo difícil e +25–40 % no fácil, com blocos até o próximo
+keyframe: não adotado. A conta de 60 fps com a cópia para a tela e o compositor está em `tls-browser.md` §18.5
+(720p60 ~8 ms de 16,7).
+
 ## O que falta
 
-* Velocidade sob emulação: sob o QEMU TCG o YouTube toca em 240p (o orçamento medido, `tls-browser.md` §17); 360p
-  real pede mais CPU do que sobra ao decodificador lá. Em hardware real, com KVM ou WHPX sobra.
+* Velocidade sob emulação: sob o QEMU TCG o YouTube toca em 240p a 25 fps (o orçamento medido, `tls-browser.md`
+  §17–18); 360p, ou 240p a 60 fps, pede mais CPU do que sobra ao decodificador lá. Em hardware real, com KVM ou WHPX,
+  720p60 cabe (§18.5).
 * VP9 perfil 2 (10 bits, HDR), Opus multicanal (família 1), AV1, H.264/AAC.
 * Threads no decodificador (o VP9 suporta por tiles; um processo tem um fio hoje).
 * Busca para além do que foi baixado num `src` por endereço: o download segue em ordem até lá (as `Cues` no fim do

@@ -4,6 +4,28 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — O vídeo no ritmo do vídeo
+
+A gravação do §17 "ainda travava": era montada de capturas do monitor do QEMU (~4,6 por segundo), e a reprodução, embora
+a ~24 de 25 quadros/s, ia fora de ritmo (quadros ~30 ms atrasados, 30 fps em degraus de 28/32/36/40 ms). Medido no log do
+guest (`docs/design/tls-browser.md` §18): YouTube 240p25 com **desvio do intervalo 5,5–5,9 ms** (era 8,1–9,8) e atraso de
+1,4 ms (era 31), 0 `waiting`; o clipe de ritmo a 30 fps com desvio 2,6 ms e mediana 33,3 (era 6,4 e 32).
+
+- **Kernel**: favor do escalonador para o compositor no prazo de cada quadro de vídeo (`sched::present`, limitado a
+  25/40 ms); PIT a 1 kHz só enquanto um vídeo toca (os subticks não contam como tick); o compositor bombeia o navegador
+  antes do quadro, faz o trabalho de uma vez por segundo logo depois de um quadro, carimba quando cada imagem chega à
+  tela; cópias de linha sem `rep movs` (`fb::copy_bytes`).
+- **Navegador**: relógio do som alisado no TSC (`media::pacing::SmoothClock`) e quadro escolhido adiantado pelo tempo
+  até a tela; o documento da página espera um quadro ir à tela; preto só nas barras do vídeo; a cópia do quadro em
+  `kitsune_core::gfx::videoblit` (testada); **placar "Estatísticas do vídeo"** (Shift+I ou menu de contexto, pt/en);
+  `isTypeSupported` até 1080p60 e `smooth` pelo orçamento, que usa 70 % do clipe numa máquina nativa e sobe com a
+  medida ao vivo do decodificador no vídeo real.
+- **Página (`jsrun`)**: com vídeo tocando e sem entrada, o documento no máximo a cada 3 s (era 1).
+- **Ferramentas**: `tools/media/vnc-record.py` + `vnc-mux.py` (gravação em taxa real pelo VNC do QEMU, com o som
+  alinhado pelo WAV), `w62-youtube-vnc.sh`, `w63-pace.sh` e a página `/pace` (clipe gerado a 25/30/60 fps),
+  `tools/media/frame-intervals.py` (intervalos do log do guest), `tools/media/host-speed.sh` (VP9 360p–1080p a 30/60
+  fps no hospedeiro: 720p60 usa ~8 de 16,7 ms com a cópia para a tela).
+
 ## 2026-10 — O YouTube fluido (no QEMU sem KVM)
 
 A gravação do YouTube travava (1–4 quadros/s e o player parado em `waiting` aos 13 s). Medido e corrigido um fator por

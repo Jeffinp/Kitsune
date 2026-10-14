@@ -196,8 +196,14 @@ abaixo, e nenhuma existe ainda. Ordem proposta, cada etapa com aceite próprio:
    em slabs, som que não espera imagens atrasadas, cópia do quadro no framebuffer de 3 bytes, documento da página
    coalescido, qualidade escolhida pela velocidade medida do decodificador, JavaScript da página rebaixado no
    escalonador enquanto o vídeo toca, convolução e `memcpy` do decodificador), o W61 mostra **19–24 fps em 240p**, sem
-   `waiting`, som sem buracos e o ponteiro respondendo em ~50 ms, no QEMU TCG. **Falta:** a `/watch`, `<iframe>`, tela
-   cheia, legendas, mandar só o que mudou no DOM, e repetir no computador do dono (WHPX, IP residencial).
+   `waiting`, som sem buracos e o ponteiro respondendo em ~50 ms, no QEMU TCG. **No ritmo do vídeo (2026-10,
+   `tls-browser.md` §18):** cada quadro vai à tela na sua hora (relógio do som alisado no TSC, quadro escolhido
+   adiantado pelo tempo até a tela, compositor favorecido pelo escalonador no prazo, PIT a 1 kHz só enquanto o vídeo
+   toca): YouTube 240p25 com desvio do intervalo de 5,5–5,9 ms (era 8–10) e atraso de 1 ms (era 31); 30 fps sem os
+   degraus de 4 ms. Qualidade até 1080p60 pelo orçamento medido (720p60 num computador rápido, 240p25 aqui), placar
+   Shift+I e gravação em taxa real pelo VNC do QEMU (W62). **Falta:** a `/watch`, `<iframe>`, tela cheia, legendas,
+   mandar só o que mudou no DOM, layout da página fora do compositor, e repetir no computador do dono (WHPX, IP
+   residencial: o placar mostra fps e intervalos lá).
    **Bring-up do player embutido (2026-10), até o pedido do vídeo; o vídeo não tocou na primeira rodada.** Com a página de
    embed real (`/embed/aqz-KE-bpKQ`, aberta por um link: sem `Referer` o YouTube dá "Error 153" em qualquer
    navegador), no QEMU (`w60-youtube.sh`): HTML, os 15 scripts (o `base.js` de 1,9 MB carrega em 7,4 s sob TCG depois

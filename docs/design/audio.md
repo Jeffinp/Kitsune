@@ -66,7 +66,10 @@ para o YouTube tocar vídeo com áudio; as outras são a rede para o JavaScript 
 * **Relógio "tocado"**: cada mistura registra "os quadros `d0..d1` do dispositivo levaram os quadros `c0..c1` deste
   fluxo"; `played` mapeia a posição do dispositivo de volta por esses segmentos. É o que o player de vídeo segue: conta
   o que **saiu** (não o que entrou no buffer de DMA), para em pausa e quando o fluxo fica sem dados, e continua certo
-  depois de um atraso do dispositivo.
+  depois de um atraso do dispositivo. É um relógio de degraus: a posição do dispositivo só é lida quando o `audiod`
+  roda (uma vez por tick) e o AC'97 do QEMU a avança aos pedaços do seu timer de áudio (10 ms). Por isso as imagens
+  do player seguem esse relógio alisado no TSC (`kitsune_core::media::pacing::SmoothClock`, `tls-browser.md` §18):
+  na média ele é o do som, e entre os degraus anda uniforme.
 * **Underrun** de um fluxo: ficou sem dados enquanto tocava **e** depois chegaram mais (um buraco no meio). O fim
   natural de um fluxo não conta.
 

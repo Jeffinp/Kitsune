@@ -264,8 +264,11 @@ com `-d cpu_reset` antes do IST do #PF existir [A]; a trilha atual de estouro de
 | 39, 47 (IRQ7, IRQ15) | `spurious_master`, `spurious_slave` | lêem o ISR do PIC: EOI só se o bit 7 estiver setado; no IRQ15 o mestre recebe EOI sempre (aceitou a cascata). Os 4 primeiros são logados |
 
 PIC 8259 remapeado para `0x20`/`0x28`, máscaras `0xF8` (IRQ0, 1, cascata) e `0xEF`
-(IRQ12). PIT canal 0, modo 3, divisor `1193182 / 250` (**250 Hz**, tick de 4 ms). Sem
-APIC nem SMP. Os handlers são gates de interrupção (IF zerado na entrada).
+(IRQ12). PIT canal 0, modo 3, divisor `1193182 / 250` (**250 Hz**, tick de 4 ms). Enquanto um
+vídeo toca o PIT vai a 1 kHz (`interrupts::set_fast`): só uma interrupção em 4 é tick (`ticks()` e
+`TIMER_HZ` não mudam); as outras ("subticks") só trazem o compositor quando um quadro venceu
+(`sched::present`, `tls-browser.md` §18). Sem APIC nem SMP. Os handlers são gates de interrupção
+(IF zerado na entrada).
 
 **Ring de entrada.** As ISRs de teclado e mouse empurram um `u16` (fonte no byte alto)
 num ring SPSC de 512 entradas, `head`/`tail` atômicos com Acquire/Release; cheio, o byte
@@ -353,7 +356,9 @@ Round-robin de quantum fixo (1 tick, 4 ms), sem prioridades além de uma: uma th
 no máximo um tick a cada 7 quando disputa a CPU; quando ninguém mais quer a CPU ela roda
 (`kitsune_core::schedule::next_runnable_held`). O navegador rebaixa o processo de JavaScript de
 uma página enquanto um vídeo dela toca com 5 s ou mais guardados à frente
-(`tls-browser.md` §17). Uma thread é **executável**
+(`tls-browser.md` §17). E o **compositor é favorecido** no prazo de cada quadro de vídeo
+(`sched::present`): a partir dele roda (ou continua) de quem quer que fosse a vez, por no máximo
+25 ms, e 40 ms para pintar o quadro que escolheu (§18). Uma thread é **executável**
 se não está morta **e** `WAKE[i] <= agora`: `0` é "pronta" e `FOREVER` (`u64::MAX`) é
 "estacionada até `wake`". A escolha é `kitsune_core::schedule::next_runnable(cur, n, pred)`
 (testada no host): tenta `cur+1, cur+2, ..., cur`, então a thread atual é a **última**

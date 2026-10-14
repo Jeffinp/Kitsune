@@ -680,7 +680,40 @@ acaba), `media: decoder speed test: ... budget ...` (o orçamento que decide a q
 player (242 = 240p, 243 = 360p, 244 = 480p). Com `perf-trace`: `[trace] input ... irq->frame` (com `MOUSE=1`, quanto a
 tela demora a seguir o ponteiro) e `[trace] pc <slot> r<anel> 0xADDR n` (endereços mais quentes por thread; mapear
 com `nm -C` no ELF do kernel, tirando a base `0x10000000000`, ou no do programa com símbolos, ver §17.1). Medida em
-2026-10 (TCG, 916x480): 19–22 fps com `perf-trace`, 21–24 fps sem, 0 `waiting`.
+2026-10 (TCG, 916x480): 19–22 fps com `perf-trace`, 21–24 fps sem, 0 `waiting`. A gravação de verdade agora é o W62.
+
+### O ritmo dos quadros: gravação em taxa real (W62), clipe de ritmo (W63) e o placar
+
+Projeto e números em [`design/tls-browser.md`](design/tls-browser.md) §18. O log do guest tem, uma vez por segundo, o
+instante em que cada imagem de vídeo chegou à tela (`media: element N frames at ...`), e
+`tools/media/frame-intervals.py OUT/serial.log [--skip S] [--tsv F]` dá fps, média, desvio, percentis, soluços e atraso
+(no todo e por janela de 10 s). W62 é o YouTube gravado pelo servidor VNC do QEMU, com o som:
+
+```bash
+setsid nohup python3 tools/w24-site.py 8679 > /tmp/site-pace.log 2>&1 &
+OUT=/dev/shm/w62; VIDEO=dQw4w9WgXcQ REC=40 QEMU_MEM=256M QEMU_NIC=virtio-net-pci PORT=8679 \
+QEMU_NETDEV="user,id=n0,net=203.0.113.0/24,host=203.0.113.5,dhcpstart=203.0.113.15,dns=203.0.113.3" \
+QEMU_EXTRA="-audiodev wav,id=snd0,path=$OUT-audio.wav,out.frequency=48000 -device AC97,audiodev=snd0 -vnc 127.0.0.1:7" \
+  bash tools/perf/run.sh IMG bios $OUT 900 tools/perf/scen/w62-youtube-vnc.sh
+# OUT/w62.mp4 (imagem a 30 fps de saída + som), OUT/vnc.summary.txt, OUT/intervals.txt; FPS=, DELAY=, MOUSE=1, STATS=1
+```
+
+Sem `-vnc` no `QEMU_EXTRA` o cenário só mede (o VNC custa CPU ao QEMU sob o TCG: a gravação mostra o guest um pouco
+mais lento do que ele é). W63 mede o ritmo sem YouTube, a mesma carga a cada rodada (um clipe gerado de `/pace`):
+
+```bash
+OUT=/dev/shm/w63; FPS=25 PORT=8679 QEMU_MEM=256M \
+QEMU_NETDEV="user,id=n0,net=203.0.113.0/24,host=203.0.113.5,dhcpstart=203.0.113.15,dns=203.0.113.3" \
+QEMU_EXTRA="-audiodev wav,id=snd0,path=$OUT-audio.wav,out.frequency=48000 -device AC97,audiodev=snd0" \
+  bash tools/perf/run.sh IMG bios $OUT 420 tools/perf/scen/w63-pace.sh     # FPS=25|30|60, SIZE=426x240, MOUSE=1, STATS=1
+cat $OUT/intervals.txt
+```
+
+Medido em 2026-10 (TCG): W63 a 25 fps desvio 3,2 ms (era 4,1, com 24,5 ms de atraso, agora 0,5), a 30 fps 2,6 ms (era
+6,4 com 32/36 alternando); YouTube 240p25 desvio 5,5–5,9 ms nas janelas de 10 s depois da carga (era 8,1–9,8), 25 fps,
+0 `waiting`. No hospedeiro: `tools/media/host-speed.sh DIR` (decodificação e conversão a 360p–1080p, 30 e 60 fps) e
+`cargo test --release -p kitsune_core videoblit_speed -- --ignored --nocapture` (a cópia do quadro para a tela). O
+**placar** (Shift+I sobre o vídeo, ou o menu de contexto: "Estatísticas do vídeo") mostra os mesmos números na tela.
 
 ### DOM para frameworks (W59): Preact, Vue e Workers
 
