@@ -229,3 +229,25 @@ sem JavaScript pedem (itens do §10 do `tls-browser.md`).
 Vários núcleos (APIC), prioridades no scheduler, USB (teclado, mouse e armazenamento) e áudio além do AC'97 (Intel
 HDA, que é o que as placas novas têm; virtio-sound).
 *Aceite:* cada um com sua prova (o desktop usa mais de um núcleo; um teclado USB funciona).
+
+### 13. Kitsune em servidores (meta de longo prazo, pedido do dono do projeto)
+
+Meta: o Kitsune como sistema de servidor, leve, rápido e seguro (kernel em Rust), concorrendo com o Linux onde o
+peso dele atrapalha, e crescendo a partir daí. Não se começa pelo Linux inteiro: começa-se por um nicho em que a
+compatibilidade exigida é pequena e o ganho é claro.
+
+1. **Primeiro nicho: convidado mínimo em microVM** (Firecracker/KVM): inicia em milissegundos e usa dezenas de MB
+   (a imagem atual inteira tem 14 MB). Também funções e serviços de borda sobre o host WebAssembly e a rede/TLS
+   que já existem. Argumento de venda: segurança de memória e tamanho.
+2. **Vários núcleos (SMP)**, item 12: sem isso não há servidor. Primeiro APIC e inicialização dos outros núcleos,
+   depois o scheduler com uma fila por núcleo e os locks do kernel.
+3. **E/S de servidor:** `virtio-blk` e `virtio-net` com várias filas, NVMe, IPv6, TCP afinado (janelas, SACK).
+4. **Armazenamento sob carga:** o OJFS v3 já tem journal e fsck; falta medir e endurecer sob carga e queda de energia.
+5. **Operação remota:** SSH, logs estruturados, métricas, atualização do sistema sem parar.
+6. **Compatibilidade:** um subconjunto do ABI de chamadas de sistema do Linux para binários estáticos (Rust, Go),
+   no estilo do gVisor. É a peça que decide a adoção.
+7. **Segurança e prova:** permissões e isolamento de processos já existem; falta auditoria externa, fuzzing
+   contínuo e um modelo de ameaças para código não confiável.
+
+*Aceite por etapa:* um serviço HTTPS real atendendo requisições em vários núcleos dentro de uma microVM, com tempo
+de boot e memória medidos e comparados com um Linux mínimo (por exemplo Alpine) na mesma máquina virtual.
