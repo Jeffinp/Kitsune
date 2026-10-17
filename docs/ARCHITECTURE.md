@@ -19,12 +19,13 @@ Kitsune é um sistema operacional x86_64 `no_std` escrito em Rust (a linguagem �
 escolha de implementação; nada na interface fala dela). Sobe direto de um bootloader (BIOS ou
 UEFI) e entrega um desktop gráfico com nove apps do sistema (Arquivos, Navegador, Terminal,
 Editor, Calculadora, Imagens, Tarefas, Registro, Ajustes) e quatro apps WebAssembly
-(Relógio, Notas, Pintura, Cobrinha). **Tudo roda em ring 0, num único espaço de
-endereçamento**; o isolamento entre "app" e "kernel" vem do `#![forbid(unsafe_code)]` do crate
-`kitsune_core` e dos limites do WebAssembly, não do hardware (próximo passo: [`ROADMAP.md`](ROADMAP.md)).
+(Relógio, Notas, Pintura, Cobrinha). **O kernel e os apps WebAssembly rodam em ring 0**; o isolamento entre "app" e "kernel" vem do
+`#![forbid(unsafe_code)]` do crate `kitsune_core` e dos limites do WebAssembly. **Programas ELF** (o Terminal `kterm`,
+`jsrun` com o QuickJS, `mediadec`, `play`) rodam em **ring 3**, cada um com seu espaço de endereçamento e as
+chamadas `int 0x80` de [`design/processos.md`](design/processos.md) (próximos passos: [`ROADMAP.md`](ROADMAP.md)).
 
-- **Dois crates de código.** `kitsune_core` (~112 mil linhas, testes incluídos, 2953 testes
-  passando [M], sem `unsafe`): toda a lógica decidível. `kernel` (~47 mil linhas,
+- **Dois crates de código.** `kitsune_core` (~148 mil linhas, testes incluídos, 3431 testes
+  passando [M], sem `unsafe`): toda a lógica decidível. `kernel` (~60 mil linhas,
   0 testes): hardware, scheduler, compositor, drivers.
 - **Multitarefa preemptiva** a 250 Hz, com bloqueio. Threads: `compositor`, `fetcher`
   (rede), `appd` (apps WASM), duas `shelld` (comandos do terminal) e `logd` (grava o log em
@@ -56,7 +57,7 @@ endereçamento**; o isolamento entre "app" e "kernel" vem do `#![forbid(unsafe_c
 
 | Crate | Tipo | Tamanho | Papel |
 |---|---|---|---|
-| `kitsune_core` | lib, `no_std` fora de testes, `forbid(unsafe_code)` | ~112 mil linhas, 2953 testes [M] | lógica pura, testável no host |
+| `kitsune_core` | lib, `no_std` fora de testes, `forbid(unsafe_code)` | ~148 mil linhas, 3431 testes [M] | lógica pura, testável no host |
 | `kernel` | bin `x86_64-unknown-none`, `test = false` | ~47 mil linhas + `switch.s` (85) | hardware, scheduler, compositor, drivers, rede, WASM |
 | `os` | builder | ~70 linhas | `build.rs` gera `kitsune-bios.img` e `kitsune-uefi.img`; `main.rs` lança o QEMU |
 

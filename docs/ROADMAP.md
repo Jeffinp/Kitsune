@@ -17,7 +17,7 @@ ele consegue fazer, depois o polimento. Cada item tem um **critério de aceite v
 | Apps | Plataforma WebAssembly com manifesto, permissões, cotas de CPU e memória, dados em `/data/<id>`, instalação em `/apps`; Terminal, Editor, Arquivos, Imagens, Tarefas, Registro, Ajustes, Calculadora |
 | Interface | Painel superior, barra de tarefas flutuante, Apps com categorias, Busca, encaixe de janelas, 2 a 4 áreas de trabalho, configurações rápidas, central de notificações, tema claro/escuro, animações com opção de reduzir movimento |
 | Idiomas | Português do Brasil e inglês, trocados ao vivo, com formatos de data e número do idioma |
-| Qualidade | 2953 testes no `kitsune_core`, 17 alvos de fuzz, `unsafe` 100% documentado e imposto por lint, boot BIOS e UEFI verificado a cada mudança de kernel, `cargo deny` e `cargo audit` |
+| Qualidade | 3431 testes no `kitsune_core`, 17 alvos de fuzz, `unsafe` 100% documentado e imposto por lint, boot BIOS e UEFI verificado a cada mudança de kernel, `cargo deny` e `cargo audit` |
 
 Os números e os comandos que os reproduzem estão em [`BENCHMARKS.md`](BENCHMARKS.md).
 

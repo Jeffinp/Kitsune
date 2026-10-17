@@ -13,7 +13,7 @@ Every app runs in a sandbox with memory and CPU limits, and the browser only say
 
 ![Arch](https://img.shields.io/badge/arch-x86__64-blue?style=for-the-badge)
 ![Boot](https://img.shields.io/badge/boot-BIOS%20%2B%20UEFI-orange?style=for-the-badge)
-![Tests](https://img.shields.io/badge/tests-3121%20passing-success?style=for-the-badge)
+![Tests](https://img.shields.io/badge/tests-3431%20passing-success?style=for-the-badge)
 ![Fuzz](https://img.shields.io/badge/fuzz-17%20targets-success?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-PolyForm%20Strict-orange?style=for-the-badge)
 
@@ -57,7 +57,7 @@ documents and most of the technical docs are in Portuguese.)
 | **Intact data** | **OJFS v3**: metadata journal, copy-on-write data, CRC32 and an `fsck` at every boot | [`docs/design/ojfs3.md`](docs/design/ojfs3.md) |
 | **Two languages, live** | Brazilian Portuguese and English, switched in *Settings > Language & region* without a restart | [`docs/design/i18n.md`](docs/design/i18n.md) |
 | **Accessible** | Light, dark or automatic appearance, 8 accent colours, text contrast of 15.6:1 (light) and 12.8:1 (dark), a reduce-motion switch | [`docs/design/ui-design.md`](docs/design/ui-design.md) |
-| **Verified** | **3121 tests**, **19 fuzz targets**, 100 % of the kernel's `unsafe` blocks justified and enforced by lint, BIOS and UEFI boot compared pixel by pixel on every kernel change | [`docs/TESTING.md`](docs/TESTING.md) |
+| **Verified** | **3431 tests**, **19 fuzz targets**, 100 % of the kernel's `unsafe` blocks justified and enforced by lint, BIOS and UEFI boot compared pixel by pixel on every kernel change | [`docs/TESTING.md`](docs/TESTING.md) |
 
 ---
 
@@ -146,7 +146,7 @@ kernel only connects the hardware to it. The code is Rust.
 
 ```mermaid
 flowchart LR
-    CORE["kitsune_core<br/>no_std · forbid(unsafe) · 3121 tests<br/>fs · net · web · browser · hw · wm · gfx · heap"]
+    CORE["kitsune_core<br/>no_std · forbid(unsafe) · 3431 tests<br/>fs · net · web · browser · hw · wm · gfx · heap"]
     KERNEL["kernel<br/>bare-metal · documented unsafe<br/>drivers · sched · compositor · wasm"]
     OS["os<br/>BIOS/UEFI image builder"]
     FUZZ["fuzz/<br/>19 targets"]
@@ -165,7 +165,7 @@ the compositor, which only draws when something changes. Each subsystem is descr
 
 | Check | State |
 |---|---|
-| Unit tests | **3121** in `kitsune_core` (`cargo test -p kitsune_core`) |
+| Unit tests | **3431** in `kitsune_core` (`cargo test -p kitsune_core`) |
 | Fuzzing | **19 targets**: network, OJFS v2/v3 disks, HTML/CSS/images/forms, shell, editor, X.509 certificates, app manifest and sandbox, compositor; bugs found become a minimal input and a regression test |
 | `unsafe` | **100 %** of the kernel's blocks carry `// SAFETY:`, enforced by `clippy::undocumented_unsafe_blocks` |
 | QEMU boot | BIOS **and** UEFI on every kernel change, desktop compared pixel by pixel to a baseline (`tools/verify-boot.sh`) |
@@ -178,7 +178,7 @@ More in [`docs/TESTING.md`](docs/TESTING.md). The audit behind much of this meas
 
 | | Before the audit | After |
 |---|---|---|
-| Tests | 189 | 423 (today: 3121) |
+| Tests | 189 | 423 (today: 3431) |
 | `unsafe` without justification | 100 | **0** |
 | Fatal failure | silent `hlt` or reboot | **error screen + serial** |
 | Stack overflow | triple fault | guard page: only the thread dies |

@@ -13,7 +13,7 @@ Cada app roda numa sandbox com limites de memória e CPU, e o navegador só diz 
 
 ![Arch](https://img.shields.io/badge/arch-x86__64-blue?style=for-the-badge)
 ![Boot](https://img.shields.io/badge/boot-BIOS%20%2B%20UEFI-orange?style=for-the-badge)
-![Tests](https://img.shields.io/badge/tests-3121%20passing-success?style=for-the-badge)
+![Tests](https://img.shields.io/badge/tests-3431%20passing-success?style=for-the-badge)
 ![Fuzz](https://img.shields.io/badge/fuzz-17%20targets-success?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-PolyForm%20Strict-orange?style=for-the-badge)
 
@@ -57,7 +57,7 @@ documentados.
 | **Dados íntegros** | **OJFS v3**: journal de metadados, dados *copy-on-write*, CRC32 e `fsck` a cada boot | [`docs/design/ojfs3.md`](docs/design/ojfs3.md) |
 | **Dois idiomas, ao vivo** | Português do Brasil e inglês, trocados em *Ajustes > Idioma e região* sem reiniciar | [`docs/design/i18n.md`](docs/design/i18n.md) |
 | **Acessível** | Tema claro, escuro ou automático, 8 cores de destaque, contraste de texto de 15,6:1 (claro) e 12,8:1 (escuro), opção de reduzir movimento | [`docs/design/ui-design.md`](docs/design/ui-design.md) |
-| **Verificado** | **3121 testes**, **19 alvos de fuzz**, 100 % dos blocos `unsafe` do kernel justificados e impostos por lint, boot BIOS e UEFI conferido pixel a pixel a cada mudança de kernel | [`docs/TESTING.md`](docs/TESTING.md) |
+| **Verificado** | **3431 testes**, **19 alvos de fuzz**, 100 % dos blocos `unsafe` do kernel justificados e impostos por lint, boot BIOS e UEFI conferido pixel a pixel a cada mudança de kernel | [`docs/TESTING.md`](docs/TESTING.md) |
 
 ---
 
@@ -147,7 +147,7 @@ teste. O kernel só liga o hardware a ela. O código é Rust.
 
 ```mermaid
 flowchart LR
-    CORE["kitsune_core<br/>no_std · forbid(unsafe) · 3121 testes<br/>fs · net · web · browser · hw · wm · gfx · heap"]
+    CORE["kitsune_core<br/>no_std · forbid(unsafe) · 3431 testes<br/>fs · net · web · browser · hw · wm · gfx · heap"]
     KERNEL["kernel<br/>bare-metal · unsafe documentado<br/>drivers · sched · compositor · wasm"]
     OS["os<br/>builder da imagem BIOS/UEFI"]
     FUZZ["fuzz/<br/>19 alvos"]
@@ -201,9 +201,10 @@ WebAssembly rodam com combustível por chamada, teto de memória, cota de disco,
 pasta e rede só com permissão e destinos públicos. O HTTPS verifica cadeia, nome e assinatura; falhas de
 certificado bloqueiam a página.
 
-Hoje o sistema inteiro roda num único nível de privilégio (ring 0), então a fronteira entre apps e kernel é o
-WebAssembly com limites, e o HTTPS ainda não faz revogação (CRL/OCSP) nem HSTS. O isolamento por processo é um dos
-próximos passos do [roadmap](docs/ROADMAP.md). Cenários de ataque, o que é e o que não é protegido e como relatar
+O kernel e os apps WebAssembly rodam em ring 0, e a fronteira entre eles é o
+WebAssembly com limites; os programas ELF (Terminal, `jsrun`, `mediadec`) já rodam em ring 3. O HTTPS ainda não faz
+revogação (CRL/OCSP) nem HSTS. Estender o isolamento por processo aos apps é um dos próximos passos do
+[roadmap](docs/ROADMAP.md). Cenários de ataque, o que é e o que não é protegido e como relatar
 um problema: [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md) · [`SECURITY.md`](SECURITY.md).
 
 ---
