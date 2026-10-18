@@ -7,10 +7,12 @@
 pub mod ac97;
 pub mod ata;
 pub mod audio;
+pub mod hid;
 pub mod pci;
 pub mod perf;
 pub mod ps2;
 pub mod rtc;
+pub mod usb;
 pub mod virtio;
 pub mod virtio_net;
 pub mod xhci;
