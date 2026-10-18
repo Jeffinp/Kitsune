@@ -4,6 +4,25 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — Supervisão de threads: o serviço que morre volta (ROADMAP item 1, S0 e S1)
+
+Antes, uma thread do kernel que falhava morria e o serviço ficava indisponível até o reboot, com a pilha e as alocações
+presas. Agora (`docs/design/supervisao.md`):
+
+- **Supervisor** (`kernel/src/sched/supervisor.rs`, tabela em `kernel/src/services.rs`): o compositor, a cada volta do laço,
+  olha os serviços (fetcher, appd, shelld, shelld2, procfsd, audiod, logd); o que morreu tem o `cleanup` chamado, a pilha
+  devolvida ao alocador (a página de guarda é remapeada antes) e o slot reaproveitado por uma thread nova com a mesma entrada.
+- **Orçamento** (`kitsune_core::supervise::RestartBudget`, 10 testes): 3 reinícios por minuto, com espera de 1, 5 e 30 s; a
+  quarta morte deixa o serviço parado e avisa.
+- **Aviso** na central de notificações (pt/en) a cada reinício e quando o serviço é desistido.
+- **`crash <serviço>`** no Terminal, só para administrador (com contas), faz o serviço entrar em pânico no próximo ponto de
+  espera do escalonador (`sched::block`), pelo caminho real (pânico, `kill_current`, supervisor).
+- **Provado** no QEMU (W65, `tools/qemu-supervise.ps1`): 9 verificações PASS, com as quatro mortes do fetcher, as três
+  reiniciadas e a quarta desistida, e os avisos na tela. `cargo lint-kernel` limpo.
+- **Falta** (S2 a S5): `cleanup` de verdade por serviço (hoje é vazio: um pedido de rede em andamento ou os apps do appd não
+  são tratados), `YieldMutex` que toma e envenena a trava de dono morto, contadores de vazamento por thread. Um serviço que morre
+  no meio de um pedido ainda deixa o navegador esperando.
+
 ## 2026-10 — Revisão do que foi dito e feito no USB
 
 Conferido contra o código do Linux (`pci-quirks.c`, `xhci-ext-caps.h`, `xhci.h`, `xhci-hub.c`) e contra o repositório:

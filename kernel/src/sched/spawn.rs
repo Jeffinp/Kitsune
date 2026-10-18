@@ -15,8 +15,8 @@ pub(super) fn alloc_stack(stack_size: usize) -> (paging::StackRegions, Option<u6
         handle_alloc_error(layout);
     }
     let regions = paging::stack_regions(base as u64, stack_size).expect("page-aligned stack block");
-    // The block is never freed, so the unmapped page never gets back to the allocator (whose free-list
-    // node writes would fault on it): a dead thread's stack stays allocated for good.
+    // The block is returned to the allocator only after the guard page is remapped (`supervisor::reap_stack`);
+    // freeing it with the page unmapped would fault on the allocator's free-list node.
     match crate::vm::unmap_page(regions.guard_start) {
         Ok(()) => (regions, Some(regions.guard_start)),
         Err(e) => {
@@ -31,18 +31,23 @@ pub(super) fn alloc_stack(stack_size: usize) -> (paging::StackRegions, Option<u6
     }
 }
 
-/// Spawn a preemptible kernel thread starting at `entry` (must never return).
-pub fn spawn(name: &'static str, entry: extern "C" fn() -> !) {
-    spawn_with_stack(name, entry, STACK_SIZE);
-}
-
-/// Like [`spawn`], on a stack of `stack_size` bytes (a multiple of the page size). For threads whose
-/// work is deep (the app runtime validates and translates WebAssembly modules).
+/// Spawn a preemptible kernel thread starting at `entry` (must never return) on a stack of `stack_size`
+/// bytes (a multiple of the page size). Services go through `spawn_service`, which calls this.
 pub fn spawn_with_stack(name: &'static str, entry: extern "C" fn() -> !, stack_size: usize) {
     let s = scheduler();
     assert!(s.threads.len() < MAX_THREADS, "too many threads");
     STACK_KIB[s.threads.len()].store((stack_size / 1024) as u32, Ordering::Relaxed);
+    s.threads.push(new_kernel_thread(name, entry, stack_size));
+}
 
+/// A kernel thread ready to go on the scheduler's list: a guarded stack and the fabricated first frame that
+/// resumes into `entry`. The caller (`spawn_with_stack`, or the supervisor reusing a dead slot) puts it in
+/// place with IF=0.
+pub(super) fn new_kernel_thread(
+    name: &'static str,
+    entry: extern "C" fn() -> !,
+    stack_size: usize,
+) -> Thread {
     let (regions, guard) = alloc_stack(stack_size);
     match guard {
         Some(g) => crate::klog!(
@@ -86,17 +91,21 @@ pub fn spawn_with_stack(name: &'static str, entry: extern "C" fn() -> !, stack_s
     }
     let rsp = p;
 
-    s.threads.push(Thread {
+    Thread {
         name,
         cr3: 0,
         rsp0: 0,
-        block: None,
+        // Kept so the supervisor can give the stack back when the thread dies (user threads use it too).
+        block: Some((
+            regions.guard_start,
+            paging::guarded_block_size(stack_size).unwrap_or(0),
+        )),
         free: false,
         rsp,
         stack_bottom: regions.stack_bottom,
         guard,
         fpu: FxArea::seeded(),
-    });
+    }
 }
 
 /// Called from the timer ISR (clock already advanced): credit the tick to the

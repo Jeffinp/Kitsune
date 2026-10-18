@@ -37,6 +37,7 @@ mod rng;
 mod rtc;
 mod sched;
 mod serial;
+mod services;
 mod settings;
 mod storage;
 mod sync;
@@ -293,7 +294,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         Some(netd) => {
             fetch::init(netd);
             x86_64::instructions::interrupts::without_interrupts(|| {
-                sched::spawn("fetcher", fetch::worker);
+                sched::spawn_service(&services::FETCHER);
             });
         }
         None => fetch::init_offline(),
@@ -305,12 +306,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // freezes the UI.
     wasm::init(info, tsc_khz);
     x86_64::instructions::interrupts::without_interrupts(|| {
-        sched::spawn_with_stack("appd", wasm::worker, 512 * 1024);
+        sched::spawn_service(&services::APPD);
         // The terminal's command thread: sleep, ping and curl wait here, not in the compositor.
-        sched::spawn("shelld", desktop::shell_worker);
-        sched::spawn("shelld2", desktop::shell_worker2);
+        sched::spawn_service(&services::SHELLD);
+        sched::spawn_service(&services::SHELLD2);
         // File requests of ring 3 processes (see `userfs`).
-        sched::spawn_with_stack("procfsd", userfs::worker, 128 * 1024);
+        sched::spawn_service(&services::PROCFSD);
     });
 
     trace::mark("threads spawned (fetcher, appd, shelld x2)");
@@ -336,7 +337,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // logd: persists the system log off the compositor thread (the boot log is written
     // after the first desktop frame, see `logd`).
     x86_64::instructions::interrupts::without_interrupts(|| {
-        sched::spawn("logd", logd::worker);
+        sched::spawn_service(&services::LOGD);
     });
 
     // Boot splash: it plays until the desktop is ready (at least 1.5 s). The brand mark is drawn
@@ -433,6 +434,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
         // The browser first (pages, scripts, the players of its videos), so a picture it picks goes
         // to the screen in this very frame; then the scheduler hears when the next one is due.
+        // Bring back any service thread that died (cleanup, free its stack, restart with a delay).
+        sched::supervise();
         bringup::pump_browser(&mut desk, &mut browser_redraw);
         desktop::schedule_next();
 

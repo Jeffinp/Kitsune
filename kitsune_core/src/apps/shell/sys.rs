@@ -45,6 +45,12 @@ pub trait SysInfo {
         Err(SysErr::Unsupported)
     }
 
+    /// Make the supervised system service called `name` fail on purpose, to prove it is brought back
+    /// (`crash`). `NoSuchProcess` when there is no such service.
+    fn crash_service(&mut self, _name: &str) -> Result<(), SysErr> {
+        Err(SysErr::Unsupported)
+    }
+
     /// Send `count` echo requests to `host` (`ping`); blocks until done.
     fn ping(&mut self, _host: &str, _count: u32) -> Result<PingStats, SysErr> {
         Err(SysErr::Unsupported)

@@ -383,6 +383,39 @@ fn test_builtin() {
 }
 
 #[test]
+fn crash_is_for_administrators_and_names_a_service() {
+    let mut t = T::new();
+    let admin = |admin| crate::apps::shell::sys::Identity {
+        name: "u".into(),
+        uid: 1000,
+        gid: 1000,
+        gname: "u".into(),
+        groups: Vec::new(),
+        admin,
+    };
+    // no accounts at all: allowed
+    assert_eq!(t.run("crash fetcher").status, 0);
+    assert_eq!(t.sys.crashed, ["fetcher"]);
+    t.sys.who = Some(admin(true));
+    assert_eq!(t.run("crash appd").status, 0);
+    assert_eq!(t.sys.crashed, ["fetcher", "appd"]);
+    // an ordinary user is refused and nothing is crashed
+    t.sys.who = Some(admin(false));
+    let r = t.run("crash fetcher");
+    assert_eq!(r.status, 1);
+    assert_eq!(t.sys.crashed.len(), 2);
+    t.sys.who = Some(admin(true));
+    assert_eq!(t.run("crash nosuch").status, 1, "unknown service");
+    assert_eq!(t.run("crash").status, 2);
+    assert_eq!(t.run("crash a b").status, 2);
+    assert!(
+        t.out("help")
+            .lines()
+            .any(|l| l.trim_start().starts_with("crash"))
+    );
+}
+
+#[test]
 fn help_lists_every_command() {
     let mut t = T::new();
     let h = t.out("help");

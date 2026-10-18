@@ -38,7 +38,7 @@ use text::*;
 
 /// Register every standard builtin into `r`.
 pub fn register_all(r: &mut Registry) {
-    let table: [(&str, &'static str, BuiltinFn); 65] = [
+    let table: [(&str, &'static str, BuiltinFn); 66] = [
         ("help", tk!("sh.help.help"), help),
         ("whoami", tk!("sh.whoami.help"), whoami),
         ("id", tk!("sh.id.help"), id),
@@ -79,6 +79,7 @@ pub fn register_all(r: &mut Registry) {
         ("df", tk!("sh.df.help"), df),
         ("ps", tk!("sh.ps.help"), ps),
         ("kill", tk!("sh.kill.help"), kill),
+        ("crash", tk!("sh.crash.help"), crash),
         ("ping", tk!("sh.ping.help"), ping),
         ("true", tk!("sh.true.help"), true_cmd),
         ("false", tk!("sh.false.help"), false_cmd),

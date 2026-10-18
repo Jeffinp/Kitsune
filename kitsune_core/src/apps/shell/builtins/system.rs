@@ -211,6 +211,29 @@ pub(super) fn kill(cx: &mut CmdCtx<'_>) -> i32 {
     status
 }
 
+/// `crash SERVICE`: for administrators, make a supervised system service fail so it is seen coming back.
+pub(super) fn crash(cx: &mut CmdCtx<'_>) -> i32 {
+    if cx.args.len() != 2 {
+        cx.error(t!("sh.crash.usage"));
+        return 2;
+    }
+    if cx.sys.identity().is_some_and(|who| !who.admin) {
+        cx.error(t!("sh.crash.admin_only"));
+        return 1;
+    }
+    let name = cx.args[1].clone();
+    match cx.sys.crash_service(&name) {
+        Ok(()) => {
+            cx.println(&t!("sh.crash.sent", name = name.as_str()));
+            0
+        }
+        Err(e) => {
+            cx.error(&format!("{name}: {}", e.message()));
+            1
+        }
+    }
+}
+
 pub(super) fn ping(cx: &mut CmdCtx<'_>) -> i32 {
     let Some(o) = parse_opts(cx, "", "c", None) else {
         return 2;

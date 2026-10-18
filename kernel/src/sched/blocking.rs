@@ -53,6 +53,7 @@ pub(super) fn halt_unless(me: usize, skip: impl Fn() -> bool) {
 /// lost (announce, then re-check, then sleep).
 pub fn block(until: u64, still_idle: impl Fn() -> bool) {
     let me = current();
+    super::supervisor::fault_point(me);
     let runnable = || WAKE[me].load(Ordering::SeqCst) <= crate::interrupts::ticks();
     WAKE[me].store(until, Ordering::SeqCst);
     while still_idle() && !runnable() {
@@ -63,6 +64,7 @@ pub fn block(until: u64, still_idle: impl Fn() -> bool) {
         halt_unless(me, || runnable() || !still_idle());
     }
     WAKE[me].store(0, Ordering::SeqCst);
+    super::supervisor::fault_point(me);
 }
 
 /// The compositor's idle step (replaces a bare `hlt`): if `has_work()` return

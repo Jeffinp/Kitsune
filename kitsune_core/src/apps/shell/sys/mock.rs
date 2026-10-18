@@ -33,6 +33,8 @@ pub struct MockSys {
     /// What each started program was given, in the same order as `started`.
     pub started_with: Vec<ProgramCtx>,
     pub program_kills: Vec<u32>,
+    /// Services asked to crash (`crash`); the mock knows `fetcher` and `appd`.
+    pub crashed: Vec<String>,
     /// `interrupted` turns true after this many polls (`None` = never).
     pub interrupt_after: Option<u32>,
     pub(super) polls: core::cell::Cell<u32>,
@@ -84,6 +86,7 @@ impl Default for MockSys {
             started: Vec::new(),
             started_with: Vec::new(),
             program_kills: Vec::new(),
+            crashed: Vec::new(),
             interrupt_after: None,
             polls: core::cell::Cell::new(0),
         }
@@ -115,6 +118,15 @@ impl SysInfo for MockSys {
         if self.process_list.iter().any(|p| p.pid == pid) {
             self.killed.push((pid, signal));
             self.process_list.retain(|p| p.pid != pid);
+            Ok(())
+        } else {
+            Err(SysErr::NoSuchProcess)
+        }
+    }
+
+    fn crash_service(&mut self, name: &str) -> Result<(), SysErr> {
+        if matches!(name, "fetcher" | "appd") {
+            self.crashed.push(String::from(name));
             Ok(())
         } else {
             Err(SysErr::NoSuchProcess)

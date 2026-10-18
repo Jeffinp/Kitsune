@@ -62,7 +62,7 @@ pub fn init(phys_offset: Option<u64>) {
         tones: Vec::new(),
     });
     x86_64::instructions::interrupts::without_interrupts(|| {
-        crate::sched::spawn("audiod", worker);
+        crate::sched::spawn_service(&crate::services::AUDIOD);
     });
 }
 
@@ -176,7 +176,7 @@ pub fn errno(e: AudioErr) -> i64 {
 }
 
 /// The `audiod` thread.
-extern "C" fn worker() -> ! {
+pub(crate) extern "C" fn worker() -> ! {
     AUDIOD.store(crate::sched::current(), Ordering::Relaxed);
     let mut last_reap = 0u64;
     let mut late_seen = 0u64;

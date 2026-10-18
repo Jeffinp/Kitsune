@@ -706,6 +706,23 @@ Rodado no Windows (QEMU 11.1, TCG, BIOS): 8 verificações PASS (Busca 67 mil pi
 digitação 1036), e a captura final mostra a Calculadora com `123`. **A versão `.sh` não foi executada** (esta máquina não
 tem `socat` nem ImageMagick). Não cobre UEFI, hardware real, hub nem hot-plug.
 
+### Serviços que morrem e voltam (W65)
+
+Prova o que o item 1 do ROADMAP entrega até aqui (`docs/design/supervisao.md`): uma thread de serviço do kernel que morre é
+vista pelo supervisor, tem a pilha devolvida ao alocador e volta com a mesma entrada, com atraso crescente, e depois de
+três reinícios no mesmo minuto fica parada com um aviso. O cenário digita `crash fetcher` no Terminal (só administrador;
+o serviço entra em pânico no próximo ponto de espera do escalonador, pelo mesmo caminho de um pânico de verdade) e lê o log:
+a thread morre, `supervisor: 'fetcher' died; stack freed, restart in 1000 ms (attempt 1 of 3)`, `restarted in slot N`, as
+tentativas 2 e 3 e, na quarta morte em 60 s, `not restarted`. Cada reinício e a parada aparecem na central de notificações.
+
+```powershell
+.\tools\qemu-supervise.ps1     # .shots\w65\w65-result.txt, serial.log, capturas; -Service appd para outro serviço
+```
+
+Rodado no Windows (QEMU 11.1, TCG, BIOS, com NIC NE2000, sem a qual o fetcher não existe): 9 verificações PASS. **Não prova** a
+limpeza do estado do serviço (o pedido de rede em andamento, a fila do appd): isso é S2 e S3; hoje só vale para um serviço
+parado no ponto de espera.
+
 ### O ritmo dos quadros: gravação em taxa real (W62), clipe de ritmo (W63) e o placar
 
 Projeto e números em [`design/tls-browser.md`](design/tls-browser.md) §18. O log do guest tem, uma vez por segundo, o

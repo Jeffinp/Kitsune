@@ -31,10 +31,10 @@
 //! for the canary). The compositor, a fault with interrupts off (inside an ISR or
 //! a spin lock: the interrupted code held state nobody can repair), a double
 //! fault, and any fault *while* a thread is being killed stay fatal
-//! (`crash::die`). Resources a dead thread owned are not reclaimed: its stack and
-//! whatever it had allocated stay allocated, and a lock it held without
-//! disabling interrupts stays held. The heap lock cannot be one of those, because
-//! it keeps interrupts off while held (see [`containable`]).
+//! (`crash::die`). A dead *service* (see `supervisor`) is cleaned up, its stack freed
+//! and its slot reused by a fresh thread; any other dead thread keeps its stack and
+//! allocations. The heap lock cannot be left held by a dead thread, because it keeps
+//! interrupts off while held (see [`containable`]).
 
 use crate::sync::RacyCell;
 use alloc::alloc::{Layout, alloc_zeroed, handle_alloc_error};
@@ -50,11 +50,13 @@ mod death;
 mod introspect;
 pub mod present;
 mod spawn;
+mod supervisor;
 mod user;
 pub use blocking::*;
 pub use death::*;
 pub use introspect::*;
 pub use spawn::*;
+pub use supervisor::*;
 pub use user::*;
 
 // Per-thread stack. Sized generously (128 KiB) because the background fetcher

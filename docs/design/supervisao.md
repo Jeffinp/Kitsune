@@ -1,6 +1,6 @@
 # Supervisão de threads: reiniciar e limpar o que morreu (ROADMAP item 1)
 
-**Estado: proposta, nada implementado.** Hoje uma thread do kernel que falha morre sozinha e o resto segue
+**Estado: S0 e S1 feitas e provadas no QEMU (W65); S2 a S5 por fazer.** O desenho abaixo foi aprovado com as três respostas: trava de dono morto tomada e envenenada (S4), `crash` só para administrador, aviso na central a cada reinício. Hoje uma thread do kernel que falha morre sozinha e o resto segue
 (`kernel/src/sched/death.rs`), mas ela **não volta**: o navegador (fetcher), os apps WASM (appd), o terminal (shelld),
 os arquivos de processos (procfsd), o som (audiod) e o log (logd) ficam indisponíveis até o reboot, e tudo o que a
 thread usava continua alocado.
@@ -80,8 +80,8 @@ Aceite do ROADMAP: matar o `fetcher` e abrir o navegador de novo funciona sem re
 
 | # | Etapa | Dias |
 |---|---|---|
-| S0 | `RestartBudget` no core, com testes | 0,5 |
-| S1 | Tabela de serviços, reaproveitar o slot, liberar a pilha, `crash` e log | 2 |
+| S0 (feita) | `RestartBudget` no core, com testes | 0,5 |
+| S1 (feita) | Tabela de serviços, reaproveitar o slot, liberar a pilha, `crash` e log | 2 |
 | S2 | Limpeza do fetcher + `Net::reset_connections` + cenário com o fetcher | 2 |
 | S3 | Limpeza de appd, shelld, procfsd; cenário com o appd | 2 |
 | S4 | `YieldMutex` com envenenamento e contadores de bytes por slot | 1,5 |

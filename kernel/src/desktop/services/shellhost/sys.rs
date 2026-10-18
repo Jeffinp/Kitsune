@@ -276,6 +276,14 @@ impl SysInfo for KSys {
         }
     }
 
+    fn crash_service(&mut self, name: &str) -> Result<(), SysErr> {
+        if crate::sched::inject_fault(name) {
+            Ok(())
+        } else {
+            Err(SysErr::NoSuchProcess)
+        }
+    }
+
     fn ping(&mut self, host: &str, count: u32) -> Result<PingStats, SysErr> {
         use kitsune_core::icmp::PingError;
         let ip = self.address(host)?;
