@@ -1,0 +1,19 @@
+# Line endings are part of the build: include_str! embeds files byte for byte, so the Windows
+# autocrlf conversion turned embedded lists into CRLF and some binary-looking fixtures into corrupt data.
+* text=auto eol=lf
+*.ppm binary
+*.pgm binary
+*.pbm binary
+*.jpg binary
+*.png binary
+*.gif binary
+*.img binary
+*.wasm binary
+*.webm binary
+*.wav binary
+*.ttf binary
+*.gz binary
+*.pcap binary
+*.fd binary
+*.bin binary
+*.ps1 text eol=crlf
