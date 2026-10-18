@@ -28,6 +28,8 @@ Os números e os comandos que os reproduzem estão em [`BENCHMARKS.md`](BENCHMAR
 Hoje uma thread que falha morre sozinha e o resto continua. Falta **reiniciá-la** (o navegador e o app WASM
 ficam indisponíveis até o reboot) e **liberar** o que ela usava (pilha, alocações, `Store` do `wasmi`, locks).
 *Aceite:* matar o `fetcher` e abrir o navegador de novo funciona sem reiniciar o sistema.
+*Estado:* só o desenho: [`design/supervisao.md`](design/supervisao.md) (serviços reiniciáveis pelo compositor, orçamento de
+reinícios, limpeza por serviço, travas de dono morto; ~8,5 dias).
 
 ### 2. HTTPS completo
 A cadeia, o nome e a assinatura do handshake já são verificados. Vêm a seguir: revogação (CRL/OCSP),
