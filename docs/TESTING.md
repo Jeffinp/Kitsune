@@ -683,6 +683,29 @@ tela demora a seguir o ponteiro) e `[trace] pc <slot> r<anel> 0xADDR n` (endere�
 com `nm -C` no ELF do kernel, tirando a base `0x10000000000`, ou no do programa com símbolos, ver §17.1). Medida em
 2026-10 (TCG, 916x480): 19–22 fps com `perf-trace`, 21–24 fps sem, 0 `waiting`. A gravação de verdade agora é o W62.
 
+### USB: teclado e mouse reagindo no desktop (W64)
+
+Prova, sem PS/2 (`-machine pc,i8042=off`), que o driver xHCI (`docs/design/usb-xhci.md`) entrega teclado e mouse ao
+desktop. Cada passo é julgado pelo número de pixels que mudaram na tela: **Ctrl+Space** abre a Busca e **Esc** a fecha
+(teclado), um movimento até o ícone da Calculadora no dock e um clique a abrem (mouse), e digitar `123` aparece no
+visor (teclado na janela focada). Confere ainda no log do guest que o controlador achou os dois dispositivos, o
+`Ctrl` chegou e o clique chegou, e que não houve pânico. (O desktop já sobe com um Terminal aberto; clicar no ícone
+dele o minimiza, por isso o teste usa a Calculadora.)
+
+```powershell
+# Windows (QEMU instalado; usa a imagem mais nova de target\release\build\os, ou -Image, ou -Accel whpx)
+.\tools\qemu-usb-hid.ps1          # .shots\w64\w64-result.txt, capturas .png, serial.log; exit 1 se algo falhar
+```
+
+```bash
+# Linux (harness dos outros cenários; precisa de socat e ImageMagick)
+QEMU_EXTRA="-machine pc,i8042=off -device qemu-xhci -device usb-kbd -device usb-mouse"   bash tools/perf/run.sh IMG bios $OUT 150 tools/perf/scen/w64-usb-hid.sh   # $OUT/w64-result.txt
+```
+
+Rodado no Windows (QEMU 11.1, TCG, BIOS): 8 verificações PASS (Busca 67 mil pixels, fechar 67 mil, Calculadora 217 mil,
+digitação 1036), e a captura final mostra a Calculadora com `123`. **A versão `.sh` não foi executada** (esta máquina não
+tem `socat` nem ImageMagick). Não cobre UEFI, hardware real, hub nem hot-plug.
+
 ### O ritmo dos quadros: gravação em taxa real (W62), clipe de ritmo (W63) e o placar
 
 Projeto e números em [`design/tls-browser.md`](design/tls-browser.md) §18. O log do guest tem, uma vez por segundo, o

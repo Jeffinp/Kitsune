@@ -194,7 +194,7 @@ impl Xhci {
                 }
                 BootProtocol::Mouse => {
                     if let Some(p) = hid::mouse_packet(&report[..len]) {
-                        if *logged < LOG_BUDGET && (p.dx != 0 || p.dy != 0 || p.left || p.right) {
+                        if *logged < LOG_BUDGET && (p.left || p.right) {
                             *logged += 1;
                             klog!(
                                 Info,

@@ -20,7 +20,10 @@ usb-mouse`). Código em `kernel/src/xhci.rs` e `xhci/{mmio,dma,enumerate,hid}.rs
   pelo mapa de memória física (como virtio), sem atributo de cache de dispositivo, o que **precisa ser revisto em
   hardware real**. O handoff do firmware não é exercitável no QEMU.
 - **Provado** no QEMU: ver `docs/design/usb-xhci.md` ("Como foi provado"). `cargo lint-kernel` limpo. **Não provado**:
-  UEFI, hardware real, hub, tela reagindo à entrada USB (só o log do guest).
+  UEFI, hardware real, hub.
+- **W64** (`tools/qemu-usb-hid.ps1`, `tools/perf/scen/w64-usb-hid.sh`): teclado USB abre e fecha a Busca, mouse USB abre a
+  Calculadora, digitar chega ao visor; 8 verificações PASS no Windows (QEMU TCG). A versão `.sh` não foi executada.
+  O log do mouse só registra cliques (os movimentos gastavam o orçamento de linhas).
 
 ## 2026-10 — USB: descritores e relatórios HID (E2)
 
