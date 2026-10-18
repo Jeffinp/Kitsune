@@ -4,6 +4,29 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — USB: a base do xHCI (E0 e E1)
+
+Primeiro passo do plano `docs/design/usb-xhci.md` (teclado e mouse USB, hoje só há PS/2). **Ainda não há driver USB**:
+só a descoberta do controlador e a lógica pura que o driver vai usar.
+
+- **PCI em todos os barramentos (E0)**: `kitsune_core::hw::pci::enumerate_all` segue as pontes PCI-PCI a partir do
+  barramento 0 (antes só o 0 era lido, e um xHCI de PC real costuma ficar atrás de uma ponte), lê classe, subclasse e
+  *prog-if*, só olha as funções 1 a 7 quando o tipo de cabeçalho diz que há várias, e termina em qualquer conteúdo
+  (ponte para trás ou para si mesma é ignorada; cada barramento é lido uma vez). `bar_size` calcula o tamanho de um BAR
+  de memória (32 ou 64 bits). O kernel usa isso em `pci::for_each`, o log do boot mostra a classe de cada função e
+  `usb: xHCI controller at ...` quando há um controlador.
+- **Núcleo xHCI puro (E1)**, `kitsune_core::hw::xhci`: registradores de capacidade e operacionais, `PORTSC` (valores de
+  escrita que não desligam a porta nem perdem bits de mudança), velocidades, lista de capacidades estendidas
+  (limitada) e o handoff do firmware (`USBLEGSUP`); TRBs de comando, controle e interrupção, pacote SETUP, eventos
+  decodificados; anéis de produtor (com Link TRB e inversão do ciclo) e de eventos; contextos de slot e endpoint, com
+  contextos de 32 ou 64 bytes e o intervalo de endpoint por velocidade. 49 testes novos e 16 de PCI.
+- **QEMU**: `-machine pc,i8042=off` com `-device qemu-xhci -device usb-kbd -device usb-mouse` boota até o primeiro
+  quadro do desktop e deixa o `QEMU HID Mouse` como único dispositivo de ponteiro (`info mice`), então dá para testar o
+  USB sem PS/2. Com os dois presentes, o monitor entrega o ponteiro ao USB.
+- **Provado no QEMU (BIOS)**: o log mostra `usb: xHCI controller at 00:04.0` e, com o controlador atrás de uma ponte
+  (`-device pci-bridge,chassis_nr=1,id=br1 -device qemu-xhci,bus=br1,addr=3`), `01:03.0`; o desktop sobe nos dois casos.
+- **Não provado**: nenhum driver ainda; UEFI e hardware real não foram rodados com esta mudança.
+
 ## 2026-10 — O vídeo no ritmo do vídeo
 
 A gravação do §17 "ainda travava": era montada de capturas do monitor do QEMU (~4,6 por segundo), e a reprodução, embora
