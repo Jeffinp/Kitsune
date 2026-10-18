@@ -13,3 +13,4 @@ pub mod ps2;
 pub mod rtc;
 pub mod virtio;
 pub mod virtio_net;
+pub mod xhci;
