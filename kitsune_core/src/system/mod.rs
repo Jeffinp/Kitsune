@@ -18,5 +18,6 @@ pub mod process;
 pub mod rng;
 pub mod schedule;
 pub mod settings;
+pub mod supervise;
 pub mod sysif;
 pub mod sysmon;

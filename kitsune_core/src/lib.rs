@@ -45,7 +45,7 @@ pub use security::{account, password, perm, secret, session};
 pub use storage::{blockcache, blockdev, fs, fs3, homes, secured, vfs};
 pub use system::{
     clipboard, entropy, heap, input, keymap, klog, notify, paging, process, rng, schedule,
-    settings, sysif, sysmon,
+    settings, supervise, sysif, sysmon,
 };
 pub use ui::{
     anim, appart, brand, chrome, cursor, fontcache, gfx, glyph, iconart, layout, pointer, raster,
