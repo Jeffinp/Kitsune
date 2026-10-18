@@ -12,6 +12,7 @@ Sistema operacional x86_64 escrito do zero em Rust (com C onde vale a pena), do 
 - Navegador: HTML/CSS (flex, grid, floats, SVG), **JavaScript das páginas** (um `jsrun --page` por aba, DOM em JS),
   `fetch`/XHR/cookies/CORS/keep-alive, Preact e Vue rodam, `<video>`/`<audio>` com MSE, bloqueador de anúncios
   nativo (Shields). **O embed do YouTube toca** (vídeos que o servidor aceita), a ~25 fps em 240p no QEMU TCG.
+- Entrada: PS/2 e USB (xHCI, teclado e mouse em boot protocol; `docs/design/usb-xhci.md`, cenário W64).
 - Som: driver AC'97 + mixer. Placar de vídeo: Shift+I sobre o vídeo.
 - Meta de longo prazo: servidores (`docs/ROADMAP.md` item 13: microVM, SMP, E/S, compat Linux).
 
@@ -32,7 +33,7 @@ JS, rede, vídeo, YouTube: §10–§18), `processos.md` (ring 3 e chamadas), `mi
 ## Comandos
 
 ```bash
-cargo test -j2 -p kitsune_core      # ~3430 testes, ~1 min (use -j2: a memória é pouca)
+cargo test -j2 -p kitsune_core      # ~3540 testes, ~1 min (use -j2: a memória é pouca)
 cargo lint-kernel                   # clippy -D warnings no alvo bare metal
 cargo lint-host                     # clippy do core e do os
 cargo fmt --all

@@ -15,9 +15,10 @@ ele consegue fazer, depois o polimento. Cada item tem um **critério de aceite v
 | Rede | `virtio-net` e NE2000, ARP/IPv4/ICMP/DHCP com renovação, DNS com cache, TCP, **TLS 1.3 com cadeia de certificados verificada** (46 raízes), hora por SNTP |
 | Navegador | HTML/CSS, imagens PNG/BMP/PPM, formulários GET, favoritos, busca na página, zoom, gzip/deflate, indicador de conexão segura, JavaScript das páginas (QuickJS num processo de anel 3 por aba, DOM e eventos básicos), bloqueador de anúncios e rastreadores com chave por site |
 | Apps | Plataforma WebAssembly com manifesto, permissões, cotas de CPU e memória, dados em `/data/<id>`, instalação em `/apps`; Terminal, Editor, Arquivos, Imagens, Tarefas, Registro, Ajustes, Calculadora |
+| Entrada | Teclado e mouse PS/2 e **USB (xHCI, protocolo de boot, por polling, até 4 dispositivos nas portas raiz)**; provado no QEMU, não em hardware real |
 | Interface | Painel superior, barra de tarefas flutuante, Apps com categorias, Busca, encaixe de janelas, 2 a 4 áreas de trabalho, configurações rápidas, central de notificações, tema claro/escuro, animações com opção de reduzir movimento |
 | Idiomas | Português do Brasil e inglês, trocados ao vivo, com formatos de data e número do idioma |
-| Qualidade | 3431 testes no `kitsune_core`, 17 alvos de fuzz, `unsafe` 100% documentado e imposto por lint, boot BIOS e UEFI verificado a cada mudança de kernel, `cargo deny` e `cargo audit` |
+| Qualidade | 3540 testes no `kitsune_core`, 23 alvos de fuzz, `unsafe` 100% documentado e imposto por lint, boot BIOS e UEFI verificado a cada mudança de kernel, `cargo deny` e `cargo audit` |
 
 Os números e os comandos que os reproduzem estão em [`BENCHMARKS.md`](BENCHMARKS.md).
 
@@ -226,7 +227,7 @@ Sem a etapa 1 nada do resto roda; a ordem acima é a mínima. Enquanto isso o na
 sem JavaScript pedem (itens do §10 do `tls-browser.md`).
 
 ### 12. Mais adiante: SMP, USB e som
-Vários núcleos (APIC), prioridades no scheduler, USB (teclado, mouse e armazenamento) e áudio além do AC'97 (Intel
+Vários núcleos (APIC), prioridades no scheduler, USB (armazenamento, hub e hot-plug; teclado e mouse já funcionam, ver `docs/design/usb-xhci.md`) e áudio além do AC'97 (Intel
 HDA, que é o que as placas novas têm; virtio-sound).
 *Aceite:* cada um com sua prova (o desktop usa mais de um núcleo; um teclado USB funciona).
 

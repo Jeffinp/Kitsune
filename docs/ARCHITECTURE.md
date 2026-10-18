@@ -24,7 +24,7 @@ Editor, Calculadora, Imagens, Tarefas, Registro, Ajustes) e quatro apps WebAssem
 `jsrun` com o QuickJS, `mediadec`, `play`) rodam em **ring 3**, cada um com seu espaço de endereçamento e as
 chamadas `int 0x80` de [`design/processos.md`](design/processos.md) (próximos passos: [`ROADMAP.md`](ROADMAP.md)).
 
-- **Dois crates de código.** `kitsune_core` (~148 mil linhas, testes incluídos, 3431 testes
+- **Dois crates de código.** `kitsune_core` (~148 mil linhas, testes incluídos, 3540 testes
   passando [M], sem `unsafe`): toda a lógica decidível. `kernel` (~60 mil linhas,
   0 testes): hardware, scheduler, compositor, drivers.
 - **Multitarefa preemptiva** a 250 Hz, com bloqueio. Threads: `compositor`, `fetcher`
@@ -57,11 +57,11 @@ chamadas `int 0x80` de [`design/processos.md`](design/processos.md) (próximos p
 
 | Crate | Tipo | Tamanho | Papel |
 |---|---|---|---|
-| `kitsune_core` | lib, `no_std` fora de testes, `forbid(unsafe_code)` | ~148 mil linhas, 3431 testes [M] | lógica pura, testável no host |
+| `kitsune_core` | lib, `no_std` fora de testes, `forbid(unsafe_code)` | ~148 mil linhas, 3540 testes [M] | lógica pura, testável no host |
 | `kernel` | bin `x86_64-unknown-none`, `test = false` | ~47 mil linhas + `switch.s` (85) | hardware, scheduler, compositor, drivers, rede, WASM |
 | `os` | builder | ~70 linhas | `build.rs` gera `kitsune-bios.img` e `kitsune-uefi.img`; `main.rs` lança o QEMU |
 
-Fora do workspace, cada um com seu `Cargo.lock`: `fuzz/` (17 alvos), `bench/` (criterion,
+Fora do workspace, cada um com seu `Cargo.lock`: `fuzz/` (23 alvos), `bench/` (criterion,
 host) e `wasm-apps/*` (guests). O kernel é *artifact dependency* do `os` (`-Z bindeps`):
 `os/build.rs` recebe o ELF e chama `bootloader::BiosBoot` e `UefiBoot`.
 

@@ -13,7 +13,7 @@ Cada app roda numa sandbox com limites de memória e CPU, e o navegador só diz 
 
 ![Arch](https://img.shields.io/badge/arch-x86__64-blue?style=for-the-badge)
 ![Boot](https://img.shields.io/badge/boot-BIOS%20%2B%20UEFI-orange?style=for-the-badge)
-![Tests](https://img.shields.io/badge/tests-3431%20passing-success?style=for-the-badge)
+![Tests](https://img.shields.io/badge/tests-3540%20passing-success?style=for-the-badge)
 ![Fuzz](https://img.shields.io/badge/fuzz-17%20targets-success?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-PolyForm%20Strict-orange?style=for-the-badge)
 
@@ -57,7 +57,7 @@ documentados.
 | **Dados íntegros** | **OJFS v3**: journal de metadados, dados *copy-on-write*, CRC32 e `fsck` a cada boot | [`docs/design/ojfs3.md`](docs/design/ojfs3.md) |
 | **Dois idiomas, ao vivo** | Português do Brasil e inglês, trocados em *Ajustes > Idioma e região* sem reiniciar | [`docs/design/i18n.md`](docs/design/i18n.md) |
 | **Acessível** | Tema claro, escuro ou automático, 8 cores de destaque, contraste de texto de 15,6:1 (claro) e 12,8:1 (escuro), opção de reduzir movimento | [`docs/design/ui-design.md`](docs/design/ui-design.md) |
-| **Verificado** | **3431 testes**, **19 alvos de fuzz**, 100 % dos blocos `unsafe` do kernel justificados e impostos por lint, boot BIOS e UEFI conferido pixel a pixel a cada mudança de kernel | [`docs/TESTING.md`](docs/TESTING.md) |
+| **Verificado** | **3540 testes**, **23 alvos de fuzz**, 100 % dos blocos `unsafe` do kernel justificados e impostos por lint, boot BIOS e UEFI conferido pixel a pixel a cada mudança de kernel | [`docs/TESTING.md`](docs/TESTING.md) |
 
 ---
 
@@ -147,10 +147,10 @@ teste. O kernel só liga o hardware a ela. O código é Rust.
 
 ```mermaid
 flowchart LR
-    CORE["kitsune_core<br/>no_std · forbid(unsafe) · 3431 testes<br/>fs · net · web · browser · hw · wm · gfx · heap"]
+    CORE["kitsune_core<br/>no_std · forbid(unsafe) · 3540 testes<br/>fs · net · web · browser · hw · wm · gfx · heap"]
     KERNEL["kernel<br/>bare-metal · unsafe documentado<br/>drivers · sched · compositor · wasm"]
     OS["os<br/>builder da imagem BIOS/UEFI"]
-    FUZZ["fuzz/<br/>19 alvos"]
+    FUZZ["fuzz/<br/>23 alvos"]
     CORE -->|lógica testada| KERNEL --> OS
     FUZZ -.->|entrada hostil| CORE
 ```
@@ -167,7 +167,7 @@ quadro ao compositor, que só desenha quando algo muda. Detalhes de cada subsist
 | Verificação | Estado |
 |---|---|
 | Testes unitários | **3121** no `kitsune_core` (`cargo test -p kitsune_core`) |
-| Fuzzing | **19 alvos**: rede, discos OJFS v2/v3, HTML/CSS/imagens/formulários, shell, editor, certificados X.509, manifesto e sandbox de apps, compositor; bugs achados viram entrada mínima e teste de regressão |
+| Fuzzing | **23 alvos**: rede, discos OJFS v2/v3, HTML/CSS/imagens/formulários, shell, editor, certificados X.509, manifesto e sandbox de apps, compositor; bugs achados viram entrada mínima e teste de regressão |
 | `unsafe` | **100 %** dos blocos do kernel com `// SAFETY:`, imposto por `clippy::undocumented_unsafe_blocks` |
 | Boot em QEMU | BIOS **e** UEFI a cada mudança de kernel, desktop comparado pixel a pixel com a baseline (`tools/verify-boot.sh`) |
 | Lint e formato | `cargo lint-kernel`, `cargo lint-host`, `cargo fmt --check`, todos `-D warnings` |
@@ -266,7 +266,7 @@ Kitsune/
 ├── kernel/src/        # bare metal x86_64: drivers, scheduler, WebAssembly, desktop
 │   └── desktop/       #   windows/ shell/ input/ kit/ services/ apps/<app>/ compositor/
 ├── os/                # builder: embute o kernel e gera as imagens BIOS/UEFI
-├── fuzz/              # cargo-fuzz: 19 alvos + regressões
+├── fuzz/              # cargo-fuzz: 23 alvos + regressões
 ├── bench/             # microbenchmarks (criterion), fora do workspace
 ├── wasm-apps/         # apps WebAssembly (clock, notes, paint, snake; examples/, cdemo, doom) e o SDK
 ├── assets/            # fontes, ícones, catálogos de idioma (assets/i18n)

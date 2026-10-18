@@ -4,6 +4,24 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — Revisão do que foi dito e feito no USB
+
+Conferido contra o código do Linux (`pci-quirks.c`, `xhci-ext-caps.h`, `xhci.h`, `xhci-hub.c`) e contra o repositório:
+
+- **Erro corrigido**: a máscara de `USBLEGCTLSTS` (`legacy_disable_smi`) usava `0x3 << 1`; o Linux usa `0x7 << 1` (os bits 1 a 3
+  são reservados e devem ser preservados). Corrigido, com teste para os bits reservados.
+- **Erro corrigido**: `portsc_neutral` preservava o bit CAS (24), que é só leitura e deve ser escrito como zero; o conjunto
+  agora é o de `xhci_port_state_to_neutral` do Linux (teste novo compara as máscaras).
+- **Conferido e igual ao Linux**: tipos de TRB, bits IOC/ISP/IDT/TC/BSR/DIR, campos de contexto de endpoint e de slot,
+  EHB do `ERDP`, espera de 1 s pela entrega do firmware.
+- **Contagens erradas nos textos**: "16 testes de PCI" eram 12 e "49 do xHCI" são 51 com as correções; README, ARCHITECTURE,
+  ROADMAP e CLAUDE.md diziam 3431 testes e 17 ou 19 alvos de fuzz: hoje são **3540 testes** e **23 alvos**.
+- **Processo**: as peças puras do xHCI e do HID foram escritas junto dos testes, não com o teste falhando antes, como pede o
+  CLAUDE.md. O alvo de fuzz `usb_hid` só compila; não foi executado. O ROADMAP não tinha sido atualizado com o USB.
+- **Inferência confirmada**: o desktop sobe com um Terminal aberto (visto na captura inicial do W64).
+- **Ainda sem prova**: ordem Configure Endpoint antes de SET_CONFIGURATION (segui o que lembro do Linux, QEMU aceita as duas),
+  sentido da roda do mouse USB no QEMU, entrega do firmware (QEMU não tem `USBLEGSUP`), UEFI e hardware real.
+
 ## 2026-10 — USB: driver xHCI para teclado e mouse (E3 e E4)
 
 Teclado e mouse USB funcionam no QEMU sem PS/2 (`-machine pc,i8042=off -device qemu-xhci -device usb-kbd -device
@@ -63,7 +81,7 @@ só a descoberta do controlador e a lógica pura que o driver vai usar.
   escrita que não desligam a porta nem perdem bits de mudança), velocidades, lista de capacidades estendidas
   (limitada) e o handoff do firmware (`USBLEGSUP`); TRBs de comando, controle e interrupção, pacote SETUP, eventos
   decodificados; anéis de produtor (com Link TRB e inversão do ciclo) e de eventos; contextos de slot e endpoint, com
-  contextos de 32 ou 64 bytes e o intervalo de endpoint por velocidade. 49 testes novos e 16 de PCI.
+  contextos de 32 ou 64 bytes e o intervalo de endpoint por velocidade. 50 testes novos do xHCI e 12 de PCI (os números do primeiro texto, 49 e 16, estavam errados).
 - **QEMU**: `-machine pc,i8042=off` com `-device qemu-xhci -device usb-kbd -device usb-mouse` boota até o primeiro
   quadro do desktop e deixa o `QEMU HID Mouse` como único dispositivo de ponteiro (`info mice`), então dá para testar o
   USB sem PS/2. Com os dois presentes, o monitor entrega o ponteiro ao USB.
