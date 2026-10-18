@@ -1,6 +1,6 @@
 # USB: xHCI e teclado/mouse HID
 
-Plano do primeiro driver USB do Kitsune. **Estado: E0 e E1 feitas (descoberta do controlador e núcleo puro, testados no host); E2 a E5 por fazer. Ainda não existe driver.** Hoje a entrada é
+Plano do primeiro driver USB do Kitsune. **Estado: E0, E1 e E2 feitas (descoberta do controlador, núcleo xHCI e descritores/relatórios HID, testados no host); E3 a E5 por fazer. Ainda não existe driver.** Hoje a entrada é
 só PS/2 (`kernel/src/ps2.rs`), e `docs/HARDWARE.md` e `docs/BOOT-USB.md` já registram que notebooks modernos
 podem não ter PS/2 nem emulação dele. Sem teclado e mouse o resto do roadmap não chega a uma máquina real.
 
@@ -35,12 +35,17 @@ kernel só tem a cola de hardware. Esforço em dias de um desenvolvedor: **estim
 |---|---|---|---|---|
 | E0 (feita) | Varrer todos os barramentos; classe e prog-if; tamanho e 64 bits do BAR | `core/hw/pci`, `kernel/pci.rs` | testes de host da enumeração; o log do guest lista o xHCI do QEMU | 2 |
 | E1 (feita) | Núcleo xHCI puro: registradores, TRB (codificar/decodificar), anel com *cycle bit* e Link TRB, contextos de slot e endpoint, velocidade → tamanho máx. de pacote | `core/hw/xhci` | testes, inclusive anel dando a volta e entrada hostil | 4 |
-| E2 | Descritores USB (device/config/interface/endpoint), detecção de interface HID boot, relatório de teclado → eventos de tecla (diferença entre relatórios, tabela HID → set-1), relatório de mouse → `Packet` | `core/hw/usb`, `core/hw/hid` | testes; alvo de fuzz para os parsers (o projeto já tem 17) | 3 |
+| E2 (feita) | Descritores USB (device/config/interface/endpoint), detecção de interface HID boot, relatório de teclado → eventos de tecla (diferença entre relatórios, tabela HID → set-1), relatório de mouse → `Packet` | `core/hw/usb`, `core/hw/hid` | testes; alvo de fuzz para os parsers (o projeto já tem 17) | 3 |
 | E3 | Driver: tomar o controlador do firmware (USBLEGSUP), reset, DCBAA, anel de comandos e de eventos, *scratchpad*, reset de porta, Enable Slot, Address Device, transferência de controle (GET_DESCRIPTOR, SET_CONFIGURATION, SET_PROTOCOL boot, SET_IDLE), Configure Endpoint e leitura do endpoint de interrupção por polling | `kernel/xhci.rs` | no QEMU, log `usb: teclado` e `usb: mouse`, e relatórios chegando | 8–12 |
 | E4 | Ligar ao laço do `main.rs` junto de `ps2::poll()`; sem PS/2 o sistema segue | `kernel/main.rs`, `kernel/usb.rs` | digitar e clicar com PS/2 desligado | 2 |
 | E5 | Cenário de aceite e documentação | `tools/perf/scen/`, `CHANGELOG`, `ROADMAP`, `TESTING`, `HARDWARE` | ver abaixo | 2 |
 
 Total: **~21 a 25 dias úteis (4 a 5 semanas)**. E3 concentra o risco.
+
+**Achados da E2 que mudam a E4:** o teclado USB em *boot protocol* só informa mudanças, então a repetição de tecla
+é do sistema (`hid::Typematic`, a chamar a cada volta do laço do compositor com o tempo atual); o eixo Y e a roda do
+mouse HID têm sinal oposto ao do PS/2 e já vêm invertidos em `hid::mouse_packet`. O sentido da roda no `usb-mouse` do
+QEMU (`mouse_button 8` e `16` no monitor) precisa ser conferido no cenário de aceite.
 
 ## Aceite no QEMU
 

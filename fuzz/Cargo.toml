@@ -179,3 +179,10 @@ path = "fuzz_targets/webm_demux.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "usb_hid"
+path = "fuzz_targets/usb_hid.rs"
+test = false
+doc = false
+bench = false

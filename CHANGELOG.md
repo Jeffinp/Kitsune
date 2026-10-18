@@ -4,6 +4,29 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — USB: descritores e relatórios HID (E2)
+
+Segunda peça do plano `docs/design/usb-xhci.md`, ainda sem driver: o que um dispositivo USB manda ao kernel e que não é
+confiável. Tudo em `kitsune_core::hw`, testado no host.
+
+- **`usb`**: descritor de dispositivo, cabeçalho e blob de configuração, e a busca das interfaces HID de *boot*
+  (teclado e mouse) com o endpoint de interrupção IN de cada uma. Só a configuração alternativa 0; dispositivos
+  compostos (teclado com interface de teclas de mídia) rendem só a interface de boot; descritor com tamanho 0 ou 1,
+  que ultrapassa o buffer, ou `wTotalLength` mentiroso, termina a leitura sem pânico.
+- **`hid`**: relatório de teclado de 8 bytes vira os mesmos `KeyEvent` do PS/2 (scancode set 1 por **posição física**,
+  então os layouts US e ABNT2 do `Keymap` seguem valendo), na ordem soltar teclas, soltar modificadores, apertar
+  modificadores, apertar teclas; rollover e relatório curto não mudam nada; dois usos HID para a mesma tecla (`\` e o
+  `#` não-US) contam como uma. Relatório de mouse vira o `Packet` do desktop com Y e roda invertidos (o HID cresce
+  para baixo, o PS/2 do desktop para cima). `Typematic` é a repetição de tecla por software (500 ms de atraso, ~33 ms
+  de intervalo): o PS/2 repete em hardware, o teclado USB só informa mudanças.
+- **Fuzz**: alvo novo `usb_hid` (descritores, blob de configuração, relatórios de teclado com repetição, mouse) com
+  invariantes de eventos balanceados e nada pressionado depois de `release_all`. Compila (`cargo check` no `fuzz/`);
+  **não foi executado** (sem `cargo-fuzz` aqui). Os mesmos invariantes rodam como testes determinísticos sobre 20 000
+  relatórios aleatórios.
+- 45 testes novos (28 de `hid`, 17 de `usb`). Dos 3538 testes do core, 9 falham como antes desta mudança (8 do
+  `shields`, que embute listas com CRLF quando o checkout do Windows converte as quebras de linha; `jpeg` e
+  `i18n::testlang` não foram diagnosticados).
+
 ## 2026-10 — USB: a base do xHCI (E0 e E1)
 
 Primeiro passo do plano `docs/design/usb-xhci.md` (teclado e mouse USB, hoje só há PS/2). **Ainda não há driver USB**:
