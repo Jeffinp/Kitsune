@@ -41,9 +41,9 @@ confiável. Tudo em `kitsune_core::hw`, testado no host.
   invariantes de eventos balanceados e nada pressionado depois de `release_all`. Compila (`cargo check` no `fuzz/`);
   **não foi executado** (sem `cargo-fuzz` aqui). Os mesmos invariantes rodam como testes determinísticos sobre 20 000
   relatórios aleatórios.
-- 45 testes novos (28 de `hid`, 17 de `usb`). Dos 3538 testes do core, 9 falham como antes desta mudança (8 do
-  `shields`, que embute listas com CRLF quando o checkout do Windows converte as quebras de linha; `jpeg` e
-  `i18n::testlang` não foram diagnosticados).
+- 45 testes novos (28 de `hid`, 17 de `usb`). Os 9 testes que falhavam no Windows (8 do `shields`, 1 do `jpeg`; o de
+  `i18n::testlang` também passou) eram do checkout em CRLF e foram corrigidos com o `.gitattributes` (LF no checkout,
+  imagens e áudio como binário): o core passa com 3539 testes, 0 falhas.
 
 ## 2026-10 — USB: a base do xHCI (E0 e E1)
 
