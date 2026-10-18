@@ -4,6 +4,24 @@ Uma seção por marco, do mais novo para o mais antigo. O Kitsune (antes OSjeff;
 seção) não tem releases versionadas; as seções são marcos na `master`. As seções anteriores ao
 renomeio mantêm o nome da época.
 
+## 2026-10 — USB: driver xHCI para teclado e mouse (E3 e E4)
+
+Teclado e mouse USB funcionam no QEMU sem PS/2 (`-machine pc,i8042=off -device qemu-xhci -device usb-kbd -device
+usb-mouse`). Código em `kernel/src/xhci.rs` e `xhci/{mmio,dma,enumerate,hid}.rs`; a lógica pura é a das etapas E0 a E2.
+
+- **Subida**: BAR medido e todos os deslocamentos do dispositivo conferidos contra ele, entrega do firmware
+  (`USBLEGSUP`) e SMIs silenciados, reset, anel de comandos e de eventos, páginas de *scratchpad*, e um *no-op* que prova o anel.
+- **Enumeração**: energia e reset de porta, Enable Slot, Address Device, tamanho real do pacote do EP0 (Evaluate
+  Context), descritores de dispositivo e de configuração, interfaces HID de boot.
+- **HID**: Configure Endpoint, SET_CONFIGURATION, protocolo de boot, SET_IDLE(0) e uma transferência pendente por
+  endpoint; o relatório vira os mesmos `Event` do PS/2 e o laço do compositor lê PS/2 e depois USB. A repetição de
+  tecla é por software (`Typematic`). Sem interrupção: o anel de eventos é lido por polling.
+- **Limites**: um controlador, 4 dispositivos, sem hub e sem hot-plug; memória DMA estática de 56 KiB; acesso MMIO
+  pelo mapa de memória física (como virtio), sem atributo de cache de dispositivo, o que **precisa ser revisto em
+  hardware real**. O handoff do firmware não é exercitável no QEMU.
+- **Provado** no QEMU: ver `docs/design/usb-xhci.md` ("Como foi provado"). `cargo lint-kernel` limpo. **Não provado**:
+  UEFI, hardware real, hub, tela reagindo à entrada USB (só o log do guest).
+
 ## 2026-10 — USB: descritores e relatórios HID (E2)
 
 Segunda peça do plano `docs/design/usb-xhci.md`, ainda sem driver: o que um dispositivo USB manda ao kernel e que não é

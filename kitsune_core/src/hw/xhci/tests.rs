@@ -201,6 +201,19 @@ fn legacy_handoff_protocol() {
     assert!(legacy_handoff_done(asked & !(1 << 16)));
 }
 
+#[test]
+fn legacy_smi_disable_clears_the_enables_and_acks_the_events() {
+    let v = legacy_disable_smi(u32::MAX);
+    assert_eq!(v & 1, 0, "the USB SMI enable bit is cleared");
+    assert_eq!(
+        v >> 29,
+        0b111,
+        "the SMI status bits are written as ones to clear them"
+    );
+    assert_eq!(v & (1 << 4), 0, "bits outside the kept mask are cleared");
+    assert_eq!(legacy_disable_smi(0), 0xE000_0000);
+}
+
 // ---- TRBs ----
 
 #[test]

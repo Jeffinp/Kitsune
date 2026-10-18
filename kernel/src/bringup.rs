@@ -34,7 +34,7 @@ pub fn probe_pci(phys_offset: Option<u64>) {
     match pci::find_xhci() {
         Some(x) => klog!(
             Info,
-            "usb: xHCI controller at {:02x}:{:02x}.{} ({:04x}:{:04x}), no driver yet",
+            "usb: xHCI controller at {:02x}:{:02x}.{} ({:04x}:{:04x})",
             x.bus,
             x.slot,
             x.func,

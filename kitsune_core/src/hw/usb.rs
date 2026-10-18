@@ -121,6 +121,18 @@ pub struct BootHid {
     pub interval: u8,
 }
 
+impl BootHid {
+    /// A placeholder to size output arrays with; `endpoint == 0` means "not filled in".
+    pub const EMPTY: BootHid = BootHid {
+        configuration: 0,
+        interface: 0,
+        protocol: BootProtocol::Keyboard,
+        endpoint: 0,
+        max_packet: 0,
+        interval: 0,
+    };
+}
+
 /// Finds the boot keyboards and mice in a configuration blob and stores them in `out`, returning how
 /// many were stored (the rest of the blob is ignored once `out` is full). Only alternate setting 0 is
 /// considered, and only interfaces with class HID, subclass 1 (boot) and protocol 1 or 2 that have an

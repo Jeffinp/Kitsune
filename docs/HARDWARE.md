@@ -40,7 +40,7 @@ A screen larger than 1920x1080 is refused with an on-screen message that says wh
 |-----------|------------------------------------------------|--------------------------------------------------|
 | Network   | virtio-net, NE2000 (ISA)                       | Intel e1000/e1000e, Realtek, Wi-Fi               |
 | Storage   | IDE/ATA (PIO), used for the filesystem disk    | AHCI/SATA native, NVMe (a machine whose disk is only NVMe/AHCI has no persistent filesystem) |
-| Input     | PS/2 keyboard and mouse (whether a firmware's USB legacy emulation reaches them is untested) | native USB (xHCI) keyboards, mice, touchpads |
+| Input     | PS/2 keyboard and mouse (whether a firmware's USB legacy emulation reaches them is untested); **USB (xHCI) boot-protocol keyboards and mice**, polled, up to 4 devices on the root ports, proven in QEMU only (`docs/design/usb-xhci.md`) | USB hubs and hot-plug, touchpads (I2C-HID), report-protocol devices, EHCI/OHCI/UHCI controllers |
 | Entropy   | RDSEED/RDRAND, virtio-rng, timing jitter       | -                                                |
 | Clock     | CMOS RTC, SNTP when the network is up          | -                                                |
 

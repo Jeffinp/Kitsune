@@ -301,3 +301,11 @@ pub const fn legacy_request_os_ownership(usblegsup: u32) -> u32 {
 pub const fn legacy_handoff_done(usblegsup: u32) -> bool {
     usblegsup & LEGACY_BIOS_OWNED == 0 && usblegsup & LEGACY_OS_OWNED != 0
 }
+
+/// `USBLEGCTLSTS` (the dword after `USBLEGSUP`) value that turns the firmware's SMI sources off and
+/// acknowledges any pending ones, so the firmware stops reacting to a controller it no longer owns:
+/// keeps only the reserved and read/write bits the specification leaves alone (the mask Linux uses) and
+/// sets the three write-1-to-clear SMI status bits (31:29).
+pub const fn legacy_disable_smi(usblegctlsts: u32) -> u32 {
+    (usblegctlsts & ((0x3 << 1) | (0xFF << 5) | (0x7 << 17))) | (0x7 << 29)
+}

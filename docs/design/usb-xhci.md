@@ -1,6 +1,6 @@
 # USB: xHCI e teclado/mouse HID
 
-Plano do primeiro driver USB do Kitsune. **Estado: E0, E1 e E2 feitas (descoberta do controlador, núcleo xHCI e descritores/relatórios HID, testados no host); E3 a E5 por fazer. Ainda não existe driver.** Hoje a entrada é
+Plano do primeiro driver USB do Kitsune. **Estado: E0 a E4 feitas e provadas no QEMU (driver `kernel/src/xhci.rs` ligado ao laço do compositor); falta o cenário automatizado (E5) e a rodada em hardware real.** Hoje a entrada é
 só PS/2 (`kernel/src/ps2.rs`), e `docs/HARDWARE.md` e `docs/BOOT-USB.md` já registram que notebooks modernos
 podem não ter PS/2 nem emulação dele. Sem teclado e mouse o resto do roadmap não chega a uma máquina real.
 
@@ -36,8 +36,8 @@ kernel só tem a cola de hardware. Esforço em dias de um desenvolvedor: **estim
 | E0 (feita) | Varrer todos os barramentos; classe e prog-if; tamanho e 64 bits do BAR | `core/hw/pci`, `kernel/pci.rs` | testes de host da enumeração; o log do guest lista o xHCI do QEMU | 2 |
 | E1 (feita) | Núcleo xHCI puro: registradores, TRB (codificar/decodificar), anel com *cycle bit* e Link TRB, contextos de slot e endpoint, velocidade → tamanho máx. de pacote | `core/hw/xhci` | testes, inclusive anel dando a volta e entrada hostil | 4 |
 | E2 (feita) | Descritores USB (device/config/interface/endpoint), detecção de interface HID boot, relatório de teclado → eventos de tecla (diferença entre relatórios, tabela HID → set-1), relatório de mouse → `Packet` | `core/hw/usb`, `core/hw/hid` | testes; alvo de fuzz para os parsers (o projeto já tem 17) | 3 |
-| E3 | Driver: tomar o controlador do firmware (USBLEGSUP), reset, DCBAA, anel de comandos e de eventos, *scratchpad*, reset de porta, Enable Slot, Address Device, transferência de controle (GET_DESCRIPTOR, SET_CONFIGURATION, SET_PROTOCOL boot, SET_IDLE), Configure Endpoint e leitura do endpoint de interrupção por polling | `kernel/xhci.rs` | no QEMU, log `usb: teclado` e `usb: mouse`, e relatórios chegando | 8–12 |
-| E4 | Ligar ao laço do `main.rs` junto de `ps2::poll()`; sem PS/2 o sistema segue | `kernel/main.rs`, `kernel/usb.rs` | digitar e clicar com PS/2 desligado | 2 |
+| E3 (feita) | Driver: tomar o controlador do firmware (USBLEGSUP), reset, DCBAA, anel de comandos e de eventos, *scratchpad*, reset de porta, Enable Slot, Address Device, transferência de controle (GET_DESCRIPTOR, SET_CONFIGURATION, SET_PROTOCOL boot, SET_IDLE), Configure Endpoint e leitura do endpoint de interrupção por polling | `kernel/xhci.rs` | no QEMU, log `usb: teclado` e `usb: mouse`, e relatórios chegando | 8–12 |
+| E4 (feita) | Ligar ao laço do `main.rs` junto de `ps2::poll()`; sem PS/2 o sistema segue | `kernel/main.rs`, `kernel/usb.rs` | digitar e clicar com PS/2 desligado | 2 |
 | E5 | Cenário de aceite e documentação | `tools/perf/scen/`, `CHANGELOG`, `ROADMAP`, `TESTING`, `HARDWARE` | ver abaixo | 2 |
 
 Total: **~21 a 25 dias úteis (4 a 5 semanas)**. E3 concentra o risco.
@@ -46,6 +46,20 @@ Total: **~21 a 25 dias úteis (4 a 5 semanas)**. E3 concentra o risco.
 é do sistema (`hid::Typematic`, a chamar a cada volta do laço do compositor com o tempo atual); o eixo Y e a roda do
 mouse HID têm sinal oposto ao do PS/2 e já vêm invertidos em `hid::mouse_packet`. O sentido da roda no `usb-mouse` do
 QEMU (`mouse_button 8` e `16` no monitor) precisa ser conferido no cenário de aceite.
+
+## Como foi provado (QEMU 11.1, BIOS)
+
+Comando (sem PS/2, o monitor lido pela entrada padrão; trocar `kitsune-bios.img` pela imagem do build):
+
+```bash
+qemu-system-x86_64 -m 256M -display none -serial file:serial.log -monitor stdio -machine pc,i8042=off   -drive format=raw,file=kitsune-bios.img -drive format=raw,file=fs.img,if=ide,index=2   -device qemu-xhci -device usb-kbd -device usb-mouse
+```
+
+Log do guest: `usb: xHCI running, command ring answers (no-op ok)`, `slot 1 port 5 High speed, device 0627:0001`,
+`slot 1: boot keyboard on endpoint 0x81`, `slot 2: boot mouse on endpoint 0x81`. Com `sendkey a` e `sendkey shift-b`
+chegam `key 0x1e down/up` e `0x2a down, 0x30 down/up, 0x2a up`; com `mouse_move 10 5` e um clique chega
+`mouse dx=10 dy=-5` e `left=true` (o `dy` negativo é "para baixo" na convenção PS/2 do desktop).
+Falta o cenário `tools/perf/scen/` (o harness usa `socat`, que não existe no Windows) e provar o desktop reagindo.
 
 ## Aceite no QEMU
 

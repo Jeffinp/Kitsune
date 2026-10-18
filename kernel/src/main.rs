@@ -54,6 +54,7 @@ mod virtio_net;
 mod virtio_rng;
 mod vm;
 mod wasm;
+mod xhci;
 
 use bootloader_api::config::{BootloaderConfig, Mapping};
 use bootloader_api::{BootInfo, entry_point};
@@ -318,6 +319,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     audio::init(phys_offset);
     trace::mark("audio init done");
 
+    // USB keyboard and mouse through the xHCI controller, if there is one.
+    xhci::init(phys_offset);
+    trace::mark("usb init done");
+
     // Storage service: detect/mount/migrate OJFS v3 on the filesystem disk (the desktop
     // still runs on the v2 image; see storage.rs). Runs with the scheduler up, so the
     // ATA driver can yield to the other threads between sectors.
@@ -431,14 +436,15 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         bringup::pump_browser(&mut desk, &mut browser_redraw);
         desktop::schedule_next();
 
-        // Drain all pending PS/2 events.
+        // Drain all pending PS/2 and USB events.
         let external = core::mem::take(&mut browser_redraw);
         let mut scene_dirty = external;
         let mut cursor_moved = false;
         let mut clock_tick = false;
         let mut got_input = false;
         trace::loop_iter();
-        while let Some(event) = ps2::poll() {
+        // PS/2 first, then USB (xHCI): both produce the same events.
+        while let Some(event) = ps2::poll().or_else(xhci::poll) {
             got_input = true;
             match event {
                 Event::Mouse(p) => {

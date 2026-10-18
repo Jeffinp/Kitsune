@@ -9,7 +9,8 @@ const CONFIG_DATA: u16 = 0xCFC;
 
 use kitsune_core::hw::pci::{
     VIRTIO_GPU_LEGACY, VIRTIO_GPU_MODERN, VIRTIO_NET_LEGACY, VIRTIO_NET_MODERN, VIRTIO_RNG_LEGACY,
-    VIRTIO_RNG_MODERN, VIRTIO_VENDOR, bar_offset, cap_list_start, config_address, extract_u16,
+    VIRTIO_RNG_MODERN, VIRTIO_VENDOR, bar_is_64bit, bar_offset, bar_size, cap_list_start,
+    config_address, extract_u16,
 };
 
 /// A located PCI function.
@@ -57,6 +58,38 @@ impl PciDevice {
         let mut cmd = read32(self.bus, self.slot, self.func, 0x04);
         cmd |= 0x0006; // bit1 = memory space, bit2 = bus master
         write32(self.bus, self.slot, self.func, 0x04, cmd);
+    }
+
+    /// Size in bytes of memory BAR `i`, found the standard way: decoding off, write all ones, read back
+    /// what stuck, restore. `None` for an I/O or unimplemented BAR. Done once, before the driver
+    /// trusts any offset the device reports.
+    pub fn probe_bar_size(&self, i: u8) -> Option<u64> {
+        let off = bar_offset(i)?;
+        let command = read32(self.bus, self.slot, self.func, 0x04);
+        write32(self.bus, self.slot, self.func, 0x04, command & !0x7);
+        let lo = read32(self.bus, self.slot, self.func, off);
+        let is_64 = bar_is_64bit(lo);
+        let hi = if is_64 {
+            bar_offset(i + 1).map(|o| (o, read32(self.bus, self.slot, self.func, o)))
+        } else {
+            None
+        };
+        write32(self.bus, self.slot, self.func, off, u32::MAX);
+        let probed_lo = read32(self.bus, self.slot, self.func, off);
+        let mut probed_hi = 0;
+        if let Some((o, _)) = hi {
+            write32(self.bus, self.slot, self.func, o, u32::MAX);
+            probed_hi = read32(self.bus, self.slot, self.func, o);
+        }
+        write32(self.bus, self.slot, self.func, off, lo);
+        if let Some((o, original)) = hi {
+            write32(self.bus, self.slot, self.func, o, original);
+        }
+        write32(self.bus, self.slot, self.func, 0x04, command);
+        if is_64 && hi.is_none() {
+            return None;
+        }
+        bar_size(probed_lo, probed_hi)
     }
 
     /// Offset of the first entry in the PCI capability list, or `None` if the
