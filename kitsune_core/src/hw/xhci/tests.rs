@@ -107,6 +107,14 @@ fn portsc_neutral_never_writes_a_write_one_to_clear_bit() {
 }
 
 #[test]
+fn portsc_neutral_matches_the_linux_masks() {
+    // RO (0, 3, 10:13, 30) and RWS (5:8, 9, 14:15, 25:27) survive; everything else, CAS (24) included, is zero
+    let keep = 1 | 1 << 3 | 0xF << 10 | 1 << 30 | 0xF << 5 | 1 << 9 | 3 << 14 | 7 << 25;
+    assert_eq!(portsc_neutral(u32::MAX), keep);
+    assert_eq!(portsc_neutral(PORTSC_CAS), 0);
+}
+
+#[test]
 fn portsc_reset_sets_only_pr_on_top_of_neutral() {
     let read = PORTSC_CCS | PORTSC_PP | PORTSC_PRC;
     assert_eq!(portsc_reset(read), PORTSC_CCS | PORTSC_PP | PORTSC_PR);
@@ -212,6 +220,10 @@ fn legacy_smi_disable_clears_the_enables_and_acks_the_events() {
     );
     assert_eq!(v & (1 << 4), 0, "bits outside the kept mask are cleared");
     assert_eq!(legacy_disable_smi(0), 0xE000_0000);
+    // the reserved bits the specification says to preserve (1..=3, 5..=12, 17..=19) survive
+    for bit in [1, 2, 3, 5, 12, 17, 19] {
+        assert_ne!(legacy_disable_smi(1 << bit) & (1 << bit), 0, "bit {bit}");
+    }
 }
 
 // ---- TRBs ----

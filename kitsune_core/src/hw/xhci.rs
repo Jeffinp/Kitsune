@@ -174,15 +174,15 @@ pub const PORTSC_CHANGES: u32 =
     PORTSC_CSC | PORTSC_PEC | PORTSC_WRC | PORTSC_OCC | PORTSC_PRC | PORTSC_PLC | PORTSC_CEC;
 
 /// Bits that read back and must be written back unchanged (read-only ones are ignored on write, the
-/// read/write ones keep their value): connect status, over-current, speed, CAS, DR, indicator, link
-/// state, power, wake enables.
+/// read/write ones keep their value): connect status, over-current, speed, DR, indicator, link state,
+/// power, wake enables. Same set as Linux's `xhci_port_state_to_neutral`; CAS is read-only and must be
+/// written as zero, so it is not kept.
 const PORTSC_PRESERVE: u32 = PORTSC_CCS
     | PORTSC_OCA
     | (0xF << 10) // port speed
     | (0x3 << 14) // port indicator
     | (0xF << 5) // port link state
     | PORTSC_PP
-    | PORTSC_CAS
     | (0x7 << 25) // wake on connect / disconnect / over-current
     | PORTSC_DR;
 
@@ -307,5 +307,5 @@ pub const fn legacy_handoff_done(usblegsup: u32) -> bool {
 /// keeps only the reserved and read/write bits the specification leaves alone (the mask Linux uses) and
 /// sets the three write-1-to-clear SMI status bits (31:29).
 pub const fn legacy_disable_smi(usblegctlsts: u32) -> u32 {
-    (usblegctlsts & ((0x3 << 1) | (0xFF << 5) | (0x7 << 17))) | (0x7 << 29)
+    (usblegctlsts & ((0x7 << 1) | (0xFF << 5) | (0x7 << 17))) | (0x7 << 29)
 }
