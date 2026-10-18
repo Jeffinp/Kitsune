@@ -10,24 +10,39 @@ use crate::{
 };
 use bootloader_api::info::FrameBufferInfo;
 
-/// Enumerate PCI bus 0 and bring up the virtio-gpu driver when the device is present (the VBE /
+/// Enumerate the PCI buses (following bridges) and bring up the virtio-gpu driver when the device is present (the VBE /
 /// GOP framebuffer stays the display either way; the log tells what a machine has).
 pub fn probe_pci(phys_offset: Option<u64>) {
     // Enumerate the PCI bus — groundwork for the virtio-gpu driver: locate the
     // device and, when present, enable bus mastering so a later DMA-capable
     // driver can use it. QEMU captures the log via `-serial file:...`.
-    klog!(Info, "Kitsune boot: enumerating PCI bus 0");
+    klog!(Info, "Kitsune boot: enumerating PCI buses");
     pci::for_each(|d| {
         klog!(
             Info,
-            "  pci {:02x}:{:02x}.{}  {:04x}:{:04x}",
+            "  pci {:02x}:{:02x}.{}  {:04x}:{:04x}  class {:02x}{:02x}{:02x}",
             d.bus,
             d.slot,
             d.func,
             d.vendor,
-            d.device
+            d.device,
+            d.class,
+            d.subclass,
+            d.prog_if
         );
     });
+    match pci::find_xhci() {
+        Some(x) => klog!(
+            Info,
+            "usb: xHCI controller at {:02x}:{:02x}.{} ({:04x}:{:04x}), no driver yet",
+            x.bus,
+            x.slot,
+            x.func,
+            x.vendor,
+            x.device
+        ),
+        None => klog!(Info, "usb: no xHCI controller"),
+    }
     match pci::find_virtio_gpu() {
         Some(gpu) => {
             gpu.enable_bus_master();

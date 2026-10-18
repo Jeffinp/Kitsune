@@ -1,5 +1,5 @@
 //! Minimal PCI configuration-space access (legacy mechanism #1) and bus
-//! enumeration — the foundation for the virtio-gpu driver. It locates devices
+//! enumeration — the foundation for the virtio and USB drivers. It locates devices
 //! by reading config space through the 0xCF8/0xCFC port pair.
 
 use crate::io::{inl, outl};
@@ -20,6 +20,9 @@ pub struct PciDevice {
     pub func: u8,
     pub vendor: u16,
     pub device: u16,
+    pub class: u8,
+    pub subclass: u8,
+    pub prog_if: u8,
 }
 
 /// Read a 32-bit dword from config space (`offset` is dword-aligned).
@@ -70,21 +73,37 @@ impl PciDevice {
     }
 }
 
-/// Visit every present function on bus 0, calling `f` for each. QEMU places its
-/// virtio devices on bus 0, so a single-bus scan suffices here.
+/// Visit every present function on every bus reachable from bus 0 (bridges are followed), calling
+/// `f` for each. Devices behind PCI-to-PCI bridges (the usual place of an xHCI on real hardware) are
+/// found this way; QEMU's default machine keeps everything on bus 0.
 pub fn for_each<F: FnMut(PciDevice)>(mut f: F) {
-    kitsune_core::hw::pci::enumerate(
-        |slot, func, off| read16(0, slot, func, off),
-        |slot, func, vendor, device| {
-            f(PciDevice {
-                bus: 0,
-                slot,
-                func,
-                vendor,
-                device,
-            })
-        },
-    );
+    kitsune_core::hw::pci::enumerate_all(read32, |d| {
+        f(PciDevice {
+            bus: d.bus,
+            slot: d.slot,
+            func: d.func,
+            vendor: d.vendor,
+            device: d.device,
+            class: d.class,
+            subclass: d.subclass,
+            prog_if: d.prog_if,
+        })
+    });
+}
+
+/// Find the first USB xHCI host controller.
+pub fn find_xhci() -> Option<PciDevice> {
+    let mut found = None;
+    for_each(|d| {
+        if found.is_none()
+            && d.class == kitsune_core::hw::pci::CLASS_SERIAL_BUS
+            && d.subclass == kitsune_core::hw::pci::SUBCLASS_USB
+            && d.prog_if == kitsune_core::hw::pci::PROG_IF_XHCI
+        {
+            found = Some(d);
+        }
+    });
+    found
 }
 
 /// Find the first function matching `vendor`/`device` on bus 0.

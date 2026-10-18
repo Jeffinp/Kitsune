@@ -119,5 +119,117 @@ pub fn enumerate(mut read16: impl FnMut(u8, u8, u8) -> u16, mut f: impl FnMut(u8
     }
 }
 
+/// Class code of USB host controllers: base class 0x0C (serial bus), subclass 0x03 (USB).
+pub const CLASS_SERIAL_BUS: u8 = 0x0C;
+pub const SUBCLASS_USB: u8 = 0x03;
+/// Programming interface of an xHCI controller (EHCI is 0x20, OHCI 0x10, UHCI 0x00).
+pub const PROG_IF_XHCI: u8 = 0x30;
+
+/// A present PCI function found by [`enumerate_all`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Function {
+    pub bus: u8,
+    pub slot: u8,
+    pub func: u8,
+    pub vendor: u16,
+    pub device: u16,
+    pub class: u8,
+    pub subclass: u8,
+    pub prog_if: u8,
+    /// Header type byte (offset 0x0E), bit 7 (multi-function) included.
+    pub header_type: u8,
+}
+
+impl Function {
+    /// PCI-to-PCI bridge (header type 1): another bus hangs behind it.
+    pub fn is_bridge(&self) -> bool {
+        self.header_type & 0x7F == 1
+    }
+
+    /// USB 3.x host controller (class 0x0C, subclass 0x03, programming interface 0x30).
+    pub fn is_xhci(&self) -> bool {
+        self.class == CLASS_SERIAL_BUS
+            && self.subclass == SUBCLASS_USB
+            && self.prog_if == PROG_IF_XHCI
+    }
+}
+
+/// Walks every bus reachable from bus 0 by following PCI-to-PCI bridges, calling `f` for each present
+/// function in discovery order. `read32(bus, slot, func, offset)` reads a config-space dword.
+///
+/// Real machines put most devices (xHCI, NICs, disks) behind bridges, so a scan of bus 0 alone misses
+/// them. The config space is untrusted: a bridge whose secondary bus is not greater than its own bus
+/// (self-loop, backwards link) is not followed, and each bus is scanned at most once, so any content
+/// terminates. Functions 1..7 of a device are read only when its header type says it is multi-function.
+pub fn enumerate_all(mut read32: impl FnMut(u8, u8, u8, u8) -> u32, mut f: impl FnMut(Function)) {
+    let mut seen = [false; 256];
+    let mut pending = [0u8; 256];
+    let mut len = 1;
+    seen[0] = true; // pending[0] is bus 0
+    while len > 0 {
+        len -= 1;
+        let bus = pending[len];
+        for slot in 0..32u8 {
+            let mut functions = 8;
+            let mut func = 0;
+            while func < functions {
+                let id = read32(bus, slot, func, 0x00);
+                if id & 0xFFFF == 0xFFFF {
+                    if func == 0 {
+                        break; // no function 0 -> the whole slot is empty
+                    }
+                    func += 1;
+                    continue;
+                }
+                let class = read32(bus, slot, func, 0x08);
+                let header_type = (read32(bus, slot, func, 0x0C) >> 16) as u8;
+                if func == 0 && header_type & 0x80 == 0 {
+                    functions = 1;
+                }
+                let d = Function {
+                    bus,
+                    slot,
+                    func,
+                    vendor: id as u16,
+                    device: (id >> 16) as u16,
+                    class: (class >> 24) as u8,
+                    subclass: (class >> 16) as u8,
+                    prog_if: (class >> 8) as u8,
+                    header_type,
+                };
+                f(d);
+                if d.is_bridge() {
+                    let secondary = (read32(bus, slot, func, 0x18) >> 8) as u8;
+                    if secondary > bus && !seen[secondary as usize] {
+                        seen[secondary as usize] = true;
+                        pending[len] = secondary;
+                        len += 1;
+                    }
+                }
+                func += 1;
+            }
+        }
+    }
+}
+
+/// Size in bytes of a memory BAR from what it reads back after writing all ones to it
+/// (`probed_lo`, and for a 64-bit BAR `probed_hi`, the next slot probed the same way). `None` for an
+/// I/O-space BAR, an unimplemented one (no writable address bit), or a size that does not fit in `u64`.
+/// The caller restores the original BAR value and keeps decoding off while probing.
+pub fn bar_size(probed_lo: u32, probed_hi: u32) -> Option<u64> {
+    if probed_lo & 1 != 0 {
+        return None;
+    }
+    if bar_is_64bit(probed_lo) {
+        let mask = (probed_hi as u64) << 32 | (probed_lo as u64 & !0xF);
+        (mask != 0)
+            .then(|| (!mask).wrapping_add(1))
+            .filter(|&s| s != 0)
+    } else {
+        let mask = probed_lo & !0xF;
+        (mask != 0).then(|| (!mask).wrapping_add(1) as u64)
+    }
+}
+
 #[cfg(test)]
 mod tests;

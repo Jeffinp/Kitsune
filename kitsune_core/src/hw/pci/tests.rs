@@ -164,3 +164,180 @@ fn enumerate_full_slot_visits_all_eight_functions() {
     );
     assert_eq!(funcs, (0..8).collect::<Vec<u8>>());
 }
+
+// ---- enumeração de todos os barramentos ----
+
+use std::collections::HashMap;
+
+/// Espaço de configuração falso: só os dwords que o teste declara existem; o resto lê `0xFFFF_FFFF`.
+#[derive(Default)]
+struct Fake {
+    dwords: HashMap<(u8, u8, u8, u8), u32>,
+    reads: usize,
+}
+
+impl Fake {
+    #[allow(clippy::too_many_arguments)]
+    fn put(
+        &mut self,
+        bus: u8,
+        slot: u8,
+        func: u8,
+        vendor: u16,
+        device: u16,
+        class: u32,
+        header: u8,
+    ) {
+        self.dwords.insert(
+            (bus, slot, func, 0x00),
+            (device as u32) << 16 | vendor as u32,
+        );
+        self.dwords.insert((bus, slot, func, 0x08), class << 8);
+        self.dwords
+            .insert((bus, slot, func, 0x0C), (header as u32) << 16);
+    }
+    fn bridge(&mut self, bus: u8, slot: u8, secondary: u8) {
+        self.put(bus, slot, 0, 0x8086, 0x1234, 0x06_04_00, 0x01);
+        self.dwords
+            .insert((bus, slot, 0, 0x18), (secondary as u32) << 8 | bus as u32);
+    }
+    fn read(&mut self, bus: u8, slot: u8, func: u8, off: u8) -> u32 {
+        self.reads += 1;
+        self.dwords
+            .get(&(bus, slot, func, off))
+            .copied()
+            .unwrap_or(0xFFFF_FFFF)
+    }
+}
+
+fn scan(fake: &mut Fake) -> Vec<Function> {
+    let mut out = Vec::new();
+    enumerate_all(|b, s, f, o| fake.read(b, s, f, o), |d| out.push(d));
+    out
+}
+
+#[test]
+fn enumerate_all_on_an_empty_machine_reads_each_slot_once() {
+    let mut fake = Fake::default();
+    assert!(scan(&mut fake).is_empty());
+    assert_eq!(fake.reads, 32);
+}
+
+#[test]
+fn enumerate_all_decodes_class_subclass_and_prog_if() {
+    let mut fake = Fake::default();
+    fake.put(0, 4, 0, 0x1B36, 0x000D, 0x0C_03_30, 0x00);
+    let found = scan(&mut fake);
+    assert_eq!(found.len(), 1);
+    let d = found[0];
+    assert_eq!((d.bus, d.slot, d.func), (0, 4, 0));
+    assert_eq!((d.vendor, d.device), (0x1B36, 0x000D));
+    assert_eq!((d.class, d.subclass, d.prog_if), (0x0C, 0x03, 0x30));
+    assert!(d.is_xhci());
+    assert!(!d.is_bridge());
+}
+
+#[test]
+fn is_xhci_needs_the_exact_class_triple() {
+    let mut fake = Fake::default();
+    fake.put(0, 1, 0, 1, 1, 0x0C_03_20, 0); // EHCI
+    fake.put(0, 2, 0, 1, 1, 0x0C_03_00, 0); // UHCI
+    fake.put(0, 3, 0, 1, 1, 0x0C_05_30, 0); // não é USB
+    fake.put(0, 4, 0, 1, 1, 0x0C_03_30, 0); // xHCI
+    let xhci: Vec<u8> = scan(&mut fake)
+        .iter()
+        .filter(|d| d.is_xhci())
+        .map(|d| d.slot)
+        .collect();
+    assert_eq!(xhci, vec![4]);
+}
+
+#[test]
+fn a_single_function_device_is_not_probed_for_other_functions() {
+    let mut fake = Fake::default();
+    fake.put(0, 5, 0, 1, 1, 0, 0x00);
+    fake.put(0, 5, 1, 2, 2, 0, 0x00); // eco de hardware ruim: não deve ser lido
+    let funcs: Vec<u8> = scan(&mut fake).iter().map(|d| d.func).collect();
+    assert_eq!(funcs, vec![0]);
+}
+
+#[test]
+fn a_multifunction_device_visits_the_present_functions() {
+    let mut fake = Fake::default();
+    fake.put(0, 5, 0, 1, 1, 0, 0x80);
+    fake.put(0, 5, 3, 2, 2, 0, 0x00);
+    fake.put(0, 5, 7, 3, 3, 0, 0x00);
+    let funcs: Vec<u8> = scan(&mut fake).iter().map(|d| d.func).collect();
+    assert_eq!(funcs, vec![0, 3, 7]);
+}
+
+#[test]
+fn a_bridge_leads_to_the_bus_behind_it() {
+    let mut fake = Fake::default();
+    fake.bridge(0, 28, 1);
+    fake.put(1, 0, 0, 0x1B36, 0x000D, 0x0C_03_30, 0x00);
+    let found = scan(&mut fake);
+    assert_eq!(found.len(), 2);
+    assert!(found[0].is_bridge());
+    assert_eq!((found[1].bus, found[1].slot), (1, 0));
+    assert!(found[1].is_xhci());
+}
+
+#[test]
+fn bridges_can_be_nested() {
+    let mut fake = Fake::default();
+    fake.bridge(0, 1, 1);
+    fake.bridge(1, 0, 2);
+    fake.put(2, 0, 0, 7, 7, 0x0C_03_30, 0x00);
+    let buses: Vec<u8> = scan(&mut fake).iter().map(|d| d.bus).collect();
+    assert_eq!(buses, vec![0, 1, 2]);
+}
+
+#[test]
+fn a_bridge_pointing_backwards_or_at_itself_is_ignored() {
+    let mut fake = Fake::default();
+    fake.bridge(0, 1, 0); // para o próprio barramento
+    fake.bridge(0, 2, 1);
+    fake.bridge(1, 0, 0); // volta para a raiz: ciclo
+    let found = scan(&mut fake);
+    assert_eq!(found.len(), 3); // termina e cada função aparece uma vez
+}
+
+#[test]
+fn two_bridges_to_the_same_bus_visit_it_once() {
+    let mut fake = Fake::default();
+    fake.bridge(0, 1, 1);
+    fake.bridge(0, 2, 1);
+    fake.put(1, 0, 0, 9, 9, 0, 0x00);
+    let behind = scan(&mut fake).iter().filter(|d| d.bus == 1).count();
+    assert_eq!(behind, 1);
+}
+
+#[test]
+fn a_bridge_with_secondary_bus_zero_leads_nowhere() {
+    let mut fake = Fake::default();
+    fake.bridge(0, 1, 0);
+    assert_eq!(scan(&mut fake).len(), 1);
+}
+
+// ---- tamanho do BAR ----
+
+#[test]
+fn bar_size_of_a_32_bit_bar() {
+    assert_eq!(bar_size(0xFFFF_0000, 0), Some(0x1_0000));
+    assert_eq!(bar_size(0xFFFF_F000, 0), Some(0x1000));
+    assert_eq!(bar_size(0xFF00_0008, 0), Some(0x100_0000)); // prefetchable: flags não contam
+}
+
+#[test]
+fn bar_size_of_a_64_bit_bar() {
+    assert_eq!(bar_size(0xFFFF_0004, 0xFFFF_FFFF), Some(0x1_0000));
+    assert_eq!(bar_size(0x0000_0004, 0xFFFF_FFF0), Some(0x10_0000_0000));
+}
+
+#[test]
+fn bar_size_rejects_io_and_unimplemented_bars() {
+    assert_eq!(bar_size(0xFFFF_FFF1, 0), None); // espaço de E/S
+    assert_eq!(bar_size(0x0000_0000, 0), None); // BAR que não existe
+    assert_eq!(bar_size(0x0000_0004, 0), None); // 64 bits sem nenhum bit de endereço
+}
